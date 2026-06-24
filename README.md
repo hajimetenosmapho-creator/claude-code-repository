@@ -9,7 +9,7 @@
 |---|-------------|------|-----------|
 | 01 | [WordPress ブログ記事作成AI](projects/01_wordpress_blog_ai/) | AIがブログ記事を自動生成・WordPress投稿 | 開発予定 |
 | 02 | [YouTube → ブログ記事AI](projects/02_youtube_to_blog_ai/) | YouTube動画の内容をブログ記事化 | 開発予定 |
-| 03 | [ゲームニュース収集AI](projects/03_game_news_ai/) | ゲーム関連ニュースを自動収集・整理 | 開発予定 |
+| 03 | [ゲームニュース収集AI](projects/03_game_content_ai/) | ゲーム関連ニュースを自動収集・整理 | 開発予定 |
 | 04 | [投資・家計管理ツール](projects/04_finance_tool/) | 投資情報の追跡・家計データ管理 | 開発予定 |
 | 05 | [救急活動記録・公文書作成AI](projects/05_emergency_docs_ai/) | 救急活動記録の作成・公文書テンプレート補助 | 開発予定 |
 
@@ -26,7 +26,7 @@ claude-code-repository/
 │   │   ├── src/
 │   │   ├── prompts/
 │   │   └── tests/
-│   ├── 03_game_news_ai/           # ゲームニュース収集AI
+│   ├── 03_game_content_ai/        # ゲームニュース収集AI
 │   │   ├── src/
 │   │   ├── prompts/
 │   │   └── tests/
