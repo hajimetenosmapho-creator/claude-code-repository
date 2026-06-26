@@ -39,7 +39,7 @@ from importance_judge import judge_all
 from article_generator import generate_article
 from seo_title_generator import generate_seo_title
 from x_post_generator import generate_x_post
-from outputs import OutputManager, MarkdownOutput, ArticleData
+from outputs import OutputManager, MarkdownOutput, WordPressOutput, ArticleData
 
 # .env ファイルを読み込む
 load_dotenv()
@@ -243,6 +243,7 @@ def main():
     # Step 5: 記事生成・保存
     output_manager = OutputManager(outputs=[
         MarkdownOutput(output_dir=OUTPUT_DIR),
+        WordPressOutput.from_env(),
     ])
 
     print(f"記事を生成しています（{len(to_process)}件）...")
