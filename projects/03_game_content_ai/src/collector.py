@@ -48,11 +48,12 @@ RSS_FEEDS = {
     "Nintendo Life": "https://www.nintendolife.com/feeds/latest",
     "Push Square": "https://www.pushsquare.com/feeds/latest",
     "Pure Xbox": "https://www.purexbox.com/feeds/latest",
+    "Steam": "https://store.steampowered.com/feeds/news/?l=japanese",
 }
 
 FEED_GROUPS = {
     "日本語": ["4Gamer", "Game*Spark"],
-    "公式": ["PlayStation公式", "Nintendo公式", "Xbox公式"],
+    "公式": ["PlayStation公式", "Nintendo公式", "Xbox公式", "Steam"],
     "総合英語": ["IGN", "GameSpot", "Eurogamer", "Gematsu",
                  "VGC", "Insider Gaming", "PC Gamer"],
     "プラットフォーム特化": ["Nintendo Life", "Push Square", "Pure Xbox"],

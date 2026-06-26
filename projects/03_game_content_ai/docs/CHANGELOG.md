@@ -5,6 +5,20 @@
 
 ---
 
+## [v1.0] - 2026-06-26
+
+### Added
+
+- Steam News フィード追加（`https://store.steampowered.com/feeds/news/?l=japanese`）
+  - 「公式」カテゴリに追加（PlayStation公式・Nintendo公式・Xbox公式・Steam）
+  - 合計16サイトからのRSS収集に対応
+- RSS取得サマリー表示（カテゴリ別の取得件数・成否を一覧表示）
+  - `FeedStats` データクラスによる取得結果の構造化
+  - `FEED_GROUPS` によるカテゴリ別グルーピング
+  - 取得合計・フィルター通過・重複除去後・記事生成の件数を末尾に表示
+
+---
+
 ## [v0.9] - 2026-06-26
 
 ### Added
