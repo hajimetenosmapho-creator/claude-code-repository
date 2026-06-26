@@ -21,6 +21,10 @@ import argparse
 import os
 import sys
 import anthropic
+
+# Windowsコンソールの文字コード問題を防ぐ
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 from pathlib import Path
 from datetime import datetime, timezone
 from dotenv import load_dotenv
