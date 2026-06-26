@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from collector import collect_all_news, NewsItem
 from keyword_filter import filter_news
+from duplicate_filter import deduplicate_news
 from importance_judge import judge_all
 from article_generator import generate_article
 from seo_title_generator import generate_seo_title
@@ -200,7 +201,10 @@ def main():
         print("保留ニュース数:", len(filtered["pending"]))
         sys.exit(0)
 
-    # Step 3: 重要度判定
+    # Step 3: 重複排除（APIコスト削減のため重要度判定の前に実施）
+    target_news = deduplicate_news(target_news)
+
+    # Step 4: 重要度判定
     judged = judge_all(client, target_news)
 
     # 重要度「なし」は除外
