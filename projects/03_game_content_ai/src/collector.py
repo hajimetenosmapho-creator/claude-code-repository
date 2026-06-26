@@ -33,6 +33,7 @@ RSS_FEEDS = {
     "PlayStation公式": "https://www.playstation.com/ja-jp/rss/blog.xml",
     "Nintendo公式": "https://topics.nintendo.co.jp/rss.xml",
     "Xbox公式": "https://news.xbox.com/en-us/feed/",
+    "Gematsu": "https://www.gematsu.com/feed",
 }
 
 
