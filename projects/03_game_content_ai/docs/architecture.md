@@ -31,7 +31,7 @@ main.py
   └─ output_manager.save_all(article)
        └─ OutputManager
             ├─ MarkdownOutput     ← v1.1 実装済み
-            ├─ WordPressOutput    ← v1.x で実装予定
+            ├─ WordPressOutput    ← v1.1 実装済み
             ├─ NotionOutput       ← 将来
             └─ DiscordOutput      ← 将来
 ```
@@ -50,7 +50,7 @@ src/
     ├── base.py              # ArticleData dataclass / BaseOutput 抽象クラス
     ├── manager.py           # OutputManager
     ├── markdown_output.py   # MarkdownOutput（実装済み）
-    └── wordpress_output.py  # WordPressOutput（v1.x で追加予定）
+    └── wordpress_output.py  # WordPressOutput（v1.1 実装済み）
 ```
 
 ---
@@ -100,7 +100,7 @@ v1.0 の `_save_as_markdown()` をクラスとして移植したもの。
 # 起動時に1回だけ初期化
 output_manager = OutputManager(outputs=[
     MarkdownOutput(output_dir=OUTPUT_DIR),
-    # WordPressOutput(...)  ← v1.x で追加
+    WordPressOutput.from_env(),  # .env 未設定時は is_available()=False で自動スキップ
 ])
 
 # 記事生成後の保存
@@ -118,20 +118,11 @@ destinations = output_manager.save_all(article)
 
 ## 将来の拡張手順
 
-新しい出力先（WordPress・Notion・Discord など）を追加する場合：
+新しい出力先（Notion・Discord など）を追加する場合：
 
-1. `src/outputs/wordpress_output.py` を新規作成し `BaseOutput` を継承する
+1. `src/outputs/` に新しいクラスファイルを作成し `BaseOutput` を継承する
 2. `save()` と `is_available()` を実装する
-3. `main.py` の `OutputManager([...])` に追加する
+3. `src/outputs/__init__.py` でエクスポートする
+4. `main.py` の `OutputManager([...])` に追加する
 
 **既存ファイルへの変更は最小限（main.py の1行追加のみ）。**
-
----
-
-## WordPressOutput をまだ作らない理由
-
-- WordPress REST API の認証（Application Password）と投稿エンドポイントの
-  テスト環境が未整備のため、スタブだけ作っても動作確認ができない
-- OutputManager と MarkdownOutput の動作を先に確定させることで、
-  WordPress 実装時のリスクを下げる
-- v1.1 ではアーキテクチャ整備のみ行い、v1.x で WordPress 実装に集中する

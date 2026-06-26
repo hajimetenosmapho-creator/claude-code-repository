@@ -2,18 +2,24 @@
 
 ---
 
-## v1.0 — MVP完成（2026-06-26 完了）
+## v1.1.0 — WordPress下書き投稿対応（2026-06-26 完了）
 
-- [x] RSS取得サマリー表示（収集ソース別の件数・成否を一覧表示）
-- [x] Steam Newsのフィード追加
-- [x] v1.0 リリース・動作確認
+- [x] OutputManager アーキテクチャ導入（`src/outputs/` パッケージ）
+- [x] MarkdownOutput クラス分離
+- [x] WordPressOutput 実装（WordPress REST API / Application Password認証）
+- [x] WordPress下書き投稿のE2Eテスト成功
+- [x] importance_prompt.md の `{}` 問題を修正
 
 ---
 
-## v1.x — 外部連携
+## v1.2.0 — WordPress出力品質向上（予定）
 
-- [ ] WordPress REST API連携（記事をブログへ自動下書き投稿）
-- [ ] アイキャッチ画像URL取得（各ニュースサイトのOGP画像を取得）
+- [ ] WordPress管理画面URLの表示改善（`Path()` ラップを除去）
+- [ ] 「記事生成件数」と「保存先数」の表示を分離
+- [ ] カテゴリ自動設定
+- [ ] タグ自動生成
+- [ ] Markdown → HTML変換（記事本文をWordPressで正しく表示）
+- [ ] OGP画像 / アイキャッチ画像対応
 
 ---
 
@@ -22,6 +28,14 @@
 - [ ] アイキャッチ画像のALTテキスト自動生成
 - [ ] WordPress自動投稿（下書き → 公開の自動化）
 - [ ] Windows タスクスケジューラによる定時実行対応
+
+---
+
+## 完了済み（v1.0）
+
+- [x] RSS取得サマリー表示（収集ソース別の件数・成否を一覧表示）
+- [x] Steam Newsのフィード追加
+- [x] v1.0 リリース・動作確認
 
 ---
 

@@ -5,6 +5,34 @@
 
 ---
 
+## [v1.1.0] - 2026-06-26
+
+### Added
+
+- OutputManager アーキテクチャ導入（`src/outputs/` パッケージ新設）
+  - `BaseOutput` 抽象クラス（`save()` / `is_available()` インターフェース）
+  - `ArticleData` データクラス（記事生成結果をまとめて出力処理へ渡す）
+  - `OutputManager.save_all()`: 全出力先に一括保存、1つ失敗しても他を続行
+- `MarkdownOutput` クラス: v1.0 の `_save_as_markdown()` をクラスとして分離
+- `WordPressOutput` クラス: WordPress REST API による下書き投稿対応
+  - Application Password 認証
+  - 投稿状態は `draft` 固定（誤公開防止）
+  - `.env` 未設定時は `is_available()` が `False` を返し自動スキップ
+  - エンドポイント: `/wp-json/wp/v2/posts`
+- `.env.example` に WordPress設定項目を追加（`WP_SITE_URL` / `WP_USERNAME` / `WP_APP_PASSWORD`）
+
+### Fixed
+
+- `importance_judge.py` のプロンプト展開を `.format()` から `.replace()` に変更
+  - `prompts/importance_prompt.md` のJSON例に含まれる `{}` を `str.format()` がプレースホルダーと誤認識する問題を修正
+
+### Tested
+
+- 実際のゲームニュース1件でE2Eテスト成功
+  - RSS収集 → キーワードフィルター → 重複排除 → Claude重要度判定 → 記事生成 → Markdown保存 → WordPress下書き投稿の全工程を確認
+
+---
+
 ## [v1.0] - 2026-06-26
 
 ### Added
