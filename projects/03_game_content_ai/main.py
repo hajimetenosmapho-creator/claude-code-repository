@@ -21,6 +21,10 @@ import argparse
 import os
 import sys
 import anthropic
+
+# Windowsコンソールの文字コード問題を防ぐ
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 from pathlib import Path
 from datetime import datetime, timezone
 from dotenv import load_dotenv
@@ -28,8 +32,9 @@ from dotenv import load_dotenv
 # プロジェクトルートの src/ をインポートパスに追加
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from collector import collect_all_news, NewsItem
+from collector import collect_all_news, NewsItem, FeedStats, FEED_GROUPS
 from keyword_filter import filter_news
+from duplicate_filter import deduplicate_news
 from importance_judge import judge_all
 from article_generator import generate_article
 from seo_title_generator import generate_seo_title
@@ -42,6 +47,44 @@ OUTPUT_DIR = Path(__file__).parent / "output"
 
 # A評価ニュースの記事化上限（超過分は候補ファイルへ保存）
 A_ARTICLE_LIMIT = 5
+
+
+def _print_rss_summary(
+    feed_stats: list[FeedStats],
+    total: int,
+    filtered: int,
+    deduped: int,
+    generated: int,
+) -> None:
+    """RSS取得結果と処理パイプラインの統計をカテゴリ別に表示する。"""
+    print("=" * 30)
+    print("RSS取得結果")
+    print("=" * 7)
+
+    stats_by_source = {s.source: s for s in feed_stats}
+
+    for group_name, sources in FEED_GROUPS.items():
+        print(f"\n【{group_name}】")
+        for source in sources:
+            stat = stats_by_source.get(source)
+            if stat is None:
+                continue
+            label = f"{source:<20}"
+            if stat.status == "error":
+                print(f"  {label} [取得失敗] {stat.error_message}")
+            elif stat.status == "empty":
+                print(f"  {label} 0件（記事なし）")
+            else:
+                print(f"  {label} {stat.count}件")
+
+    print()
+    print("-" * 30)
+    print(f"  {'取得合計':<18} {total}件")
+    print(f"  {'フィルター通過':<16} {filtered}件")
+    print(f"  {'重複除去後':<17} {deduped}件")
+    print(f"  {'記事生成':<18} {generated}件")
+    print("=" * 20)
+    print()
 
 
 def _save_as_markdown(
@@ -185,21 +228,28 @@ def main():
     print()
 
     # Step 1: ニュース収集
-    all_news = collect_all_news(max_items_per_feed=20)
+    all_news, feed_stats = collect_all_news(max_items_per_feed=20)
     if not all_news:
         print("ニュースを取得できませんでした。インターネット接続を確認してください。")
         sys.exit(1)
 
+    total_collected = len(all_news)
+
     # Step 2: キーワードフィルタリング
     filtered = filter_news(all_news)
     target_news = filtered["pass"]
+    filtered_count = len(target_news)
 
     if not target_news:
         print("フィルター通過後のニュースが0件でした。")
         print("保留ニュース数:", len(filtered["pending"]))
         sys.exit(0)
 
-    # Step 3: 重要度判定
+    # Step 3: 重複排除（APIコスト削減のため重要度判定の前に実施）
+    target_news = deduplicate_news(target_news)
+    deduped_count = len(target_news)
+
+    # Step 4: 重要度判定
     judged = judge_all(client, target_news)
 
     # 重要度「なし」は除外
@@ -298,6 +348,9 @@ def main():
     print("生成されたファイル一覧:")
     for importance, title, path in saved_files:
         print(f"  [{importance}] {title[:45]} → {path.name}")
+
+    print()
+    _print_rss_summary(feed_stats, total_collected, filtered_count, deduped_count, len(saved_files))
 
 
 if __name__ == "__main__":
