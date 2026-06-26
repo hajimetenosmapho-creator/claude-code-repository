@@ -40,6 +40,9 @@ load_dotenv()
 
 OUTPUT_DIR = Path(__file__).parent / "output"
 
+# A評価ニュースの記事化上限（超過分は候補ファイルへ保存）
+A_ARTICLE_LIMIT = 5
+
 
 def _save_as_markdown(
     item: NewsItem,
@@ -211,9 +214,9 @@ def main():
     a_items = [r for r in judged if r["importance"] == "A"]
     b_items = [r for r in judged if r["importance"] == "B"]
 
-    # A評価は最大5件まで、超過分はスキップ
-    a_to_process = a_items[:5]
-    a_skipped    = a_items[5:]
+    # A評価は上限まで、超過分はスキップ
+    a_to_process = a_items[:A_ARTICLE_LIMIT]
+    a_skipped    = a_items[A_ARTICLE_LIMIT:]
 
     # 記事生成対象（S優先 → A）
     to_process = s_items + a_to_process
@@ -227,7 +230,7 @@ def main():
     a_skip_note = f"（全{len(a_items)}件中、{len(a_skipped)}件をスキップ）" if a_skipped else ""
     print("記事生成対象の振り分け結果:")
     print(f"  S評価（全件記事化）  : {len(s_items)}件")
-    print(f"  A評価（最大5件まで） : {len(a_to_process)}件  {a_skip_note}")
+    print(f"  A評価（最大{A_ARTICLE_LIMIT}件まで） : {len(a_to_process)}件  {a_skip_note}")
     print(f"  B評価（記事化なし）  : {len(b_items)}件 → 候補ファイルへ保存")
     print()
 

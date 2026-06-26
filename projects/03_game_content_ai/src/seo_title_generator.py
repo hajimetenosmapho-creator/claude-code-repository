@@ -3,6 +3,7 @@ Claude APIを使ってSEOタイトルを生成するモジュール。
 """
 
 import anthropic
+from functools import lru_cache
 from pathlib import Path
 from collector import NewsItem
 
@@ -11,6 +12,7 @@ PROMPT_FILE = Path(__file__).parent.parent / "prompts" / "seo_prompt.md"
 SEO_MODEL = "claude-haiku-4-5-20251001"
 
 
+@lru_cache(maxsize=1)
 def _load_prompt_template() -> str:
     return PROMPT_FILE.read_text(encoding="utf-8")
 

@@ -4,6 +4,7 @@ KAORUの部屋ブログ方針・SNS反応ルールをプロンプトに組み込
 """
 
 import anthropic
+from functools import lru_cache
 from pathlib import Path
 from collector import NewsItem
 
@@ -13,6 +14,7 @@ PROMPT_FILE = Path(__file__).parent.parent / "prompts" / "article_prompt.md"
 ARTICLE_MODEL = "claude-sonnet-4-6"
 
 
+@lru_cache(maxsize=1)
 def _load_prompt_template() -> str:
     return PROMPT_FILE.read_text(encoding="utf-8")
 
