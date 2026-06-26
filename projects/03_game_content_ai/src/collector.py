@@ -37,6 +37,9 @@ RSS_FEEDS = {
     "VGC": "https://www.videogameschronicle.com/feed/",
     "Insider Gaming": "https://insider-gaming.com/feed/",
     "PC Gamer": "https://www.pcgamer.com/rss/",
+    "Nintendo Life": "https://www.nintendolife.com/feeds/latest",
+    "Push Square": "https://www.pushsquare.com/feeds/latest",
+    "Pure Xbox": "https://www.purexbox.com/feeds/latest",
 }
 
 
