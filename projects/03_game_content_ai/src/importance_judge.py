@@ -45,11 +45,11 @@ def judge_importance(client: anthropic.Anthropic, item: NewsItem) -> dict:
         dict: {"importance": "S"|"A"|"B"|"なし", "reason": str}
     """
     template = _load_prompt_template()
-    prompt = template.format(
-        title=item.title,
-        summary=item.summary[:300],
-        source=item.source,
-        url=item.url,
+    prompt = (template
+        .replace("{title}", item.title)
+        .replace("{summary}", item.summary[:300])
+        .replace("{source}", item.source)
+        .replace("{url}", item.url)
     )
 
     try:

@@ -39,6 +39,7 @@ from importance_judge import judge_all
 from article_generator import generate_article
 from seo_title_generator import generate_seo_title
 from x_post_generator import generate_x_post
+from outputs import OutputManager, MarkdownOutput, WordPressOutput, ArticleData
 
 # .env ファイルを読み込む
 load_dotenv()
@@ -85,69 +86,6 @@ def _print_rss_summary(
     print(f"  {'記事生成':<18} {generated}件")
     print("=" * 20)
     print()
-
-
-def _save_as_markdown(
-    item: NewsItem,
-    importance: str,
-    seo_title: str,
-    article_body: str,
-    x_post: str,
-) -> Path:
-    """
-    生成した記事データを Markdown ファイルとして output/ に保存する。
-
-    Returns:
-        Path: 保存したファイルのパス
-    """
-    OUTPUT_DIR.mkdir(exist_ok=True)
-
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-    # ファイル名：日時_ソース名（スペースはアンダースコアに変換）
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    source_slug = item.source.replace(" ", "_").replace("*", "").replace("/", "")
-    filename = f"{timestamp}_{source_slug}_{importance}.md"
-    output_path = OUTPUT_DIR / filename
-
-    # 画像候補・出典情報（将来用）
-    image_candidates_yaml = "[]"
-    references_yaml = (
-        "references:\n"
-        f"  - title: \"{item.title}\"\n"
-        f"    url: \"{item.url}\"\n"
-        f"    publisher: \"{item.source}\"\n"
-        f"    published_date: \"{item.published_at}\""
-    )
-
-    content = f"""---
-title: "{seo_title}"
-importance: {importance}
-source: {item.source}
-source_url: "{item.url}"
-generated_at: "{now}"
-official_news_url: ""
-official_site_url: ""
-official_trailer_url: ""
-official_presskit_url: ""
-image_candidates: {image_candidates_yaml}
-image_source: ""
-image_terms_confirmed: false
-{references_yaml}
----
-
-# {seo_title}
-
-{article_body}
-
----
-
-## X投稿文
-
-{x_post}
-"""
-
-    output_path.write_text(content, encoding="utf-8")
-    return output_path
 
 
 def _save_b_candidates_markdown(candidates: list[dict]) -> Path:
@@ -303,6 +241,11 @@ def main():
         sys.exit(0)
 
     # Step 5: 記事生成・保存
+    output_manager = OutputManager(outputs=[
+        MarkdownOutput(output_dir=OUTPUT_DIR),
+        WordPressOutput.from_env(),
+    ])
+
     print(f"記事を生成しています（{len(to_process)}件）...")
     saved_files = []
     api_call_count = 0
@@ -320,9 +263,18 @@ def main():
         x_post       = generate_x_post(client, item, importance, article_body)
         api_call_count += 3
 
-        output_path = _save_as_markdown(item, importance, seo_title, article_body, x_post)
-        saved_files.append((importance, seo_title, output_path))
-        print(f"    保存: {output_path.name}")
+        article = ArticleData(
+            item=item,
+            importance=importance,
+            seo_title=seo_title,
+            article_body=article_body,
+            x_post=x_post,
+        )
+        destinations = output_manager.save_all(article)
+        for dest in destinations:
+            output_path = Path(dest)
+            saved_files.append((importance, seo_title, output_path))
+            print(f"    保存: {output_path.name}")
 
     # 完了サマリー
     print()

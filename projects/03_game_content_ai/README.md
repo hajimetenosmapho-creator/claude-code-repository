@@ -3,11 +3,21 @@
 国内外のゲームニュースをRSSで自動収集し、Claude AIが重要度を判定・日本語記事下書き・SEOタイトル・X投稿文を生成して、Markdownファイルとして保存するツールです。
 
 **ブログ名**：KAORUの部屋  
-**ステータス**：v1.0.0 MVP完成
+**ステータス**：v1.1.0 WordPress下書き投稿対応
 
 ---
 
-## 実装済み機能（v1.0.0）
+## 実装済み機能
+
+### v1.1.0 — WordPress下書き投稿対応
+
+- **WordPress REST API による下書き投稿**（v1.1.0 追加）
+  - `.env` に WordPress設定を追加すると有効になる
+  - 未設定の場合はMarkdown保存のみ動作（スキップされる）
+  - 投稿状態は `draft`（下書き）固定（誤公開防止）
+  - 認証：Application Password
+
+### v1.0.0 — MVP
 
 - 国内外16サイトのRSSからゲームニュースを自動収集
 - キーワードフィルターによる事前スクリーニング（Claude API使用量を削減）
@@ -74,7 +84,11 @@ pip install -r requirements.txt
 
 # 環境変数の設定
 copy .env.example .env
-# .env を開いて ANTHROPIC_API_KEY を設定する
+# .env を開いて以下を設定する
+#   ANTHROPIC_API_KEY  … Claude API キー（必須）
+#   WP_SITE_URL        … WordPressサイトURL（WordPress投稿を使う場合）
+#   WP_USERNAME        … WordPressユーザー名（WordPress投稿を使う場合）
+#   WP_APP_PASSWORD    … Application Password（WordPress投稿を使う場合）
 ```
 
 > **注意：** `.env` ファイルは `.gitignore` で除外されています。APIキーをコミットしないよう注意してください。
@@ -95,8 +109,16 @@ python main.py --max-articles 3
 
 ---
 
-## 今後の予定（v1.x 以降）
+## 今後の予定
 
-- WordPress REST API連携（生成記事の自動投稿）
-- アイキャッチ画像URL取得（各ニュースサイトのOGP画像）
+### v1.2.0
+
+- WordPress管理画面URLの表示改善
+- カテゴリ・タグ自動設定
+- Markdown → HTML変換
+- OGP画像 / アイキャッチ画像対応
+
+### v2.x
+
 - Windowsタスクスケジューラによる定時自動実行
+- WordPress自動投稿（下書き → 公開の自動化）
