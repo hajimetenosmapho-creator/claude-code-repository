@@ -24,6 +24,14 @@ class NewsItem:
     image_terms_confirmed: bool = False
 
 
+@dataclass
+class FeedStats:
+    source: str
+    count: int
+    status: str        # "ok" / "error" / "empty"
+    error_message: str = ""
+
+
 RSS_FEEDS = {
     "4Gamer": "https://www.4gamer.net/rss/index.xml",
     "Game*Spark": "https://www.gamespark.jp/rss/index.rdf",
@@ -40,6 +48,14 @@ RSS_FEEDS = {
     "Nintendo Life": "https://www.nintendolife.com/feeds/latest",
     "Push Square": "https://www.pushsquare.com/feeds/latest",
     "Pure Xbox": "https://www.purexbox.com/feeds/latest",
+}
+
+FEED_GROUPS = {
+    "日本語": ["4Gamer", "Game*Spark"],
+    "公式": ["PlayStation公式", "Nintendo公式", "Xbox公式"],
+    "総合英語": ["IGN", "GameSpot", "Eurogamer", "Gematsu",
+                 "VGC", "Insider Gaming", "PC Gamer"],
+    "プラットフォーム特化": ["Nintendo Life", "Push Square", "Pure Xbox"],
 }
 
 
@@ -67,9 +83,9 @@ def _extract_summary(entry, max_length: int = 500) -> str:
     return summary[:max_length] if len(summary) > max_length else summary
 
 
-def fetch_from_feed(source_name: str, feed_url: str, max_items: int = 20) -> list[NewsItem]:
+def fetch_from_feed(source_name: str, feed_url: str, max_items: int = 20) -> tuple[list[NewsItem], FeedStats]:
     """
-    指定されたRSSフィードからニュースを取得して NewsItem のリストを返す。
+    指定されたRSSフィードからニュースを取得して NewsItem のリストと FeedStats を返す。
 
     Args:
         source_name: ニュースソース名（例: "4Gamer"）
@@ -77,14 +93,13 @@ def fetch_from_feed(source_name: str, feed_url: str, max_items: int = 20) -> lis
         max_items: 取得する最大件数
 
     Returns:
-        NewsItem のリスト（取得失敗時は空リスト）
+        (NewsItem のリスト, FeedStats)
     """
     try:
         feed = feedparser.parse(feed_url)
 
         if feed.bozo and not feed.entries:
-            print(f"  [警告] {source_name}: RSSの取得・解析に問題があります")
-            return []
+            return [], FeedStats(source_name, 0, "error", "RSSの取得・解析に問題があります")
 
         items = []
         for entry in feed.entries[:max_items]:
@@ -103,30 +118,30 @@ def fetch_from_feed(source_name: str, feed_url: str, max_items: int = 20) -> lis
             )
             items.append(item)
 
-        print(f"  [{source_name}] {len(items)}件取得")
-        return items
+        status = "empty" if len(items) == 0 else "ok"
+        return items, FeedStats(source_name, len(items), status)
 
     except Exception as e:
-        print(f"  [エラー] {source_name}: {e}")
-        return []
+        return [], FeedStats(source_name, 0, "error", str(e))
 
 
-def collect_all_news(max_items_per_feed: int = 20) -> list[NewsItem]:
+def collect_all_news(max_items_per_feed: int = 20) -> tuple[list[NewsItem], list[FeedStats]]:
     """
-    全RSSフィードからニュースを収集して一覧を返す。
+    全RSSフィードからニュースを収集して一覧と取得統計を返す。
 
     Args:
         max_items_per_feed: フィードごとの最大取得件数
 
     Returns:
-        全ソースのニュースをまとめた NewsItem のリスト
+        (全ソースの NewsItem リスト, 各フィードの FeedStats リスト)
     """
     print("ニュースを収集しています...")
-    all_items = []
+    all_items: list[NewsItem] = []
+    all_stats: list[FeedStats] = []
 
     for source_name, feed_url in RSS_FEEDS.items():
-        items = fetch_from_feed(source_name, feed_url, max_items_per_feed)
+        items, stats = fetch_from_feed(source_name, feed_url, max_items_per_feed)
         all_items.extend(items)
+        all_stats.append(stats)
 
-    print(f"\n合計 {len(all_items)} 件のニュースを取得しました。\n")
-    return all_items
+    return all_items, all_stats
