@@ -15,6 +15,7 @@ class ArticleData:
     seo_title: str
     article_body: str
     x_post: str
+    featured_image_url: str = ""  # アイキャッチ画像候補URL（空文字 = なし）
 
 
 class BaseOutput(ABC):

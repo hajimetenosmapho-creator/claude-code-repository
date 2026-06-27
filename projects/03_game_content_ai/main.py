@@ -263,12 +263,14 @@ def main():
         x_post       = generate_x_post(client, item, importance, article_body)
         api_call_count += 3
 
+        featured_image_url = item.image_candidates[0] if item.image_candidates else ""
         article = ArticleData(
             item=item,
             importance=importance,
             seo_title=seo_title,
             article_body=article_body,
             x_post=x_post,
+            featured_image_url=featured_image_url,
         )
         destinations = output_manager.save_all(article)
         for dest in destinations:

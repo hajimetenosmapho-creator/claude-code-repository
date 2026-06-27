@@ -45,11 +45,13 @@ main.py
 
 ```
 src/
+├── image_extractor.py       # RSSエントリーから画像URL候補を抽出（v1.3 追加）
 └── outputs/
     ├── __init__.py          # OutputManager, MarkdownOutput, ArticleData を公開
     ├── base.py              # ArticleData dataclass / BaseOutput 抽象クラス
     ├── manager.py           # OutputManager
     ├── markdown_output.py   # MarkdownOutput（実装済み）
+    ├── taxonomy_config.py   # カテゴリ・タグIDの設定（v1.2 追加）
     └── wordpress_output.py  # WordPressOutput（v1.1 実装済み）
 ```
 
@@ -68,6 +70,7 @@ src/
 | `seo_title` | `str` | AIが生成したSEOタイトル |
 | `article_body` | `str` | AIが生成した記事本文 |
 | `x_post` | `str` | AIが生成したX投稿文 |
+| `featured_image_url` | `str` | アイキャッチ画像候補URL（v1.3 追加、空文字 = なし） |
 
 ### BaseOutput（`base.py`）
 

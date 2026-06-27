@@ -21,10 +21,29 @@
 
 ---
 
-## v1.3.0 — WordPress出力品質向上（予定）
+## v1.3.0 — アイキャッチ画像URL抽出・記録（2026-06-27 完了）
+
+- [x] `image_extractor.py` 新規作成（RSSエントリーから画像URL抽出）
+- [x] `collector.py` に `extract_image_url()` 呼び出しを追加（`NewsItem.image_candidates` に格納）
+- [x] `ArticleData` に `featured_image_url` フィールドを追加（デフォルト空文字）
+- [x] `markdown_output.py` にアイキャッチ候補URLをコメントとして記録
+- [x] E2Eテスト成功（画像あり・なし両方で正常動作確認）
+
+---
+
+## v1.4.0 — アイキャッチ画像WordPress自動アップロード（予定）
+
+- [ ] `src/outputs/wordpress_media.py` 新規作成（画像ダウンロード・アップロード）
+- [ ] WordPress `/wp-json/wp/v2/media` へのアップロード実装
+- [ ] 投稿 payload に `featured_media` を設定
+- [ ] 著作権確認済み画像のみを対象とする仕組みの検討
+- [ ] アップロード失敗時のフォールバック処理
+
+---
+
+## v1.5.0 — WordPress出力品質向上（予定）
 
 - [ ] Markdown → HTML変換（記事本文をWordPressで正しく表示）
-- [ ] OGP画像 / アイキャッチ画像対応
 
 ---
 

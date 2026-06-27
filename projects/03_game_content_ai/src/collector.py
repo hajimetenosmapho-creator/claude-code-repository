@@ -6,6 +6,7 @@ import feedparser
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Optional
+from image_extractor import extract_image_url
 
 
 @dataclass
@@ -110,12 +111,14 @@ def fetch_from_feed(source_name: str, feed_url: str, max_items: int = 20) -> tup
             if not title or not url:
                 continue
 
+            image_url = extract_image_url(entry)
             item = NewsItem(
                 title=title,
                 url=url,
                 summary=_extract_summary(entry),
                 source=source_name,
                 published_at=_parse_published(entry),
+                image_candidates=[image_url] if image_url else [],
             )
             items.append(item)
 

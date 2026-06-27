@@ -5,6 +5,29 @@
 
 ---
 
+## [v1.3.0] - 2026-06-27
+
+### Added
+
+- `image_extractor.py` 新規作成（RSSエントリーから画像URLを抽出するモジュール）
+  - `extract_image_url(entry) -> str`：media:thumbnail → enclosures → media:content の順に画像URLを探索
+  - 取得できない場合は空文字を返す（例外を発生させない安全設計）
+- `NewsItem.image_candidates` への画像URL格納（`collector.py` 修正）
+- `ArticleData` に `featured_image_url: str = ""` フィールドを追加（`base.py` 修正）
+- Markdownファイルの末尾に `<!-- アイキャッチ候補: URL -->` コメントを記録（`markdown_output.py` 修正）
+- Markdownの `image_candidates` YAMLフィールドに実際の候補URLを出力
+
+### Note
+
+- 画像のWordPressアップロードは著作権リスクのため実装しない（v1.4.0 以降で検討）
+- 取得した画像URLは候補として記録するのみ。利用前に著作権を確認すること
+
+### Tested
+
+- E2Eテスト成功（画像URLあり・なし両方のニュースで正常動作確認）
+
+---
+
 ## [v1.2.0] - 2026-06-27
 
 ### Added

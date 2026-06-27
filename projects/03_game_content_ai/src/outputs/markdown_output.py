@@ -37,7 +37,17 @@ class MarkdownOutput(BaseOutput):
         filename = f"{timestamp}_{source_slug}_{article.importance}.md"
         output_path = self.output_dir / filename
 
-        image_candidates_yaml = "[]"
+        candidates = article.item.image_candidates
+        if candidates:
+            image_candidates_yaml = "\n" + "\n".join(f'  - "{u}"' for u in candidates)
+        else:
+            image_candidates_yaml = "[]"
+
+        image_comment = (
+            f"\n<!-- アイキャッチ候補: {article.featured_image_url} -->\n"
+            if article.featured_image_url else ""
+        )
+
         references_yaml = (
             "references:\n"
             f"  - title: \"{article.item.title}\"\n"
@@ -71,7 +81,7 @@ image_terms_confirmed: false
 ## X投稿文
 
 {article.x_post}
-"""
+{image_comment}"""
 
         output_path.write_text(content, encoding="utf-8")
         return str(output_path)
