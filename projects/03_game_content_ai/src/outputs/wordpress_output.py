@@ -5,6 +5,7 @@ WordPress REST API への記事下書き投稿を担うモジュール。
 import os
 import requests
 from .base import BaseOutput, ArticleData
+from .taxonomy_config import resolve_taxonomy
 
 
 class WordPressOutput(BaseOutput):
@@ -46,11 +47,16 @@ class WordPressOutput(BaseOutput):
             RuntimeError: 投稿に失敗した場合（ステータスコードが 200/201 以外）
         """
         endpoint = f"{self.site_url}/wp-json/wp/v2/posts"
+        categories, tags = resolve_taxonomy(article.importance)
         payload = {
             "title": article.seo_title,
             "content": article.article_body,
             "status": "draft",
         }
+        if categories:
+            payload["categories"] = categories
+        if tags:
+            payload["tags"] = tags
 
         response = requests.post(
             endpoint,

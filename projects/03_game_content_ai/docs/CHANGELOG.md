@@ -5,6 +5,26 @@
 
 ---
 
+## [v1.2.0] - 2026-06-27
+
+### Added
+
+- `taxonomy_config.py` 新規作成（カテゴリ・タグIDの一元管理）
+  - `GAME_NEWS_CATEGORY_ID`：「ゲームニュース」カテゴリIDの定数
+  - `_TAG_ID_BY_IMPORTANCE`：重要度別タグIDの辞書（S→注目 / A→速報 / B→なし）
+  - `resolve_taxonomy(importance)`：重要度からカテゴリID・タグIDを解決する関数
+    - ID が 0（未設定）の場合は自動的にスキップ
+- `WordPressOutput.save()` にカテゴリ・タグ設定を追加
+  - `resolve_taxonomy()` を呼び出し、`categories` / `tags` をペイロードに追加
+  - カテゴリ・タグが空リストの場合はペイロードから省略（WordPress標準に準拠）
+
+### Tested
+
+- カテゴリ・タグID設定済み環境でのE2Eテスト成功
+  - RSS収集 → フィルター → 重複排除 → 重要度判定 → 記事生成 → Markdown保存 → WordPress下書き投稿（カテゴリ・タグ付き）の全工程を確認
+
+---
+
 ## [v1.1.0] - 2026-06-26
 
 ### Added
