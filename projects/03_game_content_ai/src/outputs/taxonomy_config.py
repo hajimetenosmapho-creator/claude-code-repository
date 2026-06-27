@@ -1,21 +1,26 @@
 """
 WordPress カテゴリ・タグIDの設定と解決を行うモジュール。
 
-設定方法：
-  WordPress管理画面（投稿 → カテゴリー / タグ）でIDを確認し、
-  下記の定数を実際のIDに書き換えてください。
+IDはWordPress管理画面（投稿 → カテゴリー / タグ）で確認できます。
 """
 
-# ゲームニュースカテゴリID
-# WordPress管理画面 → 投稿 → カテゴリー → 該当行にマウスを乗せてIDを確認
-GAME_NEWS_CATEGORY_ID: int = 0  # 例: 3（0のままだとカテゴリは付与されません）
+# ---- カテゴリID ----
+CATEGORY_GAME_NEWS: int = 14   # ゲームニュース（03_game_content_ai の投稿先）
+CATEGORY_REVIEW: int = 4       # レビュー（将来のレビュー記事生成ツール用）
+CATEGORY_AI_DEV: int = 69      # AI開発（将来のAI開発記事用）
 
-# 重要度別タグID
-# WordPress管理画面 → 投稿 → タグ → 該当行にマウスを乗せてIDを確認
-_TAG_ID_BY_IMPORTANCE: dict[str, list[int]] = {
-    "S": [0],  # 注目タグID（例: 12）
-    "A": [0],  # 速報タグID（例: 13）
-    "B": [],   # タグなし
+# ---- タグID ----
+TAG_NOTABLE: int = 70   # 注目（S評価記事に付与）
+TAG_BREAKING: int = 71  # 速報（S・A評価記事に付与）
+
+# ---- 重要度別の投稿設定 ----
+# S記事：ゲームニュース + 注目 + 速報
+# A記事：ゲームニュース + 速報
+# B記事：ゲームニュースのみ
+_TAXONOMY_BY_IMPORTANCE: dict[str, dict[str, list[int]]] = {
+    "S": {"categories": [CATEGORY_GAME_NEWS], "tags": [TAG_NOTABLE, TAG_BREAKING]},
+    "A": {"categories": [CATEGORY_GAME_NEWS], "tags": [TAG_BREAKING]},
+    "B": {"categories": [CATEGORY_GAME_NEWS], "tags": []},
 }
 
 
@@ -23,15 +28,11 @@ def resolve_taxonomy(importance: str) -> tuple[list[int], list[int]]:
     """
     重要度から WordPress カテゴリID・タグIDのリストを返す。
 
-    ID が 0 のものは未設定とみなしてスキップする。
-
     Args:
         importance: 重要度文字列（"S" / "A" / "B"）
 
     Returns:
         tuple[list[int], list[int]]: (カテゴリIDリスト, タグIDリスト)
     """
-    categories = [GAME_NEWS_CATEGORY_ID] if GAME_NEWS_CATEGORY_ID > 0 else []
-    raw_tags = _TAG_ID_BY_IMPORTANCE.get(importance, [])
-    tags = [tag_id for tag_id in raw_tags if tag_id > 0]
-    return categories, tags
+    config = _TAXONOMY_BY_IMPORTANCE.get(importance, {"categories": [], "tags": []})
+    return config["categories"], config["tags"]
