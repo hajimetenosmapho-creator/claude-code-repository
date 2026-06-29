@@ -51,7 +51,7 @@ class WordPressOutput(BaseOutput):
         payload = {
             "title": article.seo_title,
             "content": article.article_body,
-            "status": "draft",
+            "status": article.publish_status.value,  # PublishStatus Enum から文字列に変換
             "excerpt": article.excerpt,
             "slug": article.slug,
         }
@@ -81,6 +81,7 @@ class WordPressOutput(BaseOutput):
 
         print(f"      投稿ID  : {post_id}")
         print(f"      slug    : {actual_slug}")
+        print(f"      ステータス: {article.publish_status.value}")
         print(f"      編集URL : {edit_url}")
 
         return edit_url

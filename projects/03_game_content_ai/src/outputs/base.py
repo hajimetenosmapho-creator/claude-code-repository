@@ -5,6 +5,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from collector import NewsItem
+from publishing_config import PublishStatus
 
 
 @dataclass
@@ -15,11 +16,12 @@ class ArticleData:
     seo_title: str
     article_body: str
     x_post: str
-    featured_image_url: str = ""   # アイキャッチ画像候補URL（空文字 = なし）
-    excerpt: str = ""              # WordPress抜粋・Markdown記録用（v1.4.0 追加）
-    meta_description: str = ""     # 将来のSEOプラグイン連携用（v1.4.0ではexcerptと同値）
-    slug: str = ""                 # WordPress slug（v1.5.0 追加）
-    featured_media_id: int = 0     # WordPress media_id（v1.6.0 追加、0 = アイキャッチなし）
+    featured_image_url: str = ""              # アイキャッチ画像候補URL（空文字 = なし）
+    excerpt: str = ""                         # WordPress抜粋・Markdown記録用（v1.4.0 追加）
+    meta_description: str = ""                # 将来のSEOプラグイン連携用（v1.4.0ではexcerptと同値）
+    slug: str = ""                            # WordPress slug（v1.5.0 追加）
+    featured_media_id: int = 0                # WordPress media_id（v1.6.0 追加、0 = アイキャッチなし）
+    publish_status: PublishStatus = PublishStatus.DRAFT  # 投稿ステータス（v1.7.0 追加）
 
 
 class BaseOutput(ABC):

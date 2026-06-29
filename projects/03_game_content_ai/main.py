@@ -43,6 +43,7 @@ from seo_title_generator import generate_seo_title
 from x_post_generator import generate_x_post
 from image_resolver import resolve_featured_image, resolve_media_id
 from slug_generator import generate_slug
+from publishing_config import PublishingConfig
 from outputs import OutputManager, MarkdownOutput, WordPressOutput, ArticleData
 
 # .env ファイルを読み込む
@@ -200,6 +201,7 @@ def main():
         sys.exit(1)
 
     default_media_id = int(os.getenv("DEFAULT_MEDIA_ID", "0"))
+    publishing_config = PublishingConfig.from_env()
 
     client = anthropic.Anthropic(api_key=api_key)
 
@@ -311,6 +313,7 @@ def main():
         slug               = generate_slug(seo_title, date_str)
         featured_image_url = resolve_featured_image(item)
         featured_media_id  = resolve_media_id(item, default_media_id)
+        publish_status     = publishing_config.resolve_status(importance)
         article = ArticleData(
             item=item,
             importance=importance,
@@ -322,6 +325,7 @@ def main():
             meta_description=excerpt,  # v1.4.0 では excerpt と同値
             slug=slug,
             featured_media_id=featured_media_id,
+            publish_status=publish_status,
         )
         destinations = output_manager.save_all(article)
         for dest in destinations:
