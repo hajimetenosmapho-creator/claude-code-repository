@@ -53,6 +53,7 @@ class WordPressOutput(BaseOutput):
             "content": article.article_body,
             "status": "draft",
             "excerpt": article.excerpt,
+            "slug": article.slug,
         }
         if categories:
             payload["categories"] = categories
@@ -71,5 +72,13 @@ class WordPressOutput(BaseOutput):
                 f"WordPress投稿失敗 (HTTP {response.status_code}): {response.text[:200]}"
             )
 
-        post_id = response.json().get("id")
-        return f"{self.site_url}/wp-admin/post.php?post={post_id}&action=edit"
+        response_data = response.json()
+        post_id    = response_data.get("id")
+        actual_slug = response_data.get("slug", "")
+        edit_url   = f"{self.site_url}/wp-admin/post.php?post={post_id}&action=edit"
+
+        print(f"      投稿ID  : {post_id}")
+        print(f"      slug    : {actual_slug}")
+        print(f"      編集URL : {edit_url}")
+
+        return edit_url

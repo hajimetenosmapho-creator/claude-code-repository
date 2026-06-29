@@ -21,6 +21,7 @@ import argparse
 import os
 import re
 import sys
+import time
 import anthropic
 
 # Windowsコンソールの文字コード問題を防ぐ
@@ -41,6 +42,7 @@ from article_generator import generate_article
 from seo_title_generator import generate_seo_title
 from x_post_generator import generate_x_post
 from image_resolver import resolve_featured_image
+from slug_generator import generate_slug
 from outputs import OutputManager, MarkdownOutput, WordPressOutput, ArticleData
 
 # .env ファイルを読み込む
@@ -173,6 +175,8 @@ total_count: {len(candidates)}
 
 
 def main():
+    start_time = time.time()
+
     # コマンドライン引数の処理
     parser = argparse.ArgumentParser(description="ゲームニュース記事生成ツール")
     parser.add_argument(
@@ -301,6 +305,8 @@ def main():
         api_call_count += 3
 
         excerpt            = _extract_excerpt(article_body)
+        date_str           = datetime.now().strftime("%Y%m%d")
+        slug               = generate_slug(seo_title, date_str)
         featured_image_url = resolve_featured_image(item)
         article = ArticleData(
             item=item,
@@ -311,6 +317,7 @@ def main():
             featured_image_url=featured_image_url,
             excerpt=excerpt,
             meta_description=excerpt,  # v1.4.0 では excerpt と同値
+            slug=slug,
         )
         destinations = output_manager.save_all(article)
         for dest in destinations:
@@ -320,8 +327,9 @@ def main():
 
     # 完了サマリー
     print()
+    elapsed = time.time() - start_time
     print("=" * 60)
-    print(f"  完了！ {len(saved_files)} 件の記事を生成しました")
+    print(f"  完了！ {len(saved_files)} 件の記事を生成しました（実行時間: {elapsed:.1f}秒）")
     print("=" * 60)
     print()
 

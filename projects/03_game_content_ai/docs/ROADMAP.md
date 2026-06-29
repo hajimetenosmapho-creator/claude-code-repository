@@ -46,12 +46,22 @@
 
 ---
 
-## v1.5.0 — Publishing Enhancement（予定）
+## v1.5.0 — Publishing Enhancement（2026-06-30 完了）
 
-- [ ] slug 生成と WordPress `post_name` への送信
-- [ ] WordPress 投稿後 URL の取得・X投稿文への自動埋め込み
-- [ ] 実行ログのファイル出力（`logs/YYYYMMDD.log`）
-- [ ] ImageResolver 拡張（`DEFAULT_IMAGE_URL` による空欄補完）
+- [x] `src/slug_generator.py` 新規作成（`generate_slug(seo_title, date_str) -> str`）
+  - ASCII英数字を抽出・小文字化・ケバブケース変換・最大30文字 + 日付で一意性保証
+  - 英字が取れない場合は `article-YYYYMMDD` にフォールバック
+- [x] `ArticleData` に `slug: str = ""` フィールドを追加（後方互換性維持）
+- [x] `main.py` で slug を生成し `ArticleData` に渡す（API追加なし）
+- [x] `markdown_output.py` の YAML front matter に `slug` を追記
+- [x] `wordpress_output.py` の payload に `"slug"` を追加
+- [x] WordPress 投稿後の投稿 ID・slug・編集URL をログに表示
+- [x] 実行時間を完了サマリーに表示（`実行時間: XX.X秒`）
+- [x] E2Eテスト成功
+
+---
+
+## v1.6.0 — Image Pipeline（予定）
 
 ---
 

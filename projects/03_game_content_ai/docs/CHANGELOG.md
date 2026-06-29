@@ -5,6 +5,39 @@
 
 ---
 
+## [v1.5.0] - 2026-06-30
+
+### Added
+
+- `slug_generator.py` 新規作成（`src/slug_generator.py`）
+  - `generate_slug(seo_title: str, date_str: str) -> str`
+  - ASCII英数字部分を抽出・小文字化・ケバブケース変換・最大30文字 + 日付付加
+  - 英字が取れない場合は `article-YYYYMMDD` にフォールバック
+  - 新規パッケージ追加なし・API呼び出しなし
+- `ArticleData` に `slug: str = ""` フィールドを追加（`base.py` 修正）
+- `main.py` で `generate_slug(seo_title, date_str)` を呼び出して `ArticleData.slug` を設定
+- `main.py` に実行時間計測を追加（`time.time()` による計測、完了サマリーに `実行時間: XX.X秒` を表示）
+- WordPress 投稿後の投稿 ID・slug・編集 URL をコンソールに表示（`wordpress_output.py` 修正）
+
+### Changed
+
+- `wordpress_output.py` の payload に `"slug": article.slug` を追加
+- `markdown_output.py` の YAML front matter に `slug` フィールドを追記
+- 完了サマリーの表示に実行時間を追加
+
+### Note
+
+- API呼び出し回数は増加なし（1記事あたり引き続き3回）
+- 外部ライブラリ追加なし
+- `.env` 変更不要
+
+### Tested
+
+- slug 生成の単体テスト（7ケース）：PS6/Switch混在・英字のみ・日本語のみ・記号のみ・長文・全英語
+- E2Eテスト成功（`python main.py --max-articles 1`）
+
+---
+
 ## [v1.4.0] - 2026-06-30
 
 ### Added

@@ -65,6 +65,7 @@ importance: {article.importance}
 source: {article.item.source}
 source_url: "{article.item.url}"
 generated_at: "{now}"
+slug: "{article.slug}"
 excerpt: "{excerpt_safe}"
 meta_description: "{meta_description_safe}"
 official_news_url: ""

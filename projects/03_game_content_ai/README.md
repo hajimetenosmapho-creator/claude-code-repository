@@ -3,11 +3,24 @@
 国内外のゲームニュースをRSSで自動収集し、Claude AIが重要度を判定・日本語記事下書き・SEOタイトル・X投稿文を生成して、Markdownファイルとして保存するツールです。
 
 **ブログ名**：KAORUの部屋  
-**ステータス**：v1.4.0 SEO Foundation（excerpt生成・ImageResolver導入）
+**ステータス**：v1.5.0 Publishing Enhancement（slug生成・投稿ログ改善）
 
 ---
 
 ## 実装済み機能
+
+### v1.5.0 — Publishing Enhancement（2026-06-30 完了）
+
+- **slug の自動生成と WordPress への設定**（v1.5.0 追加）
+  - `src/slug_generator.py` が SEO タイトルの ASCII 英数字を抽出してケバブケース slug を生成
+  - 例：`【速報】PS6はNintendo Switch型に？` → `ps6-nintendo-switch-20260630`
+  - 英字が取れない場合は `article-YYYYMMDD` にフォールバック
+  - WordPress 投稿 payload の `slug` フィールドに自動設定
+  - Markdown YAML front matter にも記録
+- **WordPress 投稿ログ改善**（v1.5.0 追加）
+  - 投稿 ID・実際に使用された slug・編集 URL をコンソール表示
+- **実行時間表示**（v1.5.0 追加）
+  - 完了サマリーに `実行時間: XX.X秒` を表示
 
 ### v1.4.0 — SEO Foundation（2026-06-30 完了）
 
