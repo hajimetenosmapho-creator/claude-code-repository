@@ -59,6 +59,8 @@ class WordPressOutput(BaseOutput):
             payload["categories"] = categories
         if tags:
             payload["tags"] = tags
+        if article.featured_media_id > 0:
+            payload["featured_media"] = article.featured_media_id
 
         response = requests.post(
             endpoint,

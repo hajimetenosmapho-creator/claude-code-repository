@@ -61,15 +61,31 @@
 
 ---
 
-## v1.6.0 — Image Pipeline（予定）
+## v1.6.0 — Image Pipeline（2026-06-30 完了）
+
+- [x] `ArticleData` に `featured_media_id: int = 0` フィールドを追加（`base.py` 修正）
+- [x] `image_resolver.py` に `resolve_media_id(item, default_media_id) -> int` を追加
+  - `image_terms_confirmed == False` の間は常に `default_media_id` を返す
+  - 将来（v1.7.0）の権利確認済み画像アップロードに対応した拡張ポイント設計
+- [x] `main.py` で `DEFAULT_MEDIA_ID` を `os.getenv()` から取得し `resolve_media_id()` へ渡す
+- [x] `wordpress_output.py` に `featured_media` 設定を追加
+  - `featured_media_id > 0` の場合のみ payload に `"featured_media"` キーを追加
+  - `featured_media_id == 0` の場合は従来どおりアイキャッチなしで投稿
+- [x] `.env.example` に `DEFAULT_MEDIA_ID` を追記（コメントアウトで設定方法を説明）
+- [x] `docs/blog_strategy.md` に画像利用ポリシーを追記
+  - RSS画像・OGP画像のアップロード禁止ルールを明文化
+  - デフォルト画像の設定手順（WordPress管理画面でのID確認方法）
+- [x] E2Eテスト成功（DEFAULT_MEDIA_ID=0 で従来動作確認）
 
 ---
 
-## v1.6.0 — Image Pipeline（予定）
+## v1.7.0 — Automation Foundation（予定）
 
 - [ ] 権利確認済み画像の WordPress メディアアップロード（`/wp-json/wp/v2/media`）
-- [ ] `featured_media` 設定（アップロード後のメディアIDを投稿に紐付け）
-- [ ] Slack/Discord への実行完了通知
+  - `image_terms_confirmed == True` の画像のみ対象（`MediaUploader` クラスとして実装）
+  - `featured_media` に media_id を設定
+- [ ] AI生成画像の組み込み検討
+- [ ] 内部リンク候補の自動提示
 
 ---
 

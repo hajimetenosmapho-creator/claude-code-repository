@@ -5,6 +5,44 @@
 
 ---
 
+## [v1.6.0] - 2026-06-30
+
+### Added
+
+- `ArticleData` に `featured_media_id: int = 0` フィールドを追加（`base.py` 修正）
+  - 0 の場合はアイキャッチなし（従来動作と同じ）
+  - WordPress `featured_media` フィールドの値として使用
+- `image_resolver.py` に `resolve_media_id(item, default_media_id)` 関数を追加
+  - `image_terms_confirmed == False`（全RSS画像が未確認）の間は常に `default_media_id` を返す
+  - 将来（v1.7.0）の権利確認済み画像アップロード対応のための拡張ポイント
+- `main.py` に `DEFAULT_MEDIA_ID` の読み込みを追加（`os.getenv("DEFAULT_MEDIA_ID", "0")`）
+  - `resolve_media_id(item, default_media_id)` を呼び出して `ArticleData.featured_media_id` に設定
+- `.env.example` に `DEFAULT_MEDIA_ID` の設定例を追記（コメントアウト形式・設定方法の説明付き）
+- `docs/blog_strategy.md` に画像利用ポリシーを追記（v1.6.0 確定版）
+  - RSS画像・OGP画像のアップロード禁止ルールを明文化
+  - デフォルト画像の WordPress 設定手順（Media ID 確認方法）
+
+### Changed
+
+- `wordpress_output.py` の payload に `featured_media` 条件付き追加
+  - `article.featured_media_id > 0` の場合のみ `payload["featured_media"]` を設定
+  - 0 の場合はキーごと省略（WordPress の既定値が優先される）
+
+### Note
+
+- API呼び出し回数は増加なし（1記事あたり引き続き3回）
+- 外部ライブラリ追加なし
+- `.env` の実ファイル変更不要（`DEFAULT_MEDIA_ID` 未設定の場合は 0 として動作）
+- WordPress Media API（`/wp-json/wp/v2/media`）は使用しない（v1.7.0 以降の予定）
+
+### Tested
+
+- E2Eテスト成功（`python main.py --max-articles 1`、`DEFAULT_MEDIA_ID=0`）
+  - featured_media が payload に含まれないことを確認（従来動作）
+  - API呼び出し回数: 3回（変化なし）
+
+---
+
 ## [v1.5.0] - 2026-06-30
 
 ### Added

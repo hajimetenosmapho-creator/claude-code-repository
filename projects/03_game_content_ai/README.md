@@ -3,11 +3,22 @@
 国内外のゲームニュースをRSSで自動収集し、Claude AIが重要度を判定・日本語記事下書き・SEOタイトル・X投稿文を生成して、Markdownファイルとして保存するツールです。
 
 **ブログ名**：KAORUの部屋  
-**ステータス**：v1.5.0 Publishing Enhancement（slug生成・投稿ログ改善）
+**ステータス**：v1.6.0 Image Pipeline（デフォルトアイキャッチ画像対応）
 
 ---
 
 ## 実装済み機能
+
+### v1.6.0 — Image Pipeline（2026-06-30 完了）
+
+- **デフォルトアイキャッチ画像の自動設定**（v1.6.0 追加）
+  - WordPress メディアライブラリにアップロード済みの画像を `DEFAULT_MEDIA_ID` で指定
+  - `.env` に `DEFAULT_MEDIA_ID=12345` を設定するだけで全記事に同じアイキャッチを自動設定
+  - `0`（未設定）の場合はアイキャッチなしで投稿（v1.5.0 以前と同じ動作）
+  - RSS・OGP 画像のアップロードは著作権リスクのため引き続き非対応
+- **`resolve_media_id()` 追加**（v1.6.0 追加）
+  - `image_resolver.py` に `resolve_media_id(item, default_media_id)` を追加
+  - 将来（v1.7.0）の権利確認済み画像アップロードに対応した拡張ポイント設計
 
 ### v1.5.0 — Publishing Enhancement（2026-06-30 完了）
 
@@ -152,17 +163,11 @@ python main.py --max-articles 3
 
 ## 今後の予定
 
-### v1.5.0 — Publishing Enhancement
+### v1.7.0 — Automation Foundation
 
-- slug 生成と WordPress への送信
-- WordPress 投稿後 URL の取得・X投稿文への自動埋め込み
-- 実行ログのファイル出力
-- ImageResolver 拡張（デフォルト画像対応）
-
-### v1.6.0 — Image Pipeline
-
-- 権利確認済み画像の WordPress メディアアップロード
-- `featured_media` 設定
+- 権利確認済み画像の WordPress メディアアップロード（`MediaUploader` クラス）
+- AI生成画像の組み込み検討
+- 内部リンク候補の自動提示
 
 ### v2.0 — AI Blog Operator
 

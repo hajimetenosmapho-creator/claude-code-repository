@@ -41,7 +41,7 @@ from importance_judge import judge_all
 from article_generator import generate_article
 from seo_title_generator import generate_seo_title
 from x_post_generator import generate_x_post
-from image_resolver import resolve_featured_image
+from image_resolver import resolve_featured_image, resolve_media_id
 from slug_generator import generate_slug
 from outputs import OutputManager, MarkdownOutput, WordPressOutput, ArticleData
 
@@ -199,6 +199,8 @@ def main():
         print(".env ファイルに ANTHROPIC_API_KEY=your_key を追加してください。")
         sys.exit(1)
 
+    default_media_id = int(os.getenv("DEFAULT_MEDIA_ID", "0"))
+
     client = anthropic.Anthropic(api_key=api_key)
 
     print("=" * 60)
@@ -308,6 +310,7 @@ def main():
         date_str           = datetime.now().strftime("%Y%m%d")
         slug               = generate_slug(seo_title, date_str)
         featured_image_url = resolve_featured_image(item)
+        featured_media_id  = resolve_media_id(item, default_media_id)
         article = ArticleData(
             item=item,
             importance=importance,
@@ -318,6 +321,7 @@ def main():
             excerpt=excerpt,
             meta_description=excerpt,  # v1.4.0 では excerpt と同値
             slug=slug,
+            featured_media_id=featured_media_id,
         )
         destinations = output_manager.save_all(article)
         for dest in destinations:
