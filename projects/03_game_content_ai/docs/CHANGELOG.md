@@ -5,6 +5,45 @@
 
 ---
 
+## [v1.4.0] - 2026-06-30
+
+### Added
+
+- `image_resolver.py` 新規作成（`src/image_resolver.py`）
+  - `resolve_featured_image(item: NewsItem) -> str`：image_candidates の先頭URLを返す
+  - 候補なしの場合は空文字を返す（例外を発生させない安全設計）
+  - v1.5.0以降でデフォルト画像・権利確認済み画像・AI生成画像への拡張に対応可能
+- `ArticleData` に `excerpt: str = ""` / `meta_description: str = ""` フィールドを追加（`base.py` 修正）
+  - `excerpt`：WordPress抜粋・Markdown記録用
+  - `meta_description`：将来のSEOプラグイン連携用（v1.4.0では excerpt と同値）
+- `_extract_excerpt()` を `main.py` に追加
+  - 記事本文の先頭段落からMarkdown記法（見出し・太字・斜体）を除去してルールベースで生成
+  - 最大150字。句点（。）・読点（、）で自然に切れる位置を自動検出
+  - APIを呼び出さない（API呼び出し回数は v1.3.0 と同じ1記事3回のまま）
+- `WordPressOutput.save()` の payload に `"excerpt": article.excerpt` を追加
+- `markdown_output.py` の YAML front matter に `excerpt` / `meta_description` を追記
+
+### Changed
+
+- `main.py` の `item.image_candidates[0] if item.image_candidates else ""` を `resolve_featured_image(item)` に差し替え（ImageResolver 経由に統一）
+
+### Note
+
+- API呼び出し回数は増加なし（1記事あたり引き続き3回）
+- 著作権リスクは増加なし（画像のダウンロード・アップロードは行わない）
+- `meta_description` は将来のSEOプラグイン（Rank Math等）連携の準備フィールド。v1.4.0では excerpt と同値を設定
+
+### Tested
+
+- E2Eテスト成功（`python main.py --max-articles 1`）
+  - excerpt が Markdown YAML に記録されること
+  - meta_description が excerpt と同値で記録されること
+  - WordPress 下書きに excerpt フィールドが送信されること（post ID: 10331 で確認）
+  - ImageResolver が candidates[0] を正しく返すこと
+  - image_candidates が空でも空文字を返して正常終了すること
+
+---
+
 ## [v1.3.0] - 2026-06-27
 
 ### Added

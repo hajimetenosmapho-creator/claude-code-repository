@@ -3,11 +3,22 @@
 国内外のゲームニュースをRSSで自動収集し、Claude AIが重要度を判定・日本語記事下書き・SEOタイトル・X投稿文を生成して、Markdownファイルとして保存するツールです。
 
 **ブログ名**：KAORUの部屋  
-**ステータス**：v1.3.0 アイキャッチ画像URL抽出対応
+**ステータス**：v1.4.0 SEO Foundation（excerpt生成・ImageResolver導入）
 
 ---
 
 ## 実装済み機能
+
+### v1.4.0 — SEO Foundation（2026-06-30 完了）
+
+- **excerpt（抜粋）の自動生成と記録**（v1.4.0 追加）
+  - 記事本文の先頭段落からMarkdown記法を除いてルールベースで生成（API追加なし）
+  - WordPress投稿時に `excerpt` フィールドとして送信
+  - Markdownファイルの YAML front matter に `excerpt` / `meta_description` として記録
+- **ImageResolver 導入**（v1.4.0 追加）
+  - `src/image_resolver.py` 新設（画像候補URL選択の責務を main.py から分離）
+  - `resolve_featured_image(item)` が image_candidates の先頭URLを返す
+  - v1.5.0以降でデフォルト画像・権利確認済み画像・AI生成画像への拡張に対応可能
 
 ### v1.3.0 — アイキャッチ画像URL抽出対応
 
@@ -16,7 +27,7 @@
   - 取得した画像URLは `NewsItem.image_candidates` に格納
   - Markdownファイルの末尾に `<!-- アイキャッチ候補: URL -->` として記録
   - 画像が見つからない場合はエラーなし・コメントなしで正常終了
-  - 著作権リスクのためWordPressへの自動アップロードは行わない（v1.4.0 以降で検討）
+  - 著作権リスクのためWordPressへの自動アップロードは行わない（v1.5.0 以降で検討）
 
 ### v1.2.0 — カテゴリ・タグ自動設定対応
 
@@ -128,12 +139,20 @@ python main.py --max-articles 3
 
 ## 今後の予定
 
-### v1.3.0
+### v1.5.0 — Publishing Enhancement
 
-- Markdown → HTML変換（記事本文をWordPressで正しく表示）
-- OGP画像 / アイキャッチ画像対応
+- slug 生成と WordPress への送信
+- WordPress 投稿後 URL の取得・X投稿文への自動埋め込み
+- 実行ログのファイル出力
+- ImageResolver 拡張（デフォルト画像対応）
 
-### v2.x
+### v1.6.0 — Image Pipeline
+
+- 権利確認済み画像の WordPress メディアアップロード
+- `featured_media` 設定
+
+### v2.0 — AI Blog Operator
 
 - Windowsタスクスケジューラによる定時自動実行
-- WordPress自動投稿（下書き → 公開の自動化）
+- 重要度別の公開制御（S→公開・A→予約・B→下書き）
+- 半自律的なブログ運営支援

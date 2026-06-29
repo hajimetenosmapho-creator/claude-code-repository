@@ -16,6 +16,8 @@ class ArticleData:
     article_body: str
     x_post: str
     featured_image_url: str = ""  # アイキャッチ画像候補URL（空文字 = なし）
+    excerpt: str = ""             # WordPress抜粋・Markdown記録用（v1.4.0 追加）
+    meta_description: str = ""    # 将来のSEOプラグイン連携用（v1.4.0ではexcerptと同値）
 
 
 class BaseOutput(ABC):

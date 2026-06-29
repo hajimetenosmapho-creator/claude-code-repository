@@ -1,7 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
-対象ブランチ：feature/wordpress
+更新日：2026-06-30（v1.4.0 — ImageResolver・excerpt対応）
 
 ---
 
@@ -46,6 +46,7 @@ main.py
 ```
 src/
 ├── image_extractor.py       # RSSエントリーから画像URL候補を抽出（v1.3 追加）
+├── image_resolver.py        # アイキャッチ画像候補URLを解決（v1.4 追加）
 └── outputs/
     ├── __init__.py          # OutputManager, MarkdownOutput, ArticleData を公開
     ├── base.py              # ArticleData dataclass / BaseOutput 抽象クラス
@@ -59,6 +60,16 @@ src/
 
 ## 各クラスの責務
 
+### ImageResolver（`image_resolver.py`）（v1.4 追加）
+
+アイキャッチ画像候補URLを解決するモジュール。
+
+| 関数 | 役割 |
+|------|------|
+| `resolve_featured_image(item)` | NewsItem から使用する画像URLを1件選んで返す |
+
+v1.4.0 は `image_candidates[0]` を返すのみ。v1.5.0以降でデフォルト画像・権利確認済み画像・AI生成画像への切り替えロジックをここに追加する。
+
 ### ArticleData（`base.py`）
 
 記事生成結果をまとめて出力処理に渡すデータクラス。
@@ -71,6 +82,8 @@ src/
 | `article_body` | `str` | AIが生成した記事本文 |
 | `x_post` | `str` | AIが生成したX投稿文 |
 | `featured_image_url` | `str` | アイキャッチ画像候補URL（v1.3 追加、空文字 = なし） |
+| `excerpt` | `str` | WordPress抜粋・Markdown記録用（v1.4 追加、空文字 = なし） |
+| `meta_description` | `str` | 将来のSEOプラグイン連携用（v1.4 追加、現在はexcerptと同値） |
 
 ### BaseOutput（`base.py`）
 
@@ -106,13 +119,18 @@ output_manager = OutputManager(outputs=[
     WordPressOutput.from_env(),  # .env 未設定時は is_available()=False で自動スキップ
 ])
 
-# 記事生成後の保存
+# 記事生成後の保存（v1.4.0 以降）
+excerpt            = _extract_excerpt(article_body)   # ルールベース・API追加なし
+featured_image_url = resolve_featured_image(item)     # ImageResolver 経由（v1.4 追加）
 article = ArticleData(
     item=item,
     importance=importance,
     seo_title=seo_title,
     article_body=article_body,
     x_post=x_post,
+    featured_image_url=featured_image_url,
+    excerpt=excerpt,
+    meta_description=excerpt,   # v1.4.0 では excerpt と同値
 )
 destinations = output_manager.save_all(article)
 ```

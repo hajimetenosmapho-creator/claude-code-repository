@@ -52,6 +52,7 @@ class WordPressOutput(BaseOutput):
             "title": article.seo_title,
             "content": article.article_body,
             "status": "draft",
+            "excerpt": article.excerpt,
         }
         if categories:
             payload["categories"] = categories

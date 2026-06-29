@@ -56,12 +56,17 @@ class MarkdownOutput(BaseOutput):
             f"    published_date: \"{article.item.published_at}\""
         )
 
+        excerpt_safe = article.excerpt.replace('"', "'")
+        meta_description_safe = article.meta_description.replace('"', "'")
+
         content = f"""---
 title: "{article.seo_title}"
 importance: {article.importance}
 source: {article.item.source}
 source_url: "{article.item.url}"
 generated_at: "{now}"
+excerpt: "{excerpt_safe}"
+meta_description: "{meta_description_safe}"
 official_news_url: ""
 official_site_url: ""
 official_trailer_url: ""

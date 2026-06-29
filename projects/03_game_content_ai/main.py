@@ -19,6 +19,7 @@
 
 import argparse
 import os
+import re
 import sys
 import anthropic
 
@@ -39,6 +40,7 @@ from importance_judge import judge_all
 from article_generator import generate_article
 from seo_title_generator import generate_seo_title
 from x_post_generator import generate_x_post
+from image_resolver import resolve_featured_image
 from outputs import OutputManager, MarkdownOutput, WordPressOutput, ArticleData
 
 # .env ファイルを読み込む
@@ -86,6 +88,41 @@ def _print_rss_summary(
     print(f"  {'記事生成':<18} {generated}件")
     print("=" * 20)
     print()
+
+
+def _extract_excerpt(article_body: str, max_chars: int = 150) -> str:
+    """
+    記事本文の先頭段落からMarkdown記法を除いて抜粋テキストを生成する。
+    APIを呼び出さず、ルールベースで生成する。
+
+    Args:
+        article_body: generate_article() が返した記事本文
+        max_chars: 最大文字数（デフォルト150字）
+
+    Returns:
+        str: 抜粋テキスト。本文が空の場合は空文字。
+    """
+    # Markdown見出し・太字・斜体を除去
+    text = re.sub(r'^#{1,6}\s+', '', article_body, flags=re.MULTILINE)
+    text = re.sub(r'\*{1,2}(.+?)\*{1,2}', r'\1', text)
+
+    # 段落ごとに分割し、最初の本文段落を取得
+    paragraphs = [p.strip().replace('\n', ' ') for p in text.split('\n\n') if p.strip()]
+    if not paragraphs:
+        return ""
+
+    first = paragraphs[0]
+    if len(first) <= max_chars:
+        return first
+
+    # 句点・読点で自然に切れる位置を探す
+    truncated = first[:max_chars]
+    cut = truncated.rfind('。')
+    if cut == -1:
+        cut = truncated.rfind('、')
+    if cut > max_chars // 2:
+        return truncated[:cut + 1]
+    return truncated
 
 
 def _save_b_candidates_markdown(candidates: list[dict]) -> Path:
@@ -263,7 +300,8 @@ def main():
         x_post       = generate_x_post(client, item, importance, article_body)
         api_call_count += 3
 
-        featured_image_url = item.image_candidates[0] if item.image_candidates else ""
+        excerpt            = _extract_excerpt(article_body)
+        featured_image_url = resolve_featured_image(item)
         article = ArticleData(
             item=item,
             importance=importance,
@@ -271,6 +309,8 @@ def main():
             article_body=article_body,
             x_post=x_post,
             featured_image_url=featured_image_url,
+            excerpt=excerpt,
+            meta_description=excerpt,  # v1.4.0 では excerpt と同値
         )
         destinations = output_manager.save_all(article)
         for dest in destinations:

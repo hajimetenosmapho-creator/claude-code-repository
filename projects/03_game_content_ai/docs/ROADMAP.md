@@ -31,27 +31,43 @@
 
 ---
 
-## v1.4.0 — アイキャッチ画像WordPress自動アップロード（予定）
+## v1.4.0 — SEO Foundation（2026-06-30 完了）
 
-- [ ] `src/outputs/wordpress_media.py` 新規作成（画像ダウンロード・アップロード）
-- [ ] WordPress `/wp-json/wp/v2/media` へのアップロード実装
-- [ ] 投稿 payload に `featured_media` を設定
-- [ ] 著作権確認済み画像のみを対象とする仕組みの検討
-- [ ] アップロード失敗時のフォールバック処理
+- [x] `src/image_resolver.py` 新規作成（画像候補選択責務を main.py から分離）
+  - `resolve_featured_image(item: NewsItem) -> str`：v1.4.0は candidates[0] を返す
+  - v1.5.0以降でデフォルト画像・権利確認済み画像・AI生成画像への拡張に対応
+- [x] `ArticleData` に `excerpt` / `meta_description` フィールドを追加（`base.py` 修正）
+- [x] `_extract_excerpt()` を `main.py` に追加（ルールベース・API追加なし）
+  - 記事本文の先頭段落からMarkdown記法を除去して最大150字で抽出
+  - 句点・読点で自然に切れる位置を自動検出
+- [x] `WordPressOutput.save()` の payload に `"excerpt"` を追加
+- [x] `markdown_output.py` の YAML front matter に `excerpt` / `meta_description` を追記
+- [x] E2Eテスト成功（excerpt生成・WordPress excerpt設定・Markdown記録の全工程確認）
 
 ---
 
-## v1.5.0 — WordPress出力品質向上（予定）
+## v1.5.0 — Publishing Enhancement（予定）
 
-- [ ] Markdown → HTML変換（記事本文をWordPressで正しく表示）
+- [ ] slug 生成と WordPress `post_name` への送信
+- [ ] WordPress 投稿後 URL の取得・X投稿文への自動埋め込み
+- [ ] 実行ログのファイル出力（`logs/YYYYMMDD.log`）
+- [ ] ImageResolver 拡張（`DEFAULT_IMAGE_URL` による空欄補完）
 
 ---
 
-## v2.x — 自動化・品質向上
+## v1.6.0 — Image Pipeline（予定）
 
-- [ ] アイキャッチ画像のALTテキスト自動生成
-- [ ] WordPress自動投稿（下書き → 公開の自動化）
-- [ ] Windows タスクスケジューラによる定時実行対応
+- [ ] 権利確認済み画像の WordPress メディアアップロード（`/wp-json/wp/v2/media`）
+- [ ] `featured_media` 設定（アップロード後のメディアIDを投稿に紐付け）
+- [ ] Slack/Discord への実行完了通知
+
+---
+
+## v2.0 — AI Blog Operator（予定）
+
+- [ ] Windows タスクスケジューラによる定時自動実行
+- [ ] 重要度別の公開制御（S→即時公開・A→予約投稿・B→下書き）
+- [ ] 半自律的なブログ運営支援（人間の承認ゲート付き）
 
 ---
 
