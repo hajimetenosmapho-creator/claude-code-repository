@@ -79,13 +79,46 @@
 
 ---
 
-## v1.7.0 — Automation Foundation（予定）
+## v1.7.0 — Publishing Automation Foundation（2026-06-30 完了）★ Release 1.1 開始
 
-- [ ] 権利確認済み画像の WordPress メディアアップロード（`/wp-json/wp/v2/media`）
-  - `image_terms_confirmed == True` の画像のみ対象（`MediaUploader` クラスとして実装）
-  - `featured_media` に media_id を設定
-- [ ] AI生成画像の組み込み検討
-- [ ] 内部リンク候補の自動提示
+- [x] `src/publishing_config.py` 新規作成
+  - `PublishStatus` Enum（DRAFT / PENDING / FUTURE / PUBLISH）
+  - `PublishingConfig` dataclass（`from_env()` / `resolve_status()`）
+  - Validation：許可値外は WARNING + DRAFT フォールバック
+  - 将来拡張フィールドのコメント予約（`publish_time` / `timezone` / `review_required` / `priority`）
+- [x] `docs/design/publishing_automation.md` 新規作成（v1.7.0 設計書）
+- [x] `ArticleData.publish_status: PublishStatus = DRAFT` 追加（`base.py` 修正）
+- [x] `wordpress_output.py` の `"status": "draft"` ハードコードを `article.publish_status.value` に変更
+- [x] コンソールログに `ステータス:` 表示を追加
+- [x] `.env.example` に `PUBLISH_STATUS_S` / `PUBLISH_STATUS_A` 追加
+- [x] E2Eテスト成功（draft / pending / 不正値フォールバック の3パターン）
+- [x] Release 1.0 完全後方互換確認
+
+---
+
+## v1.8.0 — Logging Foundation（予定）★ Release 1.1 — Epic 2
+
+- [ ] 実行ログのファイル出力
+- [ ] エラーログの構造化
+- [ ] 投稿履歴の記録
+- [ ] AI判定履歴の記録
+- [ ] API利用履歴の記録
+
+---
+
+## v1.9.0 — SNS Foundation（予定）★ Release 1.1 — Epic 3
+
+- [ ] X投稿URLの保存
+- [ ] 投稿履歴の管理
+- [ ] 将来のAPI連携設計
+
+---
+
+## v1.10.0 — Analytics Foundation（予定）★ Release 1.1 — Epic 4
+
+- [ ] Search Console 連携設計
+- [ ] Google Analytics 連携設計
+- [ ] AI改善提案設計
 
 ---
 

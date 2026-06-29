@@ -3,11 +3,24 @@
 国内外のゲームニュースをRSSで自動収集し、Claude AIが重要度を判定・日本語記事下書き・SEOタイトル・X投稿文を生成して、Markdownファイルとして保存するツールです。
 
 **ブログ名**：KAORUの部屋  
-**ステータス**：v1.6.0 Image Pipeline（デフォルトアイキャッチ画像対応）
+**ステータス**：v1.7.0 Publishing Automation Foundation（Release 1.1 開始）
 
 ---
 
 ## 実装済み機能
+
+### v1.7.0 — Publishing Automation Foundation（2026-06-30 完了）★ Release 1.1
+
+- **投稿ステータスの重要度別制御**（v1.7.0 追加）
+  - `.env` の `PUBLISH_STATUS_S` / `PUBLISH_STATUS_A` で重要度ごとの WordPress 投稿ステータスを設定
+  - `draft`（下書き）または `pending`（レビュー待ち）を選択可能
+  - 未設定・不正値の場合は自動的に `draft` にフォールバック（Release 1.0 と同じ動作）
+  - `pending` を設定すると WordPress 管理画面から「公開」ボタン1クリックで公開可能
+- **`PublishStatus` Enum**（v1.7.0 追加）
+  - タイプミス防止のため文字列ではなく Enum で管理
+  - `DRAFT` / `PENDING` / `FUTURE` / `PUBLISH` の4値（`FUTURE` / `PUBLISH` は将来実装予定）
+- **Validation 付き設定読み込み**（v1.7.0 追加）
+  - 許可値外の設定値は WARNING ログを出力し `draft` に安全にフォールバック
 
 ### v1.6.0 — Image Pipeline（2026-06-30 完了）
 
@@ -163,11 +176,18 @@ python main.py --max-articles 3
 
 ## 今後の予定
 
-### v1.7.0 — Automation Foundation
+### v1.8.0 — Logging Foundation（Release 1.1 — Epic 2）
 
-- 権利確認済み画像の WordPress メディアアップロード（`MediaUploader` クラス）
-- AI生成画像の組み込み検討
-- 内部リンク候補の自動提示
+- 実行ログ・エラーログのファイル出力
+- 投稿履歴・AI判定履歴の記録
+
+### v1.9.0 — SNS Foundation（Release 1.1 — Epic 3）
+
+- X投稿URLの保存・投稿履歴管理・将来のAPI連携設計
+
+### v1.10.0 — Analytics Foundation（Release 1.1 — Epic 4）
+
+- Search Console / Google Analytics 連携設計
 
 ### v2.0 — AI Blog Operator
 

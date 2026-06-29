@@ -5,6 +5,48 @@
 
 ---
 
+## [v1.7.0] - 2026-06-30  ★ Release 1.1 — Epic 1 Publishing Automation
+
+### Added
+
+- `src/publishing_config.py` 新規作成（Release 1.1 — Publishing Automation の中核モジュール）
+  - `PublishStatus` Enum（`str` 継承）：`DRAFT` / `PENDING` / `FUTURE` / `PUBLISH` の4値
+    - `FUTURE` / `PUBLISH` は将来実装用の予約定義
+    - `str` 継承により `PublishStatus.DRAFT == "draft"` が True になり、ログ出力・JSON変換がそのまま使える
+  - `PublishingConfig` dataclass：`status_s` / `status_a` フィールド
+    - `from_env()`: `PUBLISH_STATUS_S` / `PUBLISH_STATUS_A` を環境変数から読み込む
+    - `resolve_status(importance)`: 重要度 → `PublishStatus` を解決
+    - Validation: 許可値外（`publish` / `future` / 任意の不正値）は `DRAFT` にフォールバック + WARNING出力
+    - 将来拡張フィールドのコメント予約：`publish_time` / `timezone` / `review_required` / `priority`
+- `docs/design/publishing_automation.md` 新規作成（v1.7.0 設計書）
+- `ArticleData` に `publish_status: PublishStatus = PublishStatus.DRAFT` フィールドを追加（`base.py` 修正）
+
+### Changed
+
+- `src/outputs/wordpress_output.py`
+  - `"status": "draft"`（ハードコード）を `"status": article.publish_status.value` に変更
+  - コンソールログに `ステータス: <値>` を追加（投稿ID・slug・編集URLと並んで表示）
+- `main.py`
+  - `from publishing_config import PublishingConfig` をインポート追加
+  - `publishing_config = PublishingConfig.from_env()` を起動時に1回呼び出す
+  - 記事ループ内で `publish_status = publishing_config.resolve_status(importance)` を呼び出し `ArticleData` に設定
+- `.env.example`
+  - `PUBLISH_STATUS_S=draft` / `PUBLISH_STATUS_A=draft` を追加（使用可能な値・設定例付き）
+
+### Note
+
+- API呼び出し回数は増加なし（1記事あたり引き続き3回）
+- 外部ライブラリ追加なし
+- **Release 1.0 と完全後方互換**：`PUBLISH_STATUS_S/A` 未設定の場合は全記事 `draft` で動作（従来と同じ）
+
+### Tested
+
+- E2Eテスト①：`PUBLISH_STATUS_S=draft`（未設定・デフォルト）→ WordPress API で `status='draft'` 確認（post 10337）
+- E2Eテスト②：`PUBLISH_STATUS_S=pending` → WordPress API で `status='pending'` 確認（post 10338）
+- E2Eテスト③：`PUBLISH_STATUS_S=publish` / `PUBLISH_STATUS_A=abc`（不正値）→ WARNING 出力 + `status='draft'` でフォールバック確認（post 10339）
+
+---
+
 ## [v1.6.0] - 2026-06-30
 
 ### Added

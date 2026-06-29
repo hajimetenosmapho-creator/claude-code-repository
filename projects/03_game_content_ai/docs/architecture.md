@@ -1,7 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
-更新日：2026-06-30（v1.6.0 — Image Pipeline・featured_media_id 追加）
+更新日：2026-06-30（v1.7.0 — Publishing Automation・PublishStatus Enum 追加）
 
 ---
 
@@ -48,6 +48,7 @@ src/
 ├── image_extractor.py       # RSSエントリーから画像URL候補を抽出（v1.3 追加）
 ├── image_resolver.py        # アイキャッチ画像候補URLを解決（v1.4 追加）
 ├── slug_generator.py        # WordPress slug を生成（v1.5 追加）
+├── publishing_config.py     # PublishStatus Enum・PublishingConfig dataclass（v1.7 追加）
 └── outputs/
     ├── __init__.py          # OutputManager, MarkdownOutput, ArticleData を公開
     ├── base.py              # ArticleData dataclass / BaseOutput 抽象クラス
@@ -88,6 +89,7 @@ src/
 | `meta_description` | `str` | 将来のSEOプラグイン連携用（v1.4 追加、現在はexcerptと同値） |
 | `slug` | `str` | WordPress slug（v1.5 追加、空文字 = なし） |
 | `featured_media_id` | `int` | WordPress media_id（v1.6 追加、0 = アイキャッチなし） |
+| `publish_status` | `PublishStatus` | WordPress 投稿ステータス（v1.7 追加、デフォルト = DRAFT） |
 
 ### BaseOutput（`base.py`）
 
