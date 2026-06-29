@@ -45,6 +45,7 @@ from image_resolver import resolve_featured_image, resolve_media_id
 from slug_generator import generate_slug
 from publishing_config import PublishingConfig
 from outputs import OutputManager, MarkdownOutput, WordPressOutput, ArticleData
+from logger import LogManager, ExecutionLogEntry
 
 # .env ファイルを読み込む
 load_dotenv()
@@ -177,6 +178,7 @@ total_count: {len(candidates)}
 
 def main():
     start_time = time.time()
+    started_at_iso = datetime.now(timezone.utc).astimezone().isoformat()
 
     # コマンドライン引数の処理
     parser = argparse.ArgumentParser(description="ゲームニュース記事生成ツール")
@@ -202,6 +204,7 @@ def main():
 
     default_media_id = int(os.getenv("DEFAULT_MEDIA_ID", "0"))
     publishing_config = PublishingConfig.from_env()
+    log_manager = LogManager.from_env(base_dir=Path(__file__).parent)
 
     client = anthropic.Anthropic(api_key=api_key)
 
@@ -294,6 +297,10 @@ def main():
     print(f"記事を生成しています（{len(to_process)}件）...")
     saved_files = []
     api_call_count = 0
+    wp_available = any(isinstance(o, WordPressOutput) and o.is_available() for o in output_manager.outputs)
+    wp_success_count = 0
+    wp_failed_count = 0
+    wp_skipped_count = 0
 
     for i, entry in enumerate(to_process, 1):
         item: NewsItem = entry["item"]
@@ -328,14 +335,44 @@ def main():
             publish_status=publish_status,
         )
         destinations = output_manager.save_all(article)
+
+        # ログ記録（v1.8.0 追加）
+        edit_url = next((d for d in destinations if "wp-admin" in d), "")
+        if not wp_available:
+            wp_result = "skipped"
+            wp_skipped_count += 1
+        elif edit_url:
+            wp_result = "success"
+            wp_success_count += 1
+        else:
+            wp_result = "failed"
+            wp_failed_count += 1
+        log_manager.log_article(article=article, edit_url=edit_url, result=wp_result)
+
         for dest in destinations:
             output_path = Path(dest)
             saved_files.append((importance, seo_title, output_path))
             print(f"    保存: {output_path.name}")
 
-    # 完了サマリー
+    # 完了サマリー・実行ログ記録（v1.8.0 追加）
     print()
     elapsed = time.time() - start_time
+    finished_at_iso = datetime.now(timezone.utc).astimezone().isoformat()
+    exec_result = "success" if wp_failed_count == 0 else ("partial" if wp_success_count > 0 else "failed")
+    log_manager.log_execution(ExecutionLogEntry(
+        executed_at=started_at_iso,
+        finished_at=finished_at_iso,
+        execution_time_sec=round(elapsed, 2),
+        total_collected=total_collected,
+        total_filtered=filtered_count,
+        total_deduped=deduped_count,
+        total_generated=planned,
+        total_wp_success=wp_success_count,
+        total_wp_failed=wp_failed_count,
+        total_wp_skipped=wp_skipped_count,
+        api_call_count=api_call_count,
+        result=exec_result,
+    ))
     print("=" * 60)
     print(f"  完了！ {len(saved_files)} 件の記事を生成しました（実行時間: {elapsed:.1f}秒）")
     print("=" * 60)
