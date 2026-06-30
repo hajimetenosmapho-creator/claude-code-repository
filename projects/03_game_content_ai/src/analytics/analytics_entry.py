@@ -28,14 +28,20 @@ class SearchConsoleMetrics:
 @dataclass
 class GoogleAnalyticsMetrics:
     """
-    Google Analytics から取得するアクセス指標。
+    Google Analytics 4 から取得するアクセス指標。
     v1.10.0 では全フィールドゼロ（placeholder）。
-    将来: fetch_google_analytics.py がこのフィールドを埋める。
+    v1.13.0: Google Analytics Foundation で実データが書き込まれる。
+
+    GA4 指標名との対応:
+        page_views      ← GA4: screenPageViews
+        sessions        ← GA4: sessions
+        bounce_rate     ← GA4: bounceRate（0.0〜1.0）
+        avg_time_on_page ← GA4: averageEngagementTime（秒）
     """
-    page_views: int = 0             # ページビュー数
-    sessions: int = 0               # セッション数
-    bounce_rate: float = 0.0        # 直帰率（0.0〜1.0）
-    avg_time_on_page: float = 0.0   # 平均滞在時間（秒）
+    page_views: int = 0              # ページビュー数（GA4: screenPageViews）
+    sessions: int = 0                # セッション数（GA4: sessions）
+    bounce_rate: float = 0.0         # 直帰率（GA4: bounceRate, 0.0〜1.0）
+    avg_time_on_page: float = 0.0    # 平均エンゲージメント時間（GA4: averageEngagementTime, 秒）
 
 
 @dataclass
@@ -100,9 +106,14 @@ class ArticleAnalysisRecord:
     avg_position: float           # 平均検索順位
     page_views: int               # ページビュー数
 
+    # ─── GA4 指標（v1.13.0 追加）───
+    sessions: int = 0                   # セッション数（GA4: sessions）
+    bounce_rate: float = 0.0            # 直帰率（GA4: bounceRate, 0.0〜1.0）
+    avg_engagement_time: float = 0.0    # 平均エンゲージメント時間（GA4: averageEngagementTime, 秒）
+
     def has_analytics_data(self) -> bool:
         """外部APIからの実データが存在するかを返す（すべてゼロ = False）。"""
-        return self.impressions > 0 or self.page_views > 0
+        return self.impressions > 0 or self.page_views > 0 or self.sessions > 0
 
     def to_json_line(self) -> str:
         """JSON Lines 形式の1行文字列に変換する。"""
@@ -132,12 +143,17 @@ class AiInputRecord:
     x_posted: bool                # x_post_status="posted" = True
 
     # パフォーマンス（データなし = すべてゼロ / has_performance_data=False）
-    has_performance_data: bool    # impressions > 0 または page_views > 0
+    has_performance_data: bool    # impressions > 0 または page_views > 0 または sessions > 0
     impressions: int
     clicks: int
     ctr: float
     avg_position: float
     page_views: int
+
+    # ─── GA4 指標（v1.13.0 追加）───
+    sessions: int = 0                   # セッション数（GA4: sessions）
+    bounce_rate: float = 0.0            # 直帰率（GA4: bounceRate, 0.0〜1.0）
+    avg_engagement_time: float = 0.0    # 平均エンゲージメント時間（GA4: averageEngagementTime, 秒）
 
     def to_dict(self) -> dict:
         """辞書形式に変換する（Claude API 入力時に使用）。"""

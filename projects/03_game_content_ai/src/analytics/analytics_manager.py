@@ -188,6 +188,10 @@ class AnalyticsManager:
             ctr=sc.ctr,
             avg_position=sc.avg_position,
             page_views=ga.page_views,
+            # v1.13.0: GA4 指標を全フィールドマッピング
+            sessions=ga.sessions,
+            bounce_rate=ga.bounce_rate,
+            avg_engagement_time=ga.avg_time_on_page,  # GA4: averageEngagementTime
         )
 
     def build_ai_input(self, record: ArticleAnalysisRecord) -> AiInputRecord:
@@ -213,6 +217,10 @@ class AnalyticsManager:
             ctr=record.ctr,
             avg_position=record.avg_position,
             page_views=record.page_views,
+            # v1.13.0: GA4 指標を AI 入力に反映
+            sessions=record.sessions,
+            bounce_rate=record.bounce_rate,
+            avg_engagement_time=record.avg_engagement_time,
         )
 
 

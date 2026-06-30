@@ -2,7 +2,7 @@
 Google API クライアントの共通インターフェース（v1.12.0）
 
 将来の Google Analytics 4 API クライアントとの共通化を見据えた Protocol を定義する。
-SearchConsoleClient と将来の GoogleAnalyticsClient が準拠する。
+SearchConsoleClient と GoogleAnalyticsClient が準拠する。
 """
 from typing import Protocol, runtime_checkable
 
@@ -15,7 +15,8 @@ class GoogleApiClient(Protocol):
     実装クラス:
         SearchConsoleClient（v1.12.0）
         NullSearchConsoleClient（v1.12.0）
-        GoogleAnalyticsClient（将来）
+        GoogleAnalyticsClient（v1.13.0）
+        NullGoogleAnalyticsClient（v1.13.0）
     """
 
     def fetch_raw(self, page_url: str, period_days: int) -> dict:
@@ -23,7 +24,11 @@ class GoogleApiClient(Protocol):
         指定 URL のパフォーマンスデータを取得し、APIレスポンス（dict）を返す。
 
         Args:
-            page_url:    取得対象の記事 permalink
+            page_url:    取得対象の記事 permalink（フルURL）
+                         各実装クラスは API 仕様に応じて URL 変換を行ってよい。
+                         SearchConsoleClient: フル URL をそのまま API に渡す。
+                         GoogleAnalyticsClient: フル URL から pagePath を抽出して利用する。
+                         例: "https://your-blog.com/ps6-announced/" → "/ps6-announced/"
             period_days: データ集計期間（日数）
 
         Returns:
