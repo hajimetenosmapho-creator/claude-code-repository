@@ -5,6 +5,7 @@ WordPress REST API への記事下書き投稿を担うモジュール。
 import os
 import requests
 from .base import BaseOutput, ArticleData
+from .save_result import SaveResult
 from .taxonomy_config import resolve_taxonomy
 
 
@@ -33,15 +34,18 @@ class WordPressOutput(BaseOutput):
         """WP_SITE_URL / WP_USERNAME / WP_APP_PASSWORD がすべて設定されている場合のみ True。"""
         return bool(self.site_url and self.username and self.app_password)
 
-    def save(self, article: ArticleData) -> str:
+    def save(self, article: ArticleData) -> SaveResult:
         """
-        WordPress REST API に記事を下書きとして投稿する。
+        WordPress REST API に記事を投稿し、SaveResult を返す。
+
+        v1.11.0: post_id を WordPress API レスポンスの "id" フィールドから直接取得する。
+                 edit_url からの正規表現抽出（v1.8.0 の暫定実装）を廃止する。
 
         Args:
             article: 投稿対象の記事データ
 
         Returns:
-            str: WordPress 管理画面の編集URL
+            SaveResult: 投稿結果（post_id / edit_url / slug / permalink 等を格納）
 
         Raises:
             RuntimeError: 投稿に失敗した場合（ステータスコードが 200/201 以外）
@@ -75,13 +79,27 @@ class WordPressOutput(BaseOutput):
             )
 
         response_data = response.json()
-        post_id    = response_data.get("id")
-        actual_slug = response_data.get("slug", "")
-        edit_url   = f"{self.site_url}/wp-admin/post.php?post={post_id}&action=edit"
+        # v1.11.0: post_id を API レスポンスから直接取得（正規表現抽出を廃止）
+        post_id      = response_data.get("id")
+        actual_slug  = response_data.get("slug", "")
+        actual_status = response_data.get("status", "")
+        actual_title  = response_data.get("title", {}).get("rendered", "")
+        permalink     = response_data.get("link", "")
+        edit_url      = f"{self.site_url}/wp-admin/post.php?post={post_id}&action=edit"
 
         print(f"      投稿ID  : {post_id}")
         print(f"      slug    : {actual_slug}")
-        print(f"      ステータス: {article.publish_status.value}")
+        print(f"      ステータス: {actual_status}")
         print(f"      編集URL : {edit_url}")
 
-        return edit_url
+        return SaveResult(
+            success=True,
+            output_type="wordpress",
+            post_id=post_id,
+            title=actual_title,
+            slug=actual_slug,
+            status=actual_status,
+            edit_url=edit_url,
+            permalink=permalink,
+            raw_response=response_data,
+        )

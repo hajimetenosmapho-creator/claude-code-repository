@@ -45,7 +45,7 @@ from image_resolver import resolve_featured_image, resolve_media_id
 from slug_generator import generate_slug
 from publishing_config import PublishingConfig
 from sns_config import SnsConfig, SnsPostStatus
-from outputs import OutputManager, MarkdownOutput, WordPressOutput, ArticleData
+from outputs import OutputManager, MarkdownOutput, WordPressOutput, ArticleData, SaveResult
 from logger import LogManager, ExecutionLogEntry
 
 # .env ファイルを読み込む
@@ -346,14 +346,16 @@ def main():
             featured_media_id=featured_media_id,
             publish_status=publish_status,
         )
-        destinations = output_manager.save_all(article)
+        # v1.11.0: save_all() が list[SaveResult] を返す
+        save_results = output_manager.save_all(article)
+        wp_save = next((r for r in save_results if r.is_wordpress), None)
+        edit_url = (wp_save.edit_url or "") if wp_save else ""
 
-        # ログ記録（v1.8.0 追加）
-        edit_url = next((d for d in destinations if "wp-admin" in d), "")
+        # ログ記録（v1.8.0 追加、v1.11.0 で post_id を直接渡すよう改善）
         if not wp_available:
             wp_result = "skipped"
             wp_skipped_count += 1
-        elif edit_url:
+        elif wp_save and wp_save.success:
             wp_result = "success"
             wp_success_count += 1
         else:
@@ -365,12 +367,15 @@ def main():
             result=wp_result,
             wp_public_url=wp_public_url,
             x_post_status=x_post_status,
+            post_id=wp_save.post_id if wp_save else None,
         )
 
-        for dest in destinations:
-            output_path = Path(dest)
-            saved_files.append((importance, seo_title, output_path))
-            print(f"    保存: {output_path.name}")
+        # v1.11.0: ファイル保存結果のみ saved_files に追加（WP URL は除外）
+        for result in save_results:
+            if result.success and not result.is_wordpress and result.edit_url:
+                output_path = Path(result.edit_url)
+                saved_files.append((importance, seo_title, output_path))
+                print(f"    保存: {output_path.name}")
 
     # 完了サマリー・実行ログ記録（v1.8.0 追加）
     print()

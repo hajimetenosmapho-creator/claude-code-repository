@@ -103,6 +103,7 @@ class LogManager:
         wp_public_url: str = "",
         x_post_status=None,
         x_post_url: str = "",
+        post_id: int | None = None,
     ) -> None:
         """
         1記事の投稿結果を ArticleLog に記録する。
@@ -116,11 +117,14 @@ class LogManager:
             x_post_status: X投稿ステータス（SnsPostStatus Enum）。
                            None の場合は SnsPostStatus.PENDING を使用。
             x_post_url:    X投稿後のポストURL（v1.9.0 は常に ""）
+            post_id:       WordPress 投稿ID（v1.11.0: SaveResult.post_id から直接渡す）。
+                           None の場合は edit_url から正規表現で抽出する（後方互換）。
         """
         from outputs.taxonomy_config import resolve_taxonomy
         from sns_config import SnsPostStatus
         category_ids, tag_ids = resolve_taxonomy(article.importance)
-        post_id = self._extract_post_id(edit_url)
+        # v1.11.0: post_id が直接渡された場合はそれを使用。後方互換のため edit_url 抽出も維持。
+        resolved_post_id = post_id if post_id is not None else self._extract_post_id(edit_url)
         date_str = datetime.now().strftime("%Y%m%d")
         status = x_post_status if x_post_status is not None else SnsPostStatus.PENDING
 
@@ -129,7 +133,7 @@ class LogManager:
             importance=article.importance,
             seo_title=article.seo_title,
             slug=article.slug,
-            post_id=post_id,
+            post_id=resolved_post_id,
             edit_url=edit_url,
             publish_status=article.publish_status.value,
             category_ids=category_ids,
@@ -181,7 +185,7 @@ class NullLogManager:
     """
 
     def log_article(self, article=None, edit_url="", result="success", error_message="",
-                    wp_public_url="", x_post_status=None, x_post_url="") -> None:
+                    wp_public_url="", x_post_status=None, x_post_url="", post_id=None) -> None:
         pass
 
     def log_execution(self, entry=None) -> None:

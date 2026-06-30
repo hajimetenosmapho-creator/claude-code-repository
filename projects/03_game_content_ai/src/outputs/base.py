@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from collector import NewsItem
 from publishing_config import PublishStatus
+from .save_result import SaveResult
 
 
 @dataclass
@@ -28,7 +29,7 @@ class BaseOutput(ABC):
     """全出力クラスの抽象基底クラス。"""
 
     @abstractmethod
-    def save(self, article: ArticleData) -> str:
+    def save(self, article: ArticleData) -> SaveResult:
         """
         記事を保存・投稿する。
 
@@ -36,7 +37,7 @@ class BaseOutput(ABC):
             article: 保存対象の記事データ
 
         Returns:
-            str: 保存先を示す文字列（ファイルパス、投稿URL など）
+            SaveResult: 保存結果（post_id / edit_url / success 等を格納）
         """
         ...
 

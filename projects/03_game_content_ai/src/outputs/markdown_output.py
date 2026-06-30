@@ -6,6 +6,7 @@ main.py にあった _save_as_markdown() をここに移植。
 from pathlib import Path
 from datetime import datetime, timezone
 from .base import BaseOutput, ArticleData
+from .save_result import SaveResult
 
 
 class MarkdownOutput(BaseOutput):
@@ -17,12 +18,12 @@ class MarkdownOutput(BaseOutput):
     def is_available(self) -> bool:
         return True
 
-    def save(self, article: ArticleData) -> str:
+    def save(self, article: ArticleData) -> SaveResult:
         """
         記事データを Markdown ファイルとして保存する。
 
         Returns:
-            str: 保存したファイルのパス文字列
+            SaveResult: 保存結果（edit_url にファイルパスを格納）
         """
         self.output_dir.mkdir(exist_ok=True)
 
@@ -90,4 +91,8 @@ image_terms_confirmed: false
 {image_comment}"""
 
         output_path.write_text(content, encoding="utf-8")
-        return str(output_path)
+        return SaveResult(
+            success=True,
+            output_type="file",
+            edit_url=str(output_path),
+        )
