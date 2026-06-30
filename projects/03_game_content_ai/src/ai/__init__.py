@@ -1,5 +1,5 @@
 """
-AI 改善提案パッケージ（v1.14.0 / v1.15.0 / v1.16.0 / v1.17.0 / v1.18.0）
+AI 改善提案パッケージ（v1.14.0 / v1.15.0 / v1.16.0 / v1.17.0 / v1.18.0 / v1.19.0）
 
 処理フロー（v1.14.0）:
     AiInputRecord → PromptBuilder → ClaudeClient → ImprovementSuggestionParser → ImprovementSuggestion
@@ -19,6 +19,11 @@ AI 改善提案パッケージ（v1.14.0 / v1.15.0 / v1.16.0 / v1.17.0 / v1.18.0
     RewriteReviewResult（adopted）→ AiPublishRepository → AiPublishService
         → WordPressDraftClient → WordPress 下書き → AiPublishResult
         → AiPublishReportBuilder → Markdown + JSON
+
+公開レビューフロー（v1.19.0）:
+    AiPublishResult（JSON）→ AiPublishReviewRepository → AiPublishReviewService
+        → AiPublishReviewResult（review_status=PENDING）
+        → AiPublishReviewReportBuilder → Markdown + JSON
 
 Configuration First:
     AI_IMPROVEMENT_ENABLED=false → AiImprovementService.from_env() が NullAiImprovementService を返す
@@ -51,6 +56,10 @@ from .wordpress_draft_client import WordPressDraftClient, NullWordPressDraftClie
 from .ai_publish_repository import AiPublishRepository
 from .ai_publish_report_builder import AiPublishReportBuilder
 from .ai_publish_service import AiPublishService, NullAiPublishService
+from .ai_publish_review_result import PublishReviewStatus, AiPublishReviewResult
+from .ai_publish_review_repository import AiPublishReviewRepository
+from .ai_publish_review_report_builder import AiPublishReviewReportBuilder
+from .ai_publish_review_service import AiPublishReviewService, NullAiPublishReviewService
 
 __all__ = [
     # v1.14.0
@@ -93,4 +102,11 @@ __all__ = [
     "AiPublishReportBuilder",
     "AiPublishService",
     "NullAiPublishService",
+    # v1.19.0
+    "PublishReviewStatus",
+    "AiPublishReviewResult",
+    "AiPublishReviewRepository",
+    "AiPublishReviewReportBuilder",
+    "AiPublishReviewService",
+    "NullAiPublishReviewService",
 ]
