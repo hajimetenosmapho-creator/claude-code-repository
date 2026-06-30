@@ -43,3 +43,7 @@ desktop.ini
 # 出力ファイル
 output/
 exports/
+
+# Google API 認証情報（Service Account JSON）
+credentials/
+**/credentials/

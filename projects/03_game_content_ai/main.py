@@ -47,6 +47,7 @@ from publishing_config import PublishingConfig
 from sns_config import SnsConfig, SnsPostStatus
 from outputs import OutputManager, MarkdownOutput, WordPressOutput, ArticleData, SaveResult
 from logger import LogManager, ExecutionLogEntry
+from analytics import AnalyticsManager
 
 # .env ファイルを読み込む
 load_dotenv()
@@ -207,6 +208,8 @@ def main():
     publishing_config = PublishingConfig.from_env()
     sns_config = SnsConfig.from_env()
     log_manager = LogManager.from_env(base_dir=Path(__file__).parent)
+    # v1.12.0: ANALYTICS_ENABLED=false の場合は NullAnalyticsManager（no-op）
+    analytics_manager = AnalyticsManager.from_env(base_dir=Path(__file__).parent)
 
     client = anthropic.Anthropic(api_key=api_key)
 
@@ -369,6 +372,17 @@ def main():
             x_post_status=x_post_status,
             post_id=wp_save.post_id if wp_save else None,
         )
+
+        # v1.12.0: WordPress 投稿成功時に placeholder AnalyticsEntry を保存
+        # ANALYTICS_ENABLED=false の場合は NullAnalyticsManager が no-op で処理する
+        if wp_save and wp_save.success and wp_save.post_id:
+            placeholder = analytics_manager.create_placeholder_entry(
+                post_id=wp_save.post_id,
+                slug=article.slug,
+                wp_public_url=wp_save.permalink or wp_public_url,
+            )
+            if placeholder is not None:
+                analytics_manager.save_analytics_entry(placeholder)
 
         # v1.11.0: ファイル保存結果のみ saved_files に追加（WP URL は除外）
         for result in save_results:
