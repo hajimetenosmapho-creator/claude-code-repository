@@ -1,5 +1,5 @@
 """
-AI 改善提案パッケージ（v1.14.0 / v1.15.0 / v1.16.0 / v1.17.0）
+AI 改善提案パッケージ（v1.14.0 / v1.15.0 / v1.16.0 / v1.17.0 / v1.18.0）
 
 処理フロー（v1.14.0）:
     AiInputRecord → PromptBuilder → ClaudeClient → ImprovementSuggestionParser → ImprovementSuggestion
@@ -15,9 +15,15 @@ AI 改善提案パッケージ（v1.14.0 / v1.15.0 / v1.16.0 / v1.17.0）
     RewriteResult（JSON）→ RewriteReviewRepository → RewriteReviewService
         → RewriteReviewResult → RewriteReviewReportBuilder → Markdown + JSON
 
+公開フロー（v1.18.0）:
+    RewriteReviewResult（adopted）→ AiPublishRepository → AiPublishService
+        → WordPressDraftClient → WordPress 下書き → AiPublishResult
+        → AiPublishReportBuilder → Markdown + JSON
+
 Configuration First:
     AI_IMPROVEMENT_ENABLED=false → AiImprovementService.from_env() が NullAiImprovementService を返す
     AI_REWRITE_ENABLED=false     → RewriteService.from_env() が NullRewriteService を返す
+    AI_PUBLISH_ENABLED=false     → AiPublishService.from_env() が NullAiPublishService を返す
 """
 from .ai_improvement_config import AiImprovementConfig
 from .improvement_suggestion import ImprovementSuggestion
@@ -39,6 +45,12 @@ from .rewrite_review_result import ReviewStatus, RewriteReviewResult
 from .rewrite_review_repository import RewriteReviewRepository
 from .rewrite_review_report_builder import RewriteReviewReportBuilder
 from .rewrite_review_service import RewriteReviewService, NullRewriteReviewService
+from .ai_publish_config import AiPublishConfig
+from .ai_publish_result import AiPublishResult
+from .wordpress_draft_client import WordPressDraftClient, NullWordPressDraftClient
+from .ai_publish_repository import AiPublishRepository
+from .ai_publish_report_builder import AiPublishReportBuilder
+from .ai_publish_service import AiPublishService, NullAiPublishService
 
 __all__ = [
     # v1.14.0
@@ -72,4 +84,13 @@ __all__ = [
     "RewriteReviewReportBuilder",
     "RewriteReviewService",
     "NullRewriteReviewService",
+    # v1.18.0
+    "AiPublishConfig",
+    "AiPublishResult",
+    "WordPressDraftClient",
+    "NullWordPressDraftClient",
+    "AiPublishRepository",
+    "AiPublishReportBuilder",
+    "AiPublishService",
+    "NullAiPublishService",
 ]
