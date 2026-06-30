@@ -155,6 +155,9 @@ class AiInputRecord:
     bounce_rate: float = 0.0            # 直帰率（GA4: bounceRate, 0.0〜1.0）
     avg_engagement_time: float = 0.0    # 平均エンゲージメント時間（GA4: averageEngagementTime, 秒）
 
+    # ─── AI改善提案用（v1.14.0 追加）───
+    permalink: str | None = None        # WordPress 公開URL（AI改善提案の対象記事識別に使用）
+
     def to_dict(self) -> dict:
         """辞書形式に変換する（Claude API 入力時に使用）。"""
         return asdict(self)

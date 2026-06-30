@@ -221,6 +221,8 @@ class AnalyticsManager:
             sessions=record.sessions,
             bounce_rate=record.bounce_rate,
             avg_engagement_time=record.avg_engagement_time,
+            # v1.14.0: permalink を AI 改善提案用に追加
+            permalink=record.wp_public_url or None,
         )
 
 
