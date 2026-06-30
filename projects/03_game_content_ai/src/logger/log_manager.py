@@ -100,6 +100,9 @@ class LogManager:
         edit_url: str = "",
         result: str = "success",
         error_message: str = "",
+        wp_public_url: str = "",
+        x_post_status=None,
+        x_post_url: str = "",
     ) -> None:
         """
         1記事の投稿結果を ArticleLog に記録する。
@@ -109,11 +112,17 @@ class LogManager:
             edit_url:      WordPress 編集URL（"" = WP未設定またはエラー）
             result:        "success" / "failed" / "skipped"
             error_message: エラーメッセージ（"" = エラーなし）
+            wp_public_url: WordPress 公開予定URL（SnsConfig.resolve_public_url() の結果）
+            x_post_status: X投稿ステータス（SnsPostStatus Enum）。
+                           None の場合は SnsPostStatus.PENDING を使用。
+            x_post_url:    X投稿後のポストURL（v1.9.0 は常に ""）
         """
         from outputs.taxonomy_config import resolve_taxonomy
+        from sns_config import SnsPostStatus
         category_ids, tag_ids = resolve_taxonomy(article.importance)
         post_id = self._extract_post_id(edit_url)
         date_str = datetime.now().strftime("%Y%m%d")
+        status = x_post_status if x_post_status is not None else SnsPostStatus.PENDING
 
         entry = ArticleLogEntry(
             logged_at=self._now_iso(),
@@ -130,6 +139,10 @@ class LogManager:
             source_name=article.item.source,
             result=result,
             error_message=error_message,
+            wp_public_url=wp_public_url,
+            x_post_text=article.x_post,
+            x_post_status=status,
+            x_post_url=x_post_url,
         )
         path = self._get_log_path("articles", date_str)
         self._append(path, entry.to_json_line())
@@ -167,7 +180,8 @@ class NullLogManager:
     main.py 側は LogManager か NullLogManager かを意識しなくてよい。
     """
 
-    def log_article(self, article=None, edit_url="", result="success", error_message="") -> None:
+    def log_article(self, article=None, edit_url="", result="success", error_message="",
+                    wp_public_url="", x_post_status=None, x_post_url="") -> None:
         pass
 
     def log_execution(self, entry=None) -> None:

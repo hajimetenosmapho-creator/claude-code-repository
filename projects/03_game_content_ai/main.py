@@ -44,6 +44,7 @@ from x_post_generator import generate_x_post
 from image_resolver import resolve_featured_image, resolve_media_id
 from slug_generator import generate_slug
 from publishing_config import PublishingConfig
+from sns_config import SnsConfig, SnsPostStatus
 from outputs import OutputManager, MarkdownOutput, WordPressOutput, ArticleData
 from logger import LogManager, ExecutionLogEntry
 
@@ -204,6 +205,7 @@ def main():
 
     default_media_id = int(os.getenv("DEFAULT_MEDIA_ID", "0"))
     publishing_config = PublishingConfig.from_env()
+    sns_config = SnsConfig.from_env()
     log_manager = LogManager.from_env(base_dir=Path(__file__).parent)
 
     client = anthropic.Anthropic(api_key=api_key)
@@ -312,12 +314,22 @@ def main():
 
         article_body = generate_article(client, item, importance)
         seo_title    = generate_seo_title(client, item, importance)
-        x_post       = generate_x_post(client, item, importance, article_body)
+        # v1.9.0: slug を先に確定 → wp_public_url を生成 → x_post に埋め込む
+        date_str      = datetime.now().strftime("%Y%m%d")
+        slug          = generate_slug(seo_title, date_str)
+        if sns_config.sns_enabled:
+            wp_public_url = sns_config.resolve_public_url(slug)
+            x_post_status = SnsPostStatus.PENDING
+        else:
+            wp_public_url = ""
+            x_post_status = SnsPostStatus.SKIPPED
+        x_post       = generate_x_post(
+            client, item, importance, article_body,
+            blog_url=wp_public_url if wp_public_url else "[ブログURL]",
+        )
         api_call_count += 3
 
         excerpt            = _extract_excerpt(article_body)
-        date_str           = datetime.now().strftime("%Y%m%d")
-        slug               = generate_slug(seo_title, date_str)
         featured_image_url = resolve_featured_image(item)
         featured_media_id  = resolve_media_id(item, default_media_id)
         publish_status     = publishing_config.resolve_status(importance)
@@ -347,7 +359,13 @@ def main():
         else:
             wp_result = "failed"
             wp_failed_count += 1
-        log_manager.log_article(article=article, edit_url=edit_url, result=wp_result)
+        log_manager.log_article(
+            article=article,
+            edit_url=edit_url,
+            result=wp_result,
+            wp_public_url=wp_public_url,
+            x_post_status=x_post_status,
+        )
 
         for dest in destinations:
             output_path = Path(dest)

@@ -5,11 +5,14 @@
 """
 import json
 from dataclasses import dataclass, asdict
+from sns_config import SnsPostStatus
 
 
 @dataclass
 class ArticleLogEntry:
     """1記事の投稿結果ログ。"""
+
+    # ─── 既存フィールド（v1.8.0、変更なし）───
     logged_at: str
     importance: str
     seo_title: str
@@ -25,8 +28,16 @@ class ArticleLogEntry:
     result: str
     error_message: str
 
+    # ─── SNS フィールド（v1.9.0 追加・デフォルト値ありで後方互換）───
+    wp_public_url: str = ""                           # WordPress 公開予定URL（BLOG_BASE_URL + slug）
+    x_post_text: str = ""                             # X投稿文（ブログURL置換済みの最終形）
+    x_post_status: SnsPostStatus = SnsPostStatus.PENDING  # X投稿ステータス
+    x_post_url: str = ""                              # X投稿後のポストURL（将来のX API対応時に記録）
+
     def to_json_line(self) -> str:
-        """JSON Lines 形式の1行文字列に変換する。"""
+        """JSON Lines 形式の1行文字列に変換する。
+        SnsPostStatus は str を継承するため json.dumps が自動的に文字列として扱う。
+        """
         return json.dumps(asdict(self), ensure_ascii=False)
 
 
