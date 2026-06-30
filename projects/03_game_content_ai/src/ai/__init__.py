@@ -1,5 +1,5 @@
 """
-AI 改善提案パッケージ（v1.14.0 / v1.15.0 / v1.16.0 / v1.17.0 / v1.18.0 / v1.19.0）
+AI 改善提案パッケージ（v1.14.0 / v1.15.0 / v1.16.0 / v1.17.0 / v1.18.0 / v1.19.0 / v1.20.0）
 
 処理フロー（v1.14.0）:
     AiInputRecord → PromptBuilder → ClaudeClient → ImprovementSuggestionParser → ImprovementSuggestion
@@ -24,6 +24,11 @@ AI 改善提案パッケージ（v1.14.0 / v1.15.0 / v1.16.0 / v1.17.0 / v1.18.0
     AiPublishResult（JSON）→ AiPublishReviewRepository → AiPublishReviewService
         → AiPublishReviewResult（review_status=PENDING）
         → AiPublishReviewReportBuilder → Markdown + JSON
+
+ワークフローフロー（v1.20.0）:
+    WorkflowConfig → WorkflowRunner.from_config()
+        → [WorkflowStepExecutor × 6] → WorkflowContext
+        → WorkflowResult → WorkflowReportBuilder → Markdown
 
 Configuration First:
     AI_IMPROVEMENT_ENABLED=false → AiImprovementService.from_env() が NullAiImprovementService を返す
@@ -60,6 +65,21 @@ from .ai_publish_review_result import PublishReviewStatus, AiPublishReviewResult
 from .ai_publish_review_repository import AiPublishReviewRepository
 from .ai_publish_review_report_builder import AiPublishReviewReportBuilder
 from .ai_publish_review_service import AiPublishReviewService, NullAiPublishReviewService
+from .workflow_step import WorkflowStep, WorkflowStepResult
+from .workflow_context import WorkflowContext
+from .workflow_config import WorkflowConfig, ALL_WORKFLOW_STEPS
+from .workflow_result import WorkflowResult
+from .workflow_step_executor import (
+    WorkflowStepExecutor,
+    ImprovementStepExecutor,
+    ImprovementReviewStepExecutor,
+    RewriteStepExecutor,
+    RewriteReviewStepExecutor,
+    PublishStepExecutor,
+    PublishReviewStepExecutor,
+)
+from .workflow_report_builder import WorkflowReportBuilder
+from .workflow_runner import WorkflowRunner, NullWorkflowRunner
 
 __all__ = [
     # v1.14.0
@@ -109,4 +129,21 @@ __all__ = [
     "AiPublishReviewReportBuilder",
     "AiPublishReviewService",
     "NullAiPublishReviewService",
+    # v1.20.0
+    "WorkflowStep",
+    "WorkflowStepResult",
+    "WorkflowContext",
+    "WorkflowConfig",
+    "ALL_WORKFLOW_STEPS",
+    "WorkflowResult",
+    "WorkflowStepExecutor",
+    "ImprovementStepExecutor",
+    "ImprovementReviewStepExecutor",
+    "RewriteStepExecutor",
+    "RewriteReviewStepExecutor",
+    "PublishStepExecutor",
+    "PublishReviewStepExecutor",
+    "WorkflowReportBuilder",
+    "WorkflowRunner",
+    "NullWorkflowRunner",
 ]
