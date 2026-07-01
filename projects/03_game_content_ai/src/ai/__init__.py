@@ -81,6 +81,16 @@ from .workflow_step_executor import (
 from .workflow_report_builder import WorkflowReportBuilder
 from .workflow_runner import WorkflowRunner, NullWorkflowRunner
 
+# v2.0.0 AI Agent Foundation
+from .agent_task import AgentTask
+from .agent_decision import AgentDecision
+from .agent_context import AgentContext
+from .agent_result import AgentResult
+from .agent_config import AgentConfig
+from .base_agent import BaseAgent
+from .agent_executor import AgentExecutor
+from .agent_manager import AgentManager, NullAgentManager
+
 __all__ = [
     # v1.14.0
     "AiImprovementConfig",
@@ -146,4 +156,14 @@ __all__ = [
     "WorkflowReportBuilder",
     "WorkflowRunner",
     "NullWorkflowRunner",
+    # v2.0.0
+    "AgentTask",
+    "AgentDecision",
+    "AgentContext",
+    "AgentResult",
+    "AgentConfig",
+    "BaseAgent",
+    "AgentExecutor",
+    "AgentManager",
+    "NullAgentManager",
 ]
