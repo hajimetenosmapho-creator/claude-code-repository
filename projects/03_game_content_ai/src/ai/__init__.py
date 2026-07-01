@@ -99,6 +99,10 @@ from .news_agent import NewsAgent
 from .workflow_trigger_agent_config import WorkflowTriggerAgentConfig
 from .workflow_trigger_agent import WorkflowTriggerAgent
 
+# v2.4.0 Publish Trigger Agent Foundation
+from .publish_trigger_agent_config import PublishTriggerAgentConfig
+from .publish_trigger_agent import PublishTriggerAgent
+
 __all__ = [
     # v1.14.0
     "AiImprovementConfig",
@@ -180,4 +184,7 @@ __all__ = [
     # v2.3.0
     "WorkflowTriggerAgentConfig",
     "WorkflowTriggerAgent",
+    # v2.4.0
+    "PublishTriggerAgentConfig",
+    "PublishTriggerAgent",
 ]

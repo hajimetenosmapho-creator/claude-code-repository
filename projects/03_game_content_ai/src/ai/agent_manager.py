@@ -1,5 +1,5 @@
 """
-Agent管理（v2.0.0 / v2.2.0 / v2.3.0）
+Agent管理（v2.0.0 / v2.2.0 / v2.3.0 / v2.4.0）
 
 AgentManager:     登録された AgentExecutor にタスクを実行させるマネージャ
 NullAgentManager: AI_AGENT_ENABLED=false 時のダミー実装
@@ -10,12 +10,18 @@ NullAgentManager: AI_AGENT_ENABLED=false 時のダミー実装
     - v2.2.0で NewsAgent（+ NewsPipelineRunner）を初めて executors にDIする。
       is_ready()=True の場合のみ NewsAgentConfig / NewsPipelineRunner / NewsAgent を
       生成する（AI_AGENT_ENABLED=false のときはこれらのオブジェクトすら生成しない）
-    - v2.3.0で WorkflowTriggerAgent（+ WorkflowPipelineRunner）を二重ゲート方式でDIする。
+    - v2.3.0で WorkflowTriggerAgent（+ WorkflowPipelineRunner）を三重ゲート方式でDIする。
       AI_AGENT_ENABLED（AgentConfig.is_ready()）に加えて、
       WorkflowTriggerAgentConfig.is_ready()（WORKFLOW_TRIGGER_AGENT_ENABLED かつ
       AI_WORKFLOW_ENABLED）の両方が True の場合のみ executors に追加する。
       Publishを含むWorkflowが AI_AGENT_ENABLED=true だけで自動実行されないようにするための
       安全策（Project Charter・設計書で合意済み）。
+    - v2.4.0で PublishTriggerAgent（+ PublishPipelineRunner）を同様の三重ゲート方式でDIする。
+      AI_AGENT_ENABLED（AgentConfig.is_ready()）に加えて、
+      PublishTriggerAgentConfig.is_ready()（PUBLISH_TRIGGER_AGENT_ENABLED かつ
+      AI_PUBLISH_ENABLED等のAiPublishConfig.is_ready()）の両方が True の場合のみ
+      executors に追加する。WordPressへの下書き投稿が AI_AGENT_ENABLED=true だけで
+      自動実行されないようにするための安全策（WorkflowTriggerAgentと同じ考え方）。
     - run_id はタスク実行のたびに AgentManager が生成する
       （AgentContext の構築は AgentManager の責務）
 """
@@ -30,10 +36,12 @@ from .agent_result import AgentResult
 from .agent_task import AgentTask
 from .news_agent import NewsAgent
 from .news_agent_config import NewsAgentConfig
+from .publish_trigger_agent import PublishTriggerAgent
+from .publish_trigger_agent_config import PublishTriggerAgentConfig
 from .workflow_trigger_agent import WorkflowTriggerAgent
 from .workflow_trigger_agent_config import WorkflowTriggerAgentConfig
 
-from pipeline import NewsPipelineRunner, WorkflowPipelineRunner
+from pipeline import NewsPipelineRunner, PublishPipelineRunner, WorkflowPipelineRunner
 
 
 class AgentManager:
@@ -60,10 +68,16 @@ class AgentManager:
         is_ready()=True の場合、NewsAgentConfig / NewsPipelineRunner / NewsAgent を
         生成し、AgentExecutor(NewsAgent(...)) を executors に登録する（v2.2.0）。
 
-        さらに WorkflowTriggerAgentConfig.is_ready()（二重ゲートの2段目
+        さらに WorkflowTriggerAgentConfig.is_ready()（三重ゲートの2・3段目
         WORKFLOW_TRIGGER_AGENT_ENABLED、および AI_WORKFLOW_ENABLED）が True の場合のみ、
         WorkflowTriggerAgent（+ WorkflowPipelineRunner）も executors に追加する（v2.3.0）。
-        False の場合（デフォルト）は NewsAgent のみが登録される。
+
+        同様に PublishTriggerAgentConfig.is_ready()（三重ゲートの2・3段目
+        PUBLISH_TRIGGER_AGENT_ENABLED、および AiPublishConfig.is_ready() 相当の
+        AI_PUBLISH_ENABLED等）が True の場合のみ、
+        PublishTriggerAgent（+ PublishPipelineRunner）も executors に追加する（v2.4.0）。
+
+        いずれも False の場合（デフォルト）は NewsAgent のみが登録される。
         """
         if not config.is_ready():
             return NullAgentManager()
@@ -86,6 +100,17 @@ class AgentManager:
                 runner=workflow_pipeline_runner,
             )
             executors.append(AgentExecutor(workflow_trigger_agent))
+
+        publish_trigger_agent_config = PublishTriggerAgentConfig.from_env(
+            project_root=config.base_dir
+        )
+        if publish_trigger_agent_config.is_ready():
+            publish_pipeline_runner = PublishPipelineRunner(publish_trigger_agent_config)
+            publish_trigger_agent = PublishTriggerAgent(
+                config=publish_trigger_agent_config,
+                runner=publish_pipeline_runner,
+            )
+            executors.append(AgentExecutor(publish_trigger_agent))
 
         return cls(config=config, executors=executors)
 
