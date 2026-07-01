@@ -22,6 +22,39 @@
 
 ---
 
+## [v2.2.0] - 2026-07-01 ★ News Agent Foundation
+
+### Added
+
+- `src/ai/news_agent_config.py`: `NewsAgentConfig`（`min_interval_minutes` / `timeout_sec` / `log_lookback_days` / `main_py_path` / `working_directory` / `python_executable`。`NEWS_AGENT_MIN_INTERVAL_MINUTES`等の環境変数から`from_env(project_root)`で構築）
+- `src/ai/news_agent.py`: `NewsAgent`（`BaseAgent`継承）。`decide()`は`logs/execution/`配下の実行ログ（読み取り専用）から経過時間を判断し、`act()`は`NewsPipelineRunner.run()`のみを呼ぶ
+- `src/pipeline/`（新規パッケージ、実行層）
+  - `pipeline_result.py`: `PipelineResult`（`success` / `returncode` / `elapsed_sec` / `stdout_log_path` / `stderr_log_path` / `error_message`）
+  - `news_pipeline_runner.py`: `NewsPipelineRunner`。`main.py`をsubprocessとして起動し、timeout・stdout/stderr保存・returncode判定を担う
+- `scripts/run_news_agent.py` 新規作成（`--dry-run` / `--max-articles`対応の手動実行エントリ）
+- `tests/test_e2e_v2_2_0_news_agent_foundation.py` 新規作成
+- `docs/design/news_agent_foundation.md` 新規作成（本リリースで追加）
+
+### Changed
+
+- `src/ai/agent_manager.py`: `AgentManager.from_config()`の`executors`構築部分のみ更新。`AI_AGENT_ENABLED=true`の場合に`NewsAgentConfig` / `NewsPipelineRunner` / `NewsAgent`を生成し、`AgentExecutor(NewsAgent(...))`を`executors`に登録する（v2.0.0時点の`executors=[]`から初めて実体を持つ）
+- `src/ai/__init__.py`: `NewsAgent` / `NewsAgentConfig`を新規export（既存のimport/exportは変更なし）
+
+### Note
+
+- Agent＝「判断」、PipelineRunner＝「実行」の責務分離を徹底。`NewsAgent`はsubprocessも`main.py`のパスも知らず、`NewsPipelineRunner.run(params) -> PipelineResult`という薄いインターフェースのみに依存する
+- `NewsPipelineRunner`（`src/pipeline/`）はAgent層の型・`WorkflowRunner`を一切importしない（`ai → pipeline`の一方向依存）。将来のWorkflow Trigger Agent / Publish Agent / Scheduler Agentが同じ実行層の形を再利用できる想定
+- `main.py`本体・既存ニュース収集パイプライン（`collector.py`等）・`WorkflowRunner`・`BaseAgent` / `AgentExecutor` / `AgentContext` / `AgentDecision` / `AgentResult`は無変更（`git diff`で確認済み）
+- `dry_run=True`の場合、`AgentExecutor`（v2.0.0の既存設計）により`NewsAgent.act()`自体が呼ばれないため、`NewsPipelineRunner.run()`（＝`main.py`起動）は構造的に発生しない
+- デフォルトは無効（`AI_AGENT_ENABLED=false`）。既存フローに影響なし
+
+### Tested
+
+- `tests/test_e2e_v2_2_0_news_agent_foundation.py`: 117/117 PASS
+- 既存回帰確認：v1.9.0〜v1.20.0・v2.0.0の既存E2Eテスト13ファイル合計 1153/1153 PASS（`test_e2e_v1_10_0_analytics_foundation.py`はKnown Issues [KI-1]により対象外。本リリースの変更とは無関係であることを確認済み）
+
+---
+
 ## [v2.0.0] - 2026-07-01 ★ AI Agent Foundation
 
 ### Added

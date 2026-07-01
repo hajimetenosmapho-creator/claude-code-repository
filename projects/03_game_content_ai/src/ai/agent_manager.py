@@ -1,5 +1,5 @@
 """
-Agent管理（v2.0.0）
+Agent管理（v2.0.0 / v2.2.0）
 
 AgentManager:     登録された AgentExecutor にタスクを実行させるマネージャ
 NullAgentManager: AI_AGENT_ENABLED=false 時のダミー実装
@@ -7,9 +7,9 @@ NullAgentManager: AI_AGENT_ENABLED=false 時のダミー実装
 設計方針:
     - Configuration First: AgentConfig.is_ready() が False の場合、
       from_config() が NullAgentManager を返す（呼び出し側は分岐不要）
-    - v2.0.0時点では具体的なAgent実装がまだ存在しないため、
-      is_ready()=True であっても executors は空リストとする
-      （Agent実装が追加された時点で from_config() 内で DI する）
+    - v2.2.0で NewsAgent（+ NewsPipelineRunner）を初めて executors にDIする。
+      is_ready()=True の場合のみ NewsAgentConfig / NewsPipelineRunner / NewsAgent を
+      生成する（AI_AGENT_ENABLED=false のときはこれらのオブジェクトすら生成しない）
     - run_id はタスク実行のたびに AgentManager が生成する
       （AgentContext の構築は AgentManager の責務）
 """
@@ -22,6 +22,10 @@ from .agent_context import AgentContext
 from .agent_executor import AgentExecutor
 from .agent_result import AgentResult
 from .agent_task import AgentTask
+from .news_agent import NewsAgent
+from .news_agent_config import NewsAgentConfig
+
+from pipeline import NewsPipelineRunner
 
 
 class AgentManager:
@@ -45,13 +49,19 @@ class AgentManager:
         AgentConfig から AgentManager を構築する。
 
         is_ready() が False の場合は NullAgentManager を返す。
-        v2.0.0時点では具体的なAgent実装が存在しないため、
-        is_ready()=True の場合でも executors は空リストとなる。
+        is_ready()=True の場合のみ NewsAgentConfig / NewsPipelineRunner / NewsAgent を
+        生成し、AgentExecutor(NewsAgent(...)) を executors に登録する（v2.2.0）。
         """
         if not config.is_ready():
             return NullAgentManager()
 
-        executors: list[AgentExecutor] = []
+        news_agent_config = NewsAgentConfig.from_env(project_root=config.base_dir)
+        news_pipeline_runner = NewsPipelineRunner(news_agent_config)
+        news_agent = NewsAgent(config=news_agent_config, runner=news_pipeline_runner)
+
+        executors: list[AgentExecutor] = [
+            AgentExecutor(news_agent),
+        ]
         return cls(config=config, executors=executors)
 
     def is_available(self) -> bool:

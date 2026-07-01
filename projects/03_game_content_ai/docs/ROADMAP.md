@@ -222,7 +222,7 @@
 
 ---
 
-## v2.1.0 — Agent Documentation Foundation（進行中）
+## v2.1.0 — Agent Documentation Foundation（2026-07-01 完了）
 
 - [x] CHANGELOG.md / ROADMAP.md をv1.8.0〜v2.0.0まで最新化
 - [x] architecture.md にWorkflow層・Agent層を追記
@@ -231,10 +231,22 @@
 
 ---
 
+## v2.2.0 — News Agent Foundation（2026-07-01 完了）★ Release 2.0 続き
+
+- [x] `NewsAgentConfig`新規実装（判断・実行の設定値管理。`main_py_path` / `working_directory` / `python_executable`を含む）
+- [x] `src/pipeline/`（実行層）新規実装：`PipelineResult` / `NewsPipelineRunner`
+- [x] `NewsAgent`（`BaseAgent`継承）実装：`decide()`は実行ログベースの判断、`act()`は`NewsPipelineRunner.run()`への委譲のみ
+- [x] `AgentManager.from_config()`に`NewsAgent`をDI（v2.0.0の`executors=[]`から初めて実体化）
+- [x] `scripts/run_news_agent.py`新規作成（`--dry-run` / `--max-articles`対応）
+- [x] `docs/design/news_agent_foundation.md`設計書作成
+- [x] Agent＝判断／PipelineRunner＝実行の責務分離を徹底（`main.py`・`WorkflowRunner`は無変更）
+- [x] E2Eテスト117/117 PASS、既存回帰1153/1153 PASS（v1.10.0 Known Issue除く）
+
+---
+
 ## v2.x 以降の候補（未着手）
 
-- [ ] News Agent Foundation（ゲームニュース収集を「判断」できるAgent実装）
-- [ ] Workflow Trigger Agent（`WorkflowRunner`の起動タイミングをAgentが判断）
+- [ ] **v2.3.0 Workflow Trigger Agent Foundation**（`WorkflowRunner`の起動タイミングを判断するAgent。News Agentと同様に`src/pipeline/`のRunner層を再利用し、`WorkflowPipelineRunner`を追加する想定）
 - [ ] Windows タスクスケジューラによる定時自動実行
 - [ ] 重要度別の公開制御（S→即時公開・A→予約投稿・B→下書き）
 

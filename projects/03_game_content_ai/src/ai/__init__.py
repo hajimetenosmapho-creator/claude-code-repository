@@ -91,6 +91,10 @@ from .base_agent import BaseAgent
 from .agent_executor import AgentExecutor
 from .agent_manager import AgentManager, NullAgentManager
 
+# v2.2.0 News Agent Foundation
+from .news_agent_config import NewsAgentConfig
+from .news_agent import NewsAgent
+
 __all__ = [
     # v1.14.0
     "AiImprovementConfig",
@@ -166,4 +170,7 @@ __all__ = [
     "AgentExecutor",
     "AgentManager",
     "NullAgentManager",
+    # v2.2.0
+    "NewsAgentConfig",
+    "NewsAgent",
 ]
