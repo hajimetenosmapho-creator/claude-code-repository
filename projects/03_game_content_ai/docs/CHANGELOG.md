@@ -22,6 +22,39 @@
 
 ---
 
+## [v2.3.0] - 2026-07-02 ★ Workflow Trigger Agent Foundation
+
+### Added
+
+- `src/ai/workflow_trigger_agent_config.py`: `WorkflowTriggerAgentConfig`（`enabled` / `min_interval_minutes` / `reports_dir` / `workflow_enabled` / `project_root`。`WORKFLOW_TRIGGER_AGENT_ENABLED`（デフォルト`false`）・`WORKFLOW_TRIGGER_AGENT_MIN_INTERVAL_MINUTES`（デフォルト`1440`分＝24時間）の環境変数、および既存`WorkflowConfig.from_env(base_dir=project_root).is_ready()`を再利用した`AI_WORKFLOW_ENABLED`判定から`from_env(project_root)`で構築）
+- `src/ai/workflow_trigger_agent.py`: `WorkflowTriggerAgent`（`BaseAgent`継承）。`decide()`は`outputs/workflow_reports/`配下のレポートファイル（読み取り専用）のmtimeから経過時間を判断し、`act()`は`WorkflowPipelineRunner.run()`のみを呼ぶ
+- `src/pipeline/workflow_pipeline_runner.py`: `WorkflowPipelineRunner`。`WorkflowConfig.from_env()` / `WorkflowRunner.from_config()` / `WorkflowRunner.run()`を`run()`メソッド内で直接呼び出す薄いラッパー（`NewsPipelineRunner`と異なりsubprocessは使わない。`WorkflowRunner`には`main.py`のような`sys.exit()`/`argparse`問題がなく、直接呼び出しで安全に実装できるため）
+- `scripts/run_workflow_trigger_agent.py`新規作成（`--dry-run` / `--article-id` / `--workflow-dry-run`対応の手動実行エントリ）
+- `tests/test_e2e_v2_3_0_workflow_trigger_agent_foundation.py`新規作成（110件）
+- `docs/design/workflow_trigger_agent_foundation.md`新規作成（本リリースで追加）
+
+### Changed
+
+- `src/ai/agent_manager.py`: `AgentManager.from_config()`の`executors`構築部分を更新。二重ゲート方式（1段目：`AI_AGENT_ENABLED`、2段目：`WorkflowTriggerAgentConfig.is_ready()`＝`WORKFLOW_TRIGGER_AGENT_ENABLED`かつ`AI_WORKFLOW_ENABLED`）が両方成立した場合のみ、`WorkflowPipelineRunner` / `WorkflowTriggerAgent`を生成し`AgentExecutor(WorkflowTriggerAgent(...))`を`executors`に追加登録する（`NewsAgent`のDIは無変更のまま維持）
+- `src/ai/__init__.py`: `WorkflowTriggerAgent` / `WorkflowTriggerAgentConfig`を新規export
+- `src/pipeline/__init__.py`: `WorkflowPipelineRunner`を新規export
+
+### Note
+
+- `WorkflowTriggerAgent`＝「判断」、`WorkflowPipelineRunner`＝「実行」、`WorkflowRunner`＝「オーケストレーション」という3層の責務分離を徹底。`WorkflowTriggerAgent`は`WorkflowRunner`を一切importせず、`WorkflowPipelineRunner.run(params) -> PipelineResult`という薄いインターフェースのみに依存する
+- **二重ゲート方式**：`AI_AGENT_ENABLED=true`にしただけではPublishを含むWorkflowは自動実行されない。`WORKFLOW_TRIGGER_AGENT_ENABLED=true`（デフォルト`false`）を明示的に設定し、かつ`AI_WORKFLOW_ENABLED=true`（デフォルト`true`）である場合にのみ`WorkflowTriggerAgent`がDIされる。News収集（`NewsAgent`）とWorkflow自動実行を独立して制御できる、安全側の設計判断
+- `WorkflowPipelineRunner`が`WorkflowRunner`を直接importすることは、`src/pipeline/`が`src/ai/`をimportする形になるが、`ai`パッケージのimportを`run()`メソッド内に遅延させることで`pipeline → ai → pipeline`という循環importを構造的に回避している
+- `main.py`本体・`WorkflowRunner`本体（`workflow_runner.py`等）・`NewsAgent` / `NewsPipelineRunner`・`BaseAgent` / `AgentExecutor` / `AgentContext` / `AgentDecision` / `AgentResult` / `AgentConfig`は無変更（`git diff`で確認済み）
+- `dry_run=True`の場合、`AgentExecutor`（v2.0.0の既存設計）により`WorkflowTriggerAgent.act()`自体が呼ばれないため、`WorkflowPipelineRunner.run()`（＝`WorkflowRunner.run()`起動、Publishを含む）は構造的に発生しない
+- デフォルトは無効（`WORKFLOW_TRIGGER_AGENT_ENABLED=false`）。既存フローに影響なし
+
+### Tested
+
+- `tests/test_e2e_v2_3_0_workflow_trigger_agent_foundation.py`: 110/110 PASS
+- 既存回帰確認：`v2.0.0`（118/118 PASS）・`v2.2.0`（120/120 PASS）・`v1.20.0`（170/170 PASS）
+
+---
+
 ## [v2.2.0] - 2026-07-01 ★ News Agent Foundation
 
 ### Added

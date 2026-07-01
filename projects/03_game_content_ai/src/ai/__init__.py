@@ -95,6 +95,10 @@ from .agent_manager import AgentManager, NullAgentManager
 from .news_agent_config import NewsAgentConfig
 from .news_agent import NewsAgent
 
+# v2.3.0 Workflow Trigger Agent Foundation
+from .workflow_trigger_agent_config import WorkflowTriggerAgentConfig
+from .workflow_trigger_agent import WorkflowTriggerAgent
+
 __all__ = [
     # v1.14.0
     "AiImprovementConfig",
@@ -173,4 +177,7 @@ __all__ = [
     # v2.2.0
     "NewsAgentConfig",
     "NewsAgent",
+    # v2.3.0
+    "WorkflowTriggerAgentConfig",
+    "WorkflowTriggerAgent",
 ]

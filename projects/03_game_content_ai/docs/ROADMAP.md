@@ -244,10 +244,23 @@
 
 ---
 
+## v2.3.0 — Workflow Trigger Agent Foundation（2026-07-02 完了）★ Release 2.0 続き
+
+- [x] `WorkflowTriggerAgentConfig`新規実装（二重ゲート方式の判断・実行双方の設定値管理。`WORKFLOW_TRIGGER_AGENT_ENABLED`（デフォルト`false`）と既存`AI_WORKFLOW_ENABLED`の両方を`is_ready()`に反映）
+- [x] `src/pipeline/workflow_pipeline_runner.py`（実行層）新規実装：`WorkflowPipelineRunner`（`WorkflowRunner.run()`を直接呼び出す薄いラッパー、subprocess不使用）
+- [x] `WorkflowTriggerAgent`（`BaseAgent`継承）実装：`decide()`は`outputs/workflow_reports/`のmtimeベースの判断、`act()`は`WorkflowPipelineRunner.run()`への委譲のみ
+- [x] `AgentManager.from_config()`に`WorkflowTriggerAgent`をDI（二重ゲート方式：`AI_AGENT_ENABLED` かつ `WORKFLOW_TRIGGER_AGENT_ENABLED` かつ `AI_WORKFLOW_ENABLED`の3条件がすべて揃った場合のみ有効化）
+- [x] `scripts/run_workflow_trigger_agent.py`新規作成（`--dry-run` / `--article-id` / `--workflow-dry-run`対応）
+- [x] `docs/design/workflow_trigger_agent_foundation.md`設計書作成
+- [x] Agent＝判断／PipelineRunner＝実行／WorkflowRunner＝オーケストレーションの3層責務分離を徹底（`WorkflowRunner`・`NewsAgent`・`NewsPipelineRunner`・`main.py`は無変更）
+- [x] E2Eテスト110/110 PASS、既存回帰（`v2.0.0` 118/118・`v2.2.0` 120/120・`v1.20.0` 170/170）PASS
+
+---
+
 ## v2.x 以降の候補（未着手）
 
-- [ ] **v2.3.0 Workflow Trigger Agent Foundation**（`WorkflowRunner`の起動タイミングを判断するAgent。News Agentと同様に`src/pipeline/`のRunner層を再利用し、`WorkflowPipelineRunner`を追加する想定）
-- [ ] Windows タスクスケジューラによる定時自動実行
+- [ ] **v2.4.0 Publish Trigger Agent Foundation**（`AiPublishService`（v1.18.0）の実行タイミングを判断するAgent。News Agent / Workflow Trigger Agentと同じ「Agent（判断）→ Pipeline（実行）→ 対象サービス」パターンを再利用し、`PublishPipelineRunner`を追加する想定）
+- [ ] Windows タスクスケジューラによる定時自動実行（Scheduler Agent）
 - [ ] 重要度別の公開制御（S→即時公開・A→予約投稿・B→下書き）
 
 ---

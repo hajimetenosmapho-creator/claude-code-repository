@@ -1,5 +1,5 @@
 """
-Agent管理（v2.0.0 / v2.2.0）
+Agent管理（v2.0.0 / v2.2.0 / v2.3.0）
 
 AgentManager:     登録された AgentExecutor にタスクを実行させるマネージャ
 NullAgentManager: AI_AGENT_ENABLED=false 時のダミー実装
@@ -10,6 +10,12 @@ NullAgentManager: AI_AGENT_ENABLED=false 時のダミー実装
     - v2.2.0で NewsAgent（+ NewsPipelineRunner）を初めて executors にDIする。
       is_ready()=True の場合のみ NewsAgentConfig / NewsPipelineRunner / NewsAgent を
       生成する（AI_AGENT_ENABLED=false のときはこれらのオブジェクトすら生成しない）
+    - v2.3.0で WorkflowTriggerAgent（+ WorkflowPipelineRunner）を二重ゲート方式でDIする。
+      AI_AGENT_ENABLED（AgentConfig.is_ready()）に加えて、
+      WorkflowTriggerAgentConfig.is_ready()（WORKFLOW_TRIGGER_AGENT_ENABLED かつ
+      AI_WORKFLOW_ENABLED）の両方が True の場合のみ executors に追加する。
+      Publishを含むWorkflowが AI_AGENT_ENABLED=true だけで自動実行されないようにするための
+      安全策（Project Charter・設計書で合意済み）。
     - run_id はタスク実行のたびに AgentManager が生成する
       （AgentContext の構築は AgentManager の責務）
 """
@@ -24,8 +30,10 @@ from .agent_result import AgentResult
 from .agent_task import AgentTask
 from .news_agent import NewsAgent
 from .news_agent_config import NewsAgentConfig
+from .workflow_trigger_agent import WorkflowTriggerAgent
+from .workflow_trigger_agent_config import WorkflowTriggerAgentConfig
 
-from pipeline import NewsPipelineRunner
+from pipeline import NewsPipelineRunner, WorkflowPipelineRunner
 
 
 class AgentManager:
@@ -49,8 +57,13 @@ class AgentManager:
         AgentConfig から AgentManager を構築する。
 
         is_ready() が False の場合は NullAgentManager を返す。
-        is_ready()=True の場合のみ NewsAgentConfig / NewsPipelineRunner / NewsAgent を
+        is_ready()=True の場合、NewsAgentConfig / NewsPipelineRunner / NewsAgent を
         生成し、AgentExecutor(NewsAgent(...)) を executors に登録する（v2.2.0）。
+
+        さらに WorkflowTriggerAgentConfig.is_ready()（二重ゲートの2段目
+        WORKFLOW_TRIGGER_AGENT_ENABLED、および AI_WORKFLOW_ENABLED）が True の場合のみ、
+        WorkflowTriggerAgent（+ WorkflowPipelineRunner）も executors に追加する（v2.3.0）。
+        False の場合（デフォルト）は NewsAgent のみが登録される。
         """
         if not config.is_ready():
             return NullAgentManager()
@@ -62,6 +75,18 @@ class AgentManager:
         executors: list[AgentExecutor] = [
             AgentExecutor(news_agent),
         ]
+
+        workflow_trigger_agent_config = WorkflowTriggerAgentConfig.from_env(
+            project_root=config.base_dir
+        )
+        if workflow_trigger_agent_config.is_ready():
+            workflow_pipeline_runner = WorkflowPipelineRunner(workflow_trigger_agent_config)
+            workflow_trigger_agent = WorkflowTriggerAgent(
+                config=workflow_trigger_agent_config,
+                runner=workflow_pipeline_runner,
+            )
+            executors.append(AgentExecutor(workflow_trigger_agent))
+
         return cls(config=config, executors=executors)
 
     def is_available(self) -> bool:
