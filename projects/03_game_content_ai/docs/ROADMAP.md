@@ -96,37 +96,161 @@
 
 ---
 
-## v1.8.0 — Logging Foundation（予定）★ Release 1.1 — Epic 2
+## v1.8.0 — Logging Foundation（2026-06-30 完了）★ Release 1.1 — Epic 2
 
-- [ ] 実行ログのファイル出力
-- [ ] エラーログの構造化
-- [ ] 投稿履歴の記録
-- [ ] AI判定履歴の記録
-- [ ] API利用履歴の記録
-
----
-
-## v1.9.0 — SNS Foundation（予定）★ Release 1.1 — Epic 3
-
-- [ ] X投稿URLの保存
-- [ ] 投稿履歴の管理
-- [ ] 将来のAPI連携設計
+- [x] 実行ログのファイル出力（`src/logger/log_manager.py`、JSON Lines形式）
+- [x] エラーログの構造化（`ErrorLogEntry`）
+- [x] 投稿履歴の記録（`ArticleLogEntry`）
+- [x] 投稿処理（`ExecutionLogEntry`）の記録
+- [ ] AI判定履歴の記録（未着手。v1.14.0以降のAI系ログとの統合を検討）
+- [ ] API利用履歴の記録（未着手）
+- [x] `docs/design/logging_foundation.md` 設計書作成
 
 ---
 
-## v1.10.0 — Analytics Foundation（予定）★ Release 1.1 — Epic 4
+## v1.9.0 — SNS Foundation（2026-06-30 完了）★ Release 1.1 — Epic 3
 
-- [ ] Search Console 連携設計
-- [ ] Google Analytics 連携設計
-- [ ] AI改善提案設計
+- [x] X投稿URLの保存（`wp_public_url`をログに記録）
+- [x] 投稿履歴の管理（`ArticleLogEntry`にSNS関連フィールドを追加）
+- [x] 将来のAPI連携設計（`SnsPostStatus` Enumで拡張ポイントを用意。X API自動投稿は未実装）
+- [x] `docs/design/sns_foundation.md` 設計書作成
 
 ---
 
-## v2.0 — AI Blog Operator（予定）
+## v1.10.0 — Analytics Foundation（2026-06-30 完了）★ Release 1.1 — Epic 4
 
+- [x] Analyticsデータモデル設計（`AnalyticsEntry` / `ArticleAnalysisRecord` / `AiInputRecord`）
+- [ ] Search Console 連携（→ v1.12.0で実装）
+- [ ] Google Analytics 連携（→ v1.13.0で実装）
+- [ ] AI改善提案（→ v1.14.0で実装）
+- [x] `docs/design/analytics_foundation.md` 設計書作成
+
+---
+
+## v1.11.0 — SaveResult Foundation（2026-06-30 完了）
+
+- [x] `SaveResult` dataclass新規作成（`src/outputs/save_result.py`）
+- [x] `WordPressOutput.save()` の戻り値をAPIレスポンス直接参照方式に変更（post_id推測の廃止）
+- [ ] 詳細設計書（見送り。必要になった時点で追加）
+
+---
+
+## v1.12.0 — Search Console Foundation（2026-06-30 完了）★ Release 1.1 — Epic 4 続き
+
+- [x] `SearchConsoleClient` / `SearchConsoleFetcher` 実装
+- [x] `scripts/fetch_search_console_metrics.py`（バッチ取得スクリプト）
+- [x] APIエラー時のWARNING継続処理（システム全体を停止させない）
+- [ ] 詳細設計書（見送り。必要になった時点で追加）
+
+---
+
+## v1.13.0 — Google Analytics Foundation（2026-06-30 完了）★ Release 1.1 — Epic 4 続き
+
+- [x] `GoogleAnalyticsClient` / `GoogleAnalyticsFetcher` 実装
+- [x] `scripts/fetch_google_analytics_metrics.py`
+- [x] `[GA4 WARNING]`によるSearch Consoleとの区別
+- [ ] 詳細設計書（見送り。必要になった時点で追加）
+
+---
+
+## v1.14.0 — AI Improvement Foundation（2026-06-30 完了）★ Release 1.2 — Epic 1
+
+- [x] `src/ai/` パッケージ新規作成（AI系機能全体の起点）
+- [x] `ClaudeClient` / `AiImprovementService` 実装（Configuration First）
+- [x] `scripts/run_ai_improvement.py`（投稿フローと独立したバッチ実行）
+- [x] `docs/design/ai_improvement_foundation.md` 設計書作成（v2.1.0にて追加）
+
+---
+
+## v1.15.0 — AI Improvement Review Foundation（2026-06-30 完了）★ Release 1.2 — Epic 2
+
+- [x] `ImprovementReviewService`（Claude API呼び出しなしのレポート生成）
+- [x] `scripts/run_ai_improvement_report.py`
+- [ ] 詳細設計書（見送り。v1.14.0設計書の範囲として今後扱う）
+
+---
+
+## v1.16.0 — AI Rewrite Foundation（2026-06-30 完了）★ Release 1.2 — Epic 3
+
+- [x] `RewriteService` 実装（改善提案を元にClaude APIで記事をリライト）
+- [x] `ArticleProvider`（WordPress記事取得）
+- [x] `scripts/run_ai_rewrite.py`
+- [x] `docs/design/ai_rewrite_foundation.md` 設計書作成（v2.1.0にて追加）
+
+---
+
+## v1.17.0 — AI Rewrite Review Foundation（2026-06-30 完了）★ Release 1.2 — Epic 4
+
+- [x] `RewriteReviewService`（差分サマリー生成、Claude API呼び出しなし）
+- [x] `scripts/run_ai_rewrite_review.py`
+- [ ] 詳細設計書（見送り。v1.16.0設計書の範囲として今後扱う）
+
+---
+
+## v1.18.0 — AI Publish Foundation（2026-06-30 完了）★ Release 1.2 — Epic 5
+
+- [x] `AiPublishService`（採用済みレビューの重複チェック→WordPress下書き投稿）
+- [x] `WordPressDraftClient`
+- [x] `scripts/run_ai_publish.py`
+- [x] `docs/design/ai_publish_foundation.md` 設計書作成（v2.1.0にて追加）
+
+---
+
+## v1.19.0 — AI Publish Review Foundation（2026-06-30 完了）★ Release 1.2 — Epic 6
+
+- [x] `AiPublishReviewService`（非破壊・読み取りのみのレビュー）
+- [x] `scripts/run_ai_publish_review.py`
+- [ ] 詳細設計書（見送り。v1.18.0設計書の範囲として今後扱う）
+
+---
+
+## v1.20.0 — AI Workflow Foundation（2026-07-01 完了）★ Release 1.2 完了
+
+- [x] `WorkflowRunner`：Improvement→ImprovementReview→Rewrite→RewriteReview→Publish→PublishReviewの6ステップを統合
+- [x] `WorkflowStepExecutor`（DIによる各Service注入）
+- [x] `scripts/run_ai_workflow.py`
+- [x] `docs/design/ai_workflow_foundation.md` 設計書作成（v2.1.0にて追加）
+
+---
+
+## v2.0.0 — AI Agent Foundation（2026-07-01 完了）★ Release 2.0 開始
+
+- [x] `AgentManager` / `AgentExecutor` / `BaseAgent` 実装（「Workflowを今実行すべきか判断する」上位レイヤーの骨組み）
+- [x] Configuration First（`AI_AGENT_ENABLED=false`がデフォルト。既存フローに影響なし）
+- [ ] 具体的なAgent実装（News Agent等）は未着手。v2.0.0時点では`executors=[]`
+- [x] `docs/design/agent_foundation.md` 設計書作成（v2.1.0にて追加）
+
+---
+
+## v2.1.0 — Agent Documentation Foundation（進行中）
+
+- [x] CHANGELOG.md / ROADMAP.md をv1.8.0〜v2.0.0まで最新化
+- [x] architecture.md にWorkflow層・Agent層を追記
+- [x] `docs/design/`に5本の設計書を追加（AI Improvement / AI Rewrite / AI Publish / AI Workflow / Agent Foundation）
+- [ ] 見送った6バージョン（SaveResult / Search Console / Google Analytics / AI Improvement Review / AI Rewrite Review / AI Publish Review）の詳細設計書は、必要になった時点で追加する
+
+---
+
+## v2.x 以降の候補（未着手）
+
+- [ ] News Agent Foundation（ゲームニュース収集を「判断」できるAgent実装）
+- [ ] Workflow Trigger Agent（`WorkflowRunner`の起動タイミングをAgentが判断）
 - [ ] Windows タスクスケジューラによる定時自動実行
 - [ ] 重要度別の公開制御（S→即時公開・A→予約投稿・B→下書き）
+
+---
+
+## 長期ビジョン — AI Blog Operator（Release 2.x, 予定）
+
+> 旧ROADMAPでは「v2.0」という名称でこのビジョンを表していましたが、
+> 実際にリリースされた `v2.0.0`（AI Agent Foundation）は判断レイヤーの骨組みのみであり、
+> 本ビジョン全体を指すものではありません。混同を避けるため、
+> バージョン番号を含まない名称に変更しました（v2.1.0 Documentation Foundationにて整理）。
+
 - [ ] 半自律的なブログ運営支援（人間の承認ゲート付き）
+- [ ] Agentによる各Workflowステップの実行要否判断（News Agent / Workflow Trigger Agentの先の姿）
+- [ ] Windows タスクスケジューラによる定時自動実行
+- [ ] 重要度別の公開制御（S→即時公開・A→予約投稿・B→下書き）
 
 ---
 

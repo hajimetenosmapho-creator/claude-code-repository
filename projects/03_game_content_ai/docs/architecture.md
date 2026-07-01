@@ -1,7 +1,12 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
-更新日：2026-06-30（v1.7.0 — Publishing Automation・PublishStatus Enum 追加）
+更新日：2026-07-01（v2.1.0 — Workflow層・Agent層を追記。全体像を「出力アーキテクチャ」から「アプリケーション全体アーキテクチャ」へ拡張）
+
+> 本ドキュメントは元々「出力アーキテクチャ（`OutputManager`まわり）」のみを扱っていましたが、
+> v1.14.0〜v2.0.0でAI系の層（Workflow層・Agent層）が追加されたため、
+> 全体像を俯瞰できるよう章を追加しました。
+> 各バージョンの詳細な設計意図は `docs/design/` 配下の個別設計書を参照してください。
 
 ---
 
@@ -156,3 +161,72 @@ destinations = output_manager.save_all(article)
 4. `main.py` の `OutputManager([...])` に追加する
 
 **既存ファイルへの変更は最小限（main.py の1行追加のみ）。**
+
+---
+
+## 全体構成（v2.0.0 時点）
+
+`main.py`（投稿処理）とは別に、`src/ai/` 配下に投稿後の改善サイクルを担う層が育っている。
+両者は独立して実行され、`main.py` は Workflow層・Agent層を呼び出さない。
+
+```
+main.py（記事収集・投稿）
+  └─ output_manager.save_all(article)   ← 本ドキュメント前半の「出力アーキテクチャ」
+
+scripts/run_ai_workflow.py（投稿後の改善サイクル・main.pyとは独立実行）
+  └─ AgentManager（判断）                ← Agent層（v2.0.0、現時点では判断のみ）
+       └─ WorkflowRunner（実行）         ← Workflow層（v1.20.0）
+            └─ WorkflowStepExecutor × 6
+                 ├─ Improvement       （v1.14.0 AiImprovementService）
+                 ├─ ImprovementReview （v1.15.0 ImprovementReviewService）
+                 ├─ Rewrite           （v1.16.0 RewriteService）
+                 ├─ RewriteReview     （v1.17.0 RewriteReviewService）
+                 ├─ Publish           （v1.18.0 AiPublishService）
+                 └─ PublishReview     （v1.19.0 AiPublishReviewService）
+```
+
+各層の役割：
+
+| 層 | 実装 | 責務 |
+|---|---|---|
+| Agent層 | `AgentManager` / `AgentExecutor` / `BaseAgent` | 「今、Workflowを実行すべきか」を**判断**する。実行そのものは行わない |
+| Workflow層 | `WorkflowRunner` / `WorkflowStepExecutor` | 決まった6ステップを、決まった順序で**実行**する |
+| Service層 | `AiImprovementService` 等 | 各ステップの実処理（Claude API呼び出し・WordPress投稿・レポート生成） |
+
+詳細は次項および各 `docs/design/*.md` を参照。
+
+---
+
+## Workflow層（`src/ai/workflow_*.py`、v1.20.0 追加）
+
+`WorkflowRunner` は、v1.14.0〜v1.19.0で個別に実装した6つのServiceを、決まった順序で呼び出すオーケストレーター。
+
+- `WorkflowStep` Enum：`IMPROVEMENT` → `IMPROVEMENT_REVIEW` → `REWRITE` → `REWRITE_REVIEW` → `PUBLISH` → `PUBLISH_REVIEW`
+- `WorkflowRunner` は各Serviceを直接importしない。`WorkflowStepExecutor`（ステップごとのラッパー）をコンストラクタでDIすることで、Workflow層とService層の責務を分離している
+- `AI_WORKFLOW_ENABLED=false` の場合は `NullWorkflowRunner` を返す（Configuration First）
+- 実行結果は `WorkflowResult`（`overall_success` / `total_processed` / `steps` / `warnings`）にまとめられ、`WorkflowReportBuilder` がMarkdownレポートを生成する
+
+詳細設計：`docs/design/ai_workflow_foundation.md`
+
+---
+
+## Agent層（`src/ai/agent_*.py`、v2.0.0 追加）
+
+`AgentManager` は、Workflow層のさらに上位に位置する「判断」レイヤー。
+
+- **Workflowを置き換えるものではない**。「今、Workflowを実行すべきかどうか」を判断する上位概念として設計されている
+- `BaseAgent`（ABC）は `decide()`（判断のみ・副作用なし）と `act()`（`should_act=True`かつ`dry_run=False`の場合のみ呼ばれる実行）に責務を分離
+- `AgentExecutor` が `decide()` → `act()` の呼び出し順序・`dry_run`判定・実行時刻の計測を一括管理する（`BaseAgent`実装側はこれらを意識しなくてよい）
+- `AgentManager.run()` はタスクごとに新しい `run_id` を発行し、登録された `AgentExecutor` に実行させ、`AgentResult` のリストを返す
+- v2.0.0時点では `BaseAgent` の具体的な実装（News Agent等）はまだ存在せず、`AgentManager.from_config()` は `is_ready()=True` でも `executors=[]`（空リスト）を返す。**次の具体的なAgent実装（News Agent / Workflow Trigger Agent）を追加するための骨組みのみが完成した状態**
+- デフォルトは無効（`AI_AGENT_ENABLED=false`）。既存の `WorkflowRunner` 経由の自動実行フローには影響しない
+
+詳細設計：`docs/design/agent_foundation.md`
+
+### 新しいAgentを追加する場合（将来手順）
+
+1. `src/ai/` に `BaseAgent` を継承した新しいAgentクラスを作成し、`decide()` / `act()` / `name()` を実装する
+2. `AgentManager.from_config()` 内で、新しいAgentを包んだ `AgentExecutor` を `executors` リストに追加する（DI）
+3. 必要であれば `AgentConfig` に判断材料となる設定値を追加する
+
+**Workflow層・Service層への変更は不要（Agent層はWorkflowを呼び出す側であり、呼び出される側ではない）。**

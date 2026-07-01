@@ -5,6 +5,344 @@
 
 ---
 
+## Known Issues（現在判明している既知の問題）
+
+> このセクションは「いつ・何がリリースされたか」というリリース履歴とは別に、
+> **現時点（2026-07-01, v2.1.0 Documentation Foundation作業時点）で判明している未解決の問題**をまとめたものです。
+> 各バージョンの`### Tested`欄はリリース当時の記録として維持し、現在の状況はここに集約します。
+
+### [KI-1] v1.10.0 Analytics Foundation のE2Eテストが現環境で失敗する
+
+- **発見日**：2026-07-01（v2.1.0 ドキュメント整備作業中）
+- **対象**：`tests/test_e2e_v1_10_0_analytics_foundation.py`
+- **症状**：`logs/analytics/` サブディレクトリが未作成のまま書き込もうとして `FileNotFoundError` が発生する（`src/analytics/`側の問題と推測される）
+- **v1.10.0実装当時の状況**：`docs/design/analytics_foundation.md` の「Definition of Done」は全項目未チェック（`[ ]`）のままであり、実装当時に本当にテストがPASSしていたかを裏付ける記録は見つからなかった。実装当時の成否は不明。
+- **対応状況**：未修正。`src/`はv2.1.0（本ドキュメント整備リリース）の変更対象外のため、コード修正は行っていない
+- **今後の対応**：別リリースで`src/analytics/analytics_manager.py`側のディレクトリ作成漏れを調査・修正する想定
+
+---
+
+## [v2.0.0] - 2026-07-01 ★ AI Agent Foundation
+
+### Added
+
+- `src/ai/` に Agent基盤（8ファイル）を新規追加
+  - `agent_task.py`: `AgentTask`（エージェントに判断を依頼する作業単位。`task_id` は自由記述）
+  - `agent_decision.py`: `AgentDecision`（`should_act` / `reason` を持つ判断結果）
+  - `agent_context.py`: `AgentContext`（実行時状態。`elapsed_time` は計算プロパティ）
+  - `agent_result.py`: `AgentResult`（判断・実行結果。`workflow_result` は参照のみ保持しコピーしない）
+  - `agent_config.py`: `AgentConfig`（`AI_AGENT_ENABLED` を読む。Configuration First）
+  - `base_agent.py`: `BaseAgent`（ABC）。`decide()`（判断・副作用なし）と `act()`（実行）を分離
+  - `agent_executor.py`: `AgentExecutor`。`decide()` → `should_act`かつ`dry_run=False`の場合のみ`act()`を呼ぶパイプライン
+  - `agent_manager.py`: `AgentManager` / `NullAgentManager`（`AI_AGENT_ENABLED=false`時のダミー実装）
+- `docs/design/agent_foundation.md` 新規作成（本リリースで追加、v2.1.0 Documentation Foundationにて作成）
+
+### Note
+
+- Agent は Workflow（`WorkflowRunner`）を置き換えるものではなく、「Workflowを今実行すべきか判断する」上位レイヤーとして設計されている
+- v2.0.0時点では具体的な `BaseAgent` 実装は追加されていない。`AgentManager.from_config()` は `is_ready()=True` でも `executors=[]`（空リスト）を返す
+- デフォルトは無効（`AI_AGENT_ENABLED=false`）。既存の `WorkflowRunner` 経由の自動実行フローに影響を与えない
+
+### Tested
+
+- `tests/test_e2e_v2_0_0_ai_agent_foundation.py`: 118/118 PASS
+
+---
+
+## [v1.20.0] - 2026-07-01 ★ AI Workflow Foundation
+
+### Added
+
+- `src/ai/` にWorkflow実行エンジン（7ファイル）を新規追加
+  - `workflow_step.py`: `WorkflowStep` Enum（`improvement` / `improvement_review` / `rewrite` / `rewrite_review` / `publish` / `publish_review` の6ステップ）、`WorkflowStepResult`
+  - `workflow_config.py`: `WorkflowConfig`（`AI_WORKFLOW_ENABLED` デフォルトtrue、`AI_WORKFLOW_CONTINUE_ON_ERROR`）
+  - `workflow_context.py`: `WorkflowContext`
+  - `workflow_step_executor.py`: 6ステップ分の `WorkflowStepExecutor` 実装（DIで各Serviceを注入）
+  - `workflow_result.py`: `WorkflowResult`（`overall_success` / `total_processed` / `warnings` / `skipped_steps`）
+  - `workflow_report_builder.py`: `WorkflowReportBuilder`
+  - `workflow_runner.py`: `WorkflowRunner` / `NullWorkflowRunner`
+- `scripts/run_ai_workflow.py` 新規作成
+- `docs/design/ai_workflow_foundation.md` 新規作成（本リリースで追加）
+
+### Note
+
+- v1.14.0〜v1.19.0で個別に実装したImprovement→ImprovementReview→Rewrite→RewriteReview→Publish→PublishReviewの6ステップを、決まった順序で実行するオーケストレーターとして統合
+- `WorkflowRunner` は各ステップのServiceを直接知らず、`WorkflowStepExecutor` 経由でDIする
+- `AI_WORKFLOW_ENABLED=false` → `NullWorkflowRunner` を返す（Configuration First）
+
+### Tested
+
+- `tests/test_e2e_v1_20_0_ai_workflow_foundation.py`: 170/170 PASS
+
+---
+
+## [v1.19.0] - 2026-07-01 ★ AI Publish Review Foundation
+
+### Added
+
+- `src/ai/`: `ai_publish_review_result.py`（`PublishReviewStatus` Enum、`AiPublishReviewResult`）、`ai_publish_review_repository.py`、`ai_publish_review_report_builder.py`、`ai_publish_review_service.py`（`NullAiPublishReviewService`含む）
+- `scripts/run_ai_publish_review.py` 新規作成
+
+### Note
+
+- Claude API・WordPress API（書き込み）は呼び出さない（読み取り・確認のみ、非破壊）
+- 元記事・WordPress下書きの変更は行わない
+- `NullAiPublishReviewService` は明示的な無効化時のみ使用（対象なしの場合は通常のServiceが「対象なし」レポートを生成する）
+- 詳細設計書は見送り（v1.18.0 `ai_publish_foundation.md` の一部として今後扱う。必要度が上がった時点で個別設計書を追加）
+
+### Tested
+
+- `tests/test_e2e_v1_19_0_ai_publish_review_foundation.py`: 124/124 PASS
+
+---
+
+## [v1.18.0] - 2026-06-30 ★ AI Publish Foundation
+
+### Added
+
+- `src/ai/` にWordPress自動公開（6ファイル）を新規追加
+  - `ai_publish_config.py`: `AiPublishConfig`（`AI_PUBLISH_ENABLED`、`WORDPRESS_URL`/`WORDPRESS_USERNAME`/`WORDPRESS_APP_PASSWORD`）
+  - `ai_publish_result.py`: `AiPublishResult`（`wp_post_id` / `wp_edit_url` / `success` / `skipped` / `skip_reason`）
+  - `wordpress_draft_client.py`: `WordPressDraftClient` / `NullWordPressDraftClient`
+  - `ai_publish_repository.py`, `ai_publish_report_builder.py`, `ai_publish_service.py`（`NullAiPublishService`含む）
+- `scripts/run_ai_publish.py` 新規作成
+- `docs/design/ai_publish_foundation.md` 新規作成（本リリースで追加）
+
+### Note
+
+- v1.17.0で採用（adopted）されたリライト結果を重複チェックした上でWordPressへ投稿する
+- 投稿は常に下書き（draft）のみ。publishは行わない（誤公開防止、v1.1.0以来の方針を踏襲）
+- `AI_PUBLISH_ENABLED=false` または WordPress認証情報未設定 → `NullAiPublishService`
+
+### Tested
+
+- `tests/test_e2e_v1_18_0_ai_publish_foundation.py`: 109/109 PASS
+
+---
+
+## [v1.17.0] - 2026-06-30 ★ AI Rewrite Review Foundation
+
+### Added
+
+- `src/ai/`: `rewrite_review_result.py`（`ReviewStatus` Enum、`RewriteReviewResult`）、`rewrite_review_repository.py`、`rewrite_review_report_builder.py`、`rewrite_review_service.py`（`NullRewriteReviewService`含む）
+- `scripts/run_ai_rewrite_review.py` 新規作成
+
+### Note
+
+- Claude APIを呼び出さない（リライト前後の差分サマリー生成のみ）
+- `NullRewriteReviewService` は対象ファイルが存在しない・レビュー不要なケース用のno-op実装（Claude APIのON/OFFとは無関係）
+- 詳細設計書は見送り（v1.16.0 `ai_rewrite_foundation.md` の一部として今後扱う）
+
+### Tested
+
+- `tests/test_e2e_v1_17_0_ai_rewrite_review_foundation.py`: 123/123 PASS
+
+---
+
+## [v1.16.0] - 2026-06-30 ★ AI Rewrite Foundation
+
+### Added
+
+- `src/ai/` にAIリライト機能（7ファイル）を新規追加
+  - `rewrite_config.py`: `RewriteConfig`（`AI_REWRITE_ENABLED`、`AI_REWRITE_MODEL`、`AI_REWRITE_MAX_ARTICLES`等）
+  - `rewrite_result.py`: `RewriteResult`（`rewrite_draft` / `improvement_summary` / `changes` / `success`）
+  - `article_provider.py`: `ArticleProvider` / `WordPressArticleProvider` / `NullArticleProvider`
+  - `rewrite_prompt_builder.py`, `rewrite_parser.py`, `rewrite_repository.py`, `rewrite_service.py`（`NullRewriteService`含む）
+  - `prompts/v1_rewrite.py`
+- `scripts/run_ai_rewrite.py` 新規作成
+- `docs/design/ai_rewrite_foundation.md` 新規作成（本リリースで追加）
+
+### Note
+
+- v1.14.0の改善提案（`ImprovementSuggestion`）を受け取り、Claude APIで記事を実際に書き換える
+- `AI_REWRITE_ENABLED=false` → `NullRewriteService`（Configuration First）
+- 結果は `outputs/ai_rewrites/` にMarkdown＋JSONで保存（元記事は変更しない）
+
+### Tested
+
+- `tests/test_e2e_v1_16_0_ai_rewrite_foundation.py`: 81/81 PASS
+
+---
+
+## [v1.15.0] - 2026-06-30 ★ AI Improvement Review Foundation
+
+### Added
+
+- `src/ai/`: `improvement_report_builder.py`、`improvement_repository.py`、`improvement_review_service.py`
+- `scripts/run_ai_improvement_report.py` 新規作成
+
+### Note
+
+- Claude APIを呼び出さない（`ImprovementRepository`が保存済みJSONを読み込み、Markdownレポート化するのみ）
+- 詳細設計書は見送り（v1.14.0 `ai_improvement_foundation.md` の一部として今後扱う）
+
+### Tested
+
+- `tests/test_e2e_v1_15_0_ai_improvement_review_foundation.py`: 62/62 PASS
+
+---
+
+## [v1.14.0] - 2026-06-30 ★ AI Improvement Foundation
+
+### Added
+
+- `src/ai/` パッケージを新規作成（AI系機能全体の起点、8ファイル）
+  - `claude_client.py`: `ClaudeClient` / `NullClaudeClient`
+  - `ai_improvement_config.py`: `AiImprovementConfig`（`AI_IMPROVEMENT_ENABLED`、`AI_IMPROVEMENT_MODEL`、`AI_IMPROVEMENT_MAX_ARTICLES`等）
+  - `improvement_suggestion.py`: `ImprovementSuggestion`（`priority` / `issues` / `suggestions` / `seo_title_suggestion`等）
+  - `improvement_suggestion_parser.py`, `prompt_builder.py`, `ai_improvement_service.py`（`NullAiImprovementService`含む）
+  - `prompts/v1_improvement.py`
+- `scripts/run_ai_improvement.py` 新規作成（記事投稿フローとは独立したバッチ実行スクリプト）
+- `docs/design/ai_improvement_foundation.md` 新規作成（本リリースで追加）
+
+### Note
+
+- v1.10.0で設計した `AiInputRecord`（Analytics Foundation）を入力とし、Claude APIで改善提案を生成する
+- `main.py`（投稿処理）からは呼び出さない設計。SC/GA4データ取得後に別スクリプトとして実行する
+- `AI_IMPROVEMENT_ENABLED=false`（デフォルト）→ `NullAiImprovementService`
+
+### Tested
+
+- `tests/test_e2e_v1_14_0_ai_improvement_foundation.py`: 74/74 PASS
+
+---
+
+## [v1.13.0] - 2026-06-30 ★ Google Analytics Foundation
+
+### Added
+
+- `src/analytics/`: `google_analytics_client.py`、`google_analytics_config.py`、`google_analytics_fetcher.py`
+- `scripts/fetch_google_analytics_metrics.py` 新規作成
+- `.env.example` に `GOOGLE_ANALYTICS_ENABLED` / `GA4_PROPERTY_ID` / `GA4_APPLICATION_CREDENTIALS` / `GA4_TIMEOUT_SECONDS` を追加
+
+### Note
+
+- GA4 APIエラーは `[GA4 WARNING]` プレフィックスで表示しゼロ値継続（Search Consoleの`[SC WARNING]`と区別）
+- Google API への直接通信は `GoogleAnalyticsClient` の責務、変換・ゼロ値フォールバックは `GoogleAnalyticsFetcher` の責務に分離
+- 詳細設計書は見送り（Search Console Foundationと同一パターンのため、必要になった時点で追加）
+
+### Tested
+
+- `tests/test_e2e_v1_13_0_google_analytics_foundation.py`: 70/70 PASS
+
+---
+
+## [v1.12.0] - 2026-06-30 ★ Search Console Foundation
+
+### Added
+
+- `src/analytics/`: `search_console_client.py`、`search_console_config.py`、`search_console_fetcher.py`
+- `scripts/fetch_search_console_metrics.py` 新規作成
+- `.env.example` に `SEARCH_CONSOLE_ENABLED` / `SEARCH_CONSOLE_PROPERTY` / `GOOGLE_APPLICATION_CREDENTIALS` / `SEARCH_CONSOLE_TIMEOUT` を追加
+- `.gitignore` に `credentials/` を追加（Service Account鍵の除外）
+
+### Note
+
+- 投稿直後はSearch Consoleデータが存在しないため、`main.py`とは独立したバッチスクリプトとして設計
+- 429（レート制限）・その他HTTPエラー・予期せぬ例外はすべてWARNING表示してゼロ値の`SearchConsoleMetrics`を返し、システム全体を停止させない
+- 詳細設計書は見送り（必要になった時点で追加）
+
+### Tested
+
+- `tests/test_e2e_v1_12_0_search_console_foundation.py`: 47/47 PASS
+
+---
+
+## [v1.11.0] - 2026-06-30 ★ SaveResult Foundation
+
+### Added
+
+- `src/outputs/save_result.py` 新規作成（`SaveResult` dataclass）
+
+### Changed
+
+- `WordPressOutput.save()` / `MarkdownOutput.save()` の戻り値を文字列から `SaveResult` に変更
+  - WordPress REST APIレスポンスの `"id"` フィールドから直接 `post_id` を取得する方式に変更（v1.8.0までの、`edit_url`文字列からの正規表現抽出という暫定実装を廃止）
+- `OutputManager.save_all()` / `main.py` / `src/logger/log_manager.py` を `SaveResult` ベースの呼び出しに更新
+
+### Note
+
+- Single Source of Truthの原則：post_idはAPIレスポンスから直接取得し、他の文字列から推測しない
+- 詳細設計書は見送り（内部データ構造の整理が中心のため）
+
+### Tested
+
+- `tests/test_e2e_v1_11_0_save_result.py`: 43/43 PASS
+
+---
+
+## [v1.10.0] - 2026-06-30 ★ Analytics Foundation
+
+### Added
+
+- `src/analytics/` パッケージ新規作成
+  - `analytics_entry.py`: `AnalyticsEntry` / `ArticleAnalysisRecord` / `AiInputRecord` dataclass
+  - `analytics_config.py`: `AnalyticsConfig`（`ANALYTICS_ENABLED`デフォルトfalse、`ANALYTICS_DIR`、`ANALYTICS_PERIOD_DAYS`）
+  - `analytics_manager.py`: `AnalyticsManager`
+- `docs/design/analytics_foundation.md` 新規作成（v1.10.0 設計書）
+- `.env.example` に `ANALYTICS_ENABLED` / `ANALYTICS_DIR` / `ANALYTICS_PERIOD_DAYS` を追加
+
+### Note
+
+- v1.10.0時点では外部API連携（Search Console・Google Analytics）は行わない。将来のパフォーマンスデータ・AI改善提案の入力データ構造のみを設計
+- Logging Foundation（`LOG_ENABLED`）と異なり、外部連携へ発展する基盤のため意図的にデフォルト無効（`ANALYTICS_ENABLED=false`）
+
+### Tested
+
+- `tests/test_e2e_v1_10_0_analytics_foundation.py` が実装時に追加されている。実装当時にPASSしていたことを裏付ける記録（設計書のチェック欄・実行ログ等）は見つからなかった
+- 現在の環境で本テストを実行すると失敗する既知の問題がある。詳細は本ファイル冒頭の **Known Issues [KI-1]** を参照
+
+---
+
+## [v1.9.0] - 2026-06-30 ★ SNS Foundation
+
+### Added
+
+- `src/sns_config.py` 新規作成（`SnsConfig`：`BLOG_BASE_URL`解決、`SNS_ENABLED`、`SnsPostStatus` Enum）
+- `docs/design/sns_foundation.md` 新規作成（v1.9.0 設計書）
+- `.env.example` に `BLOG_BASE_URL` / `SNS_ENABLED` を追加
+
+### Changed
+
+- `src/logger/log_entry.py` / `log_manager.py`: SNS関連フィールド（`wp_public_url`、`x_post_status`）を追加
+- `main.py`: X投稿文生成より先にslugを計算するよう処理順を変更（API呼び出し回数は変化なし）
+
+### Note
+
+- X API自動投稿は行わない。将来のX API連携・他SNS対応のための管理基盤のみを整備
+- `BLOG_BASE_URL`未設定時は`WP_SITE_URL`にフォールバック、両方未設定なら`"[ブログURL]"`のプレースホルダーのまま
+
+### Tested
+
+- `tests/test_e2e_v1_9_0_sns_foundation.py`: 15/15 PASS
+
+---
+
+## [v1.8.0] - 2026-06-30 ★ Release 1.1 — Epic 2 Logging Foundation
+
+### Added
+
+- `src/logger/` パッケージ新規作成
+  - `log_entry.py`: `ArticleLogEntry` / `ExecutionLogEntry` / `ErrorLogEntry` dataclass
+  - `log_manager.py`: `LogManager` / `NullLogManager`
+- `docs/design/logging_foundation.md` 新規作成（v1.8.0 設計書）
+- `.env.example` に `LOG_ENABLED`（デフォルトtrue） / `LOG_DIR` を追加
+
+### Changed
+
+- `main.py`: 記事保存後・エラー発生時・全処理完了後にJSON Linesログを記録する処理を追加（`try/except`を新規追加）
+
+### Note
+
+- ログはJSON Lines形式で`logs/`配下に保存。`LOG_ENABLED=false`でv1.7.0以前と同じ動作（ログなし）
+- 将来のCSVエクスポート・集計レポート・DB移行・AI改善提案の基盤として設計
+
+### Tested
+
+- 専用のE2Eテストファイルは作成されていない（設計書内の手動確認のみ。以降のバージョンから自動テストファイルが整備されている）
+
+---
+
 ## [v1.7.0] - 2026-06-30  ★ Release 1.1 — Epic 1 Publishing Automation
 
 ### Added
