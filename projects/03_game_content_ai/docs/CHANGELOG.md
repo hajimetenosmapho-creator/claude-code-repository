@@ -22,6 +22,39 @@
 
 ---
 
+## [v2.5.0] - 2026-07-02 ★ Review Trigger Agent Foundation
+
+### Added
+
+- `src/ai/review_trigger_agent_config.py`: `ReviewTriggerAgentConfig`（`enabled` / `min_interval_minutes` / `reports_dir` / `project_root`。`REVIEW_TRIGGER_AGENT_ENABLED`（デフォルト`false`）・`REVIEW_TRIGGER_AGENT_MIN_INTERVAL_MINUTES`（デフォルト`1440`分＝24時間）の環境変数から`from_env(project_root)`で構築。`is_ready()`は`enabled`のみを返す二重ゲート方式）
+- `src/ai/review_trigger_agent.py`: `ReviewTriggerAgent`（`BaseAgent`継承）。`decide()`は`outputs/ai_publish_review_reports/`配下のレポートファイル（読み取り専用）のmtimeから経過時間を判断し、`act()`は`ReviewPipelineRunner.run()`のみを呼ぶ
+- `src/pipeline/review_pipeline_runner.py`: `ReviewPipelineRunner`。`AiPublishReviewService.from_paths()` / `service.run()` / `service.get_reviews()`を`run()`メソッド内で直接呼び出す薄いラッパー（`PublishPipelineRunner`と同じくsubprocess不使用）
+- `scripts/run_review_trigger_agent.py`新規作成（`--dry-run` / `--article-id`対応の手動実行エントリ）
+- `tests/test_e2e_v2_5_0_review_trigger_agent_foundation.py`新規作成（118件）
+- `docs/design/review_trigger_agent_charter.md`新規作成（Project Charter）
+- `docs/design/review_trigger_agent_foundation.md`新規作成（Architecture Design。実装完了後に内容整合を確認済み）
+
+### Changed
+
+- `src/ai/agent_manager.py`: `AgentManager.from_config()`の`executors`構築部分を更新。二重ゲート方式（1段目：`AI_AGENT_ENABLED`、2段目：`ReviewTriggerAgentConfig.is_ready()`＝`REVIEW_TRIGGER_AGENT_ENABLED`）が揃った場合のみ、`ReviewPipelineRunner` / `ReviewTriggerAgent`を生成し`AgentExecutor(ReviewTriggerAgent(...))`を`executors`に追加登録する（`NewsAgent` / `WorkflowTriggerAgent` / `PublishTriggerAgent`のDIは無変更のまま維持）
+- `src/ai/__init__.py`: `ReviewTriggerAgent` / `ReviewTriggerAgentConfig`を新規export
+- `src/pipeline/__init__.py`: `ReviewPipelineRunner`を新規export
+
+### Note
+
+- `ReviewTriggerAgent`＝「判断」、`ReviewPipelineRunner`＝「実行」、`AiPublishReviewService`＝「公開前レビューレポート生成処理」という3層の責務分離を徹底（`NewsAgent`・`WorkflowTriggerAgent`・`PublishTriggerAgent`と同じAgent → Pipeline → Runnerパターンの4例目）
+- **二重ゲート方式（他3Agentとの違い）**：`WorkflowTriggerAgent` / `PublishTriggerAgent`は三重ゲート（対象Service側の`is_ready()`相当を3段目として再利用）だが、`ReviewTriggerAgent`は二重ゲート（`AI_AGENT_ENABLED` × `REVIEW_TRIGGER_AGENT_ENABLED`）で確定している。理由は、対象の`AiPublishReviewService`（v1.19.0）に`Config`クラス・`is_ready()`相当の判定が存在しないため。3段目を実現するために`AiPublishReviewService`側へ`Config`を後付けすることは対象Service本体の改修になるため行わず、二重ゲートのまま安全側（デフォルト無効）に倒す設計とした（Project Charter・Architecture Designで合意済み。`docs/design/review_trigger_agent_foundation.md` §6参照）
+- `dry_run=True`の場合、`AgentExecutor`（v2.0.0の既存設計）により`ReviewTriggerAgent.act()`自体が呼ばれないため、`ReviewPipelineRunner.run()`（＝レビューレポート生成）は構造的に発生しない
+- デフォルトは無効（`REVIEW_TRIGGER_AGENT_ENABLED=false`）。既存フローに影響なし
+- 詳細設計は`docs/design/review_trigger_agent_foundation.md`を参照
+
+### Tested
+
+- `tests/test_e2e_v2_5_0_review_trigger_agent_foundation.py`: 118/118 PASS
+- 既存回帰確認：`v2.0.0`（118/118 PASS）・`v2.2.0`（120/120 PASS）・`v2.3.0`（110/110 PASS）・`v2.4.0`（120/120 PASS）・`v1.20.0`（170/170 PASS）
+
+---
+
 ## [v2.4.0] - 2026-07-02 ★ Publish Trigger Agent Foundation
 
 ### Added

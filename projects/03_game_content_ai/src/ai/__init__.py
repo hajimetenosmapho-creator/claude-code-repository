@@ -103,6 +103,10 @@ from .workflow_trigger_agent import WorkflowTriggerAgent
 from .publish_trigger_agent_config import PublishTriggerAgentConfig
 from .publish_trigger_agent import PublishTriggerAgent
 
+# v2.5.0 Review Trigger Agent Foundation
+from .review_trigger_agent_config import ReviewTriggerAgentConfig
+from .review_trigger_agent import ReviewTriggerAgent
+
 __all__ = [
     # v1.14.0
     "AiImprovementConfig",
@@ -187,4 +191,7 @@ __all__ = [
     # v2.4.0
     "PublishTriggerAgentConfig",
     "PublishTriggerAgent",
+    # v2.5.0
+    "ReviewTriggerAgentConfig",
+    "ReviewTriggerAgent",
 ]

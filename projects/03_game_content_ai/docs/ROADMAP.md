@@ -267,8 +267,23 @@
 - [x] `docs/design/publish_trigger_agent_foundation.md`設計書作成（実装完了後の事後整備として2026-07-02追加）
 - [x] Agent＝判断／PipelineRunner＝実行／AiPublishService＝WordPress下書き投稿処理の3層責務分離を徹底（`AiPublishService`・`NewsAgent`・`WorkflowTriggerAgent`は無変更）
 - [x] E2Eテスト120/120 PASS、既存回帰（`v2.0.0` 118/118・`v2.2.0` 120/120・`v2.3.0` 110/110・`v1.20.0` 170/170）PASS
-- [ ] `docs/architecture.md`への追記（Agent → Pipeline → Runnerパターンの表への追加）は未着手
+- [x] `docs/architecture.md`への追記（Agent → Pipeline → Runnerパターンの表への追加）：2026-07-02、v2.5.0ドキュメント整備時にあわせて追記
 - [ ] `.env.example`への環境変数追記は未着手（v1.14.0以降の複数バージョンにまたがる既存負債。別タスクで対応予定）
+
+---
+
+## v2.5.0 — Review Trigger Agent Foundation（2026-07-02 完了）★ Release 2.0 続き
+
+- [x] Project Charter作成：`docs/design/review_trigger_agent_charter.md`（対象Serviceを`AiPublishReviewService`（v1.19.0）のみに限定）
+- [x] Architecture Design確定：`docs/design/review_trigger_agent_foundation.md`（Gate方式・decide()方式・min_interval_minutesの3点を確定）
+- [x] `ReviewTriggerAgentConfig`新規実装（二重ゲート方式の判断・実行双方の設定値管理。`REVIEW_TRIGGER_AGENT_ENABLED`（デフォルト`false`）のみで`is_ready()`を判定。`AiPublishReviewService`に`Config`/`is_ready()`が存在しないため、`WorkflowTriggerAgent` / `PublishTriggerAgent`のような三重ゲートへは寄せない）
+- [x] `src/pipeline/review_pipeline_runner.py`（実行層）新規実装：`ReviewPipelineRunner`（`AiPublishReviewService.run()`を直接呼び出す薄いラッパー、subprocess不使用）
+- [x] `ReviewTriggerAgent`（`BaseAgent`継承）実装：`decide()`は`outputs/ai_publish_review_reports/`のmtimeベースの判断（既存3Agentと同じ時間間隔方式。未レビュー件数・入力/出力差分検知はFuture Extensionsに記録し今回は見送り）、`act()`は`ReviewPipelineRunner.run()`への委譲のみ
+- [x] `AgentManager.from_config()`に`ReviewTriggerAgent`をDI（二重ゲート方式：`AI_AGENT_ENABLED` かつ `REVIEW_TRIGGER_AGENT_ENABLED`の2条件がすべて揃った場合のみ有効化）
+- [x] `scripts/run_review_trigger_agent.py`新規作成（`--dry-run` / `--article-id`対応）
+- [x] Agent＝判断／PipelineRunner＝実行／AiPublishReviewService＝公開前レビューレポート生成処理の3層責務分離を徹底（`AiPublishReviewService`・`NewsAgent`・`WorkflowTriggerAgent`・`PublishTriggerAgent`は無変更）
+- [x] E2Eテスト118/118 PASS、既存回帰（`v2.0.0` 118/118・`v2.2.0` 120/120・`v2.3.0` 110/110・`v2.4.0` 120/120・`v1.20.0` 170/170）PASS
+- [x] `docs/architecture.md`への追記：2026-07-02（v2.4.0分とあわせて追記）
 
 ---
 

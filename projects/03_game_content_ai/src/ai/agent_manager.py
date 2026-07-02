@@ -1,5 +1,5 @@
 """
-Agent管理（v2.0.0 / v2.2.0 / v2.3.0 / v2.4.0）
+Agent管理（v2.0.0 / v2.2.0 / v2.3.0 / v2.4.0 / v2.5.0）
 
 AgentManager:     登録された AgentExecutor にタスクを実行させるマネージャ
 NullAgentManager: AI_AGENT_ENABLED=false 時のダミー実装
@@ -22,6 +22,13 @@ NullAgentManager: AI_AGENT_ENABLED=false 時のダミー実装
       AI_PUBLISH_ENABLED等のAiPublishConfig.is_ready()）の両方が True の場合のみ
       executors に追加する。WordPressへの下書き投稿が AI_AGENT_ENABLED=true だけで
       自動実行されないようにするための安全策（WorkflowTriggerAgentと同じ考え方）。
+    - v2.5.0で ReviewTriggerAgent（+ ReviewPipelineRunner）を二重ゲート方式でDIする。
+      AI_AGENT_ENABLED（AgentConfig.is_ready()）に加えて、
+      ReviewTriggerAgentConfig.is_ready()（REVIEW_TRIGGER_AGENT_ENABLED）が
+      True の場合のみ executors に追加する。AiPublishReviewService には
+      Config/is_ready()が存在しないため、WorkflowTriggerAgent / PublishTriggerAgent
+      のような三重ゲートへは寄せず、二重ゲートのまま確定している
+      （Project Charter・Architecture Designで合意済み）。
     - run_id はタスク実行のたびに AgentManager が生成する
       （AgentContext の構築は AgentManager の責務）
 """
@@ -38,10 +45,17 @@ from .news_agent import NewsAgent
 from .news_agent_config import NewsAgentConfig
 from .publish_trigger_agent import PublishTriggerAgent
 from .publish_trigger_agent_config import PublishTriggerAgentConfig
+from .review_trigger_agent import ReviewTriggerAgent
+from .review_trigger_agent_config import ReviewTriggerAgentConfig
 from .workflow_trigger_agent import WorkflowTriggerAgent
 from .workflow_trigger_agent_config import WorkflowTriggerAgentConfig
 
-from pipeline import NewsPipelineRunner, PublishPipelineRunner, WorkflowPipelineRunner
+from pipeline import (
+    NewsPipelineRunner,
+    PublishPipelineRunner,
+    ReviewPipelineRunner,
+    WorkflowPipelineRunner,
+)
 
 
 class AgentManager:
@@ -77,6 +91,10 @@ class AgentManager:
         AI_PUBLISH_ENABLED等）が True の場合のみ、
         PublishTriggerAgent（+ PublishPipelineRunner）も executors に追加する（v2.4.0）。
 
+        同様に ReviewTriggerAgentConfig.is_ready()（二重ゲートの2段目
+        REVIEW_TRIGGER_AGENT_ENABLED のみ）が True の場合のみ、
+        ReviewTriggerAgent（+ ReviewPipelineRunner）も executors に追加する（v2.5.0）。
+
         いずれも False の場合（デフォルト）は NewsAgent のみが登録される。
         """
         if not config.is_ready():
@@ -111,6 +129,17 @@ class AgentManager:
                 runner=publish_pipeline_runner,
             )
             executors.append(AgentExecutor(publish_trigger_agent))
+
+        review_trigger_agent_config = ReviewTriggerAgentConfig.from_env(
+            project_root=config.base_dir
+        )
+        if review_trigger_agent_config.is_ready():
+            review_pipeline_runner = ReviewPipelineRunner(review_trigger_agent_config)
+            review_trigger_agent = ReviewTriggerAgent(
+                config=review_trigger_agent_config,
+                runner=review_pipeline_runner,
+            )
+            executors.append(AgentExecutor(review_trigger_agent))
 
         return cls(config=config, executors=executors)
 
