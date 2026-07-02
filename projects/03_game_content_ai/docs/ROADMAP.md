@@ -257,9 +257,23 @@
 
 ---
 
+## v2.4.0 — Publish Trigger Agent Foundation（2026-07-02 完了）★ Release 2.0 続き
+
+- [x] `PublishTriggerAgentConfig`新規実装（三重ゲート方式の判断・実行双方の設定値管理。`PUBLISH_TRIGGER_AGENT_ENABLED`（デフォルト`false`）と既存`AiPublishConfig.is_ready()`（`AI_PUBLISH_ENABLED`＋WordPress認証情報3点）の両方を`is_ready()`に反映）
+- [x] `src/pipeline/publish_pipeline_runner.py`（実行層）新規実装：`PublishPipelineRunner`（`AiPublishService.run()`を直接呼び出す薄いラッパー、subprocess不使用）
+- [x] `PublishTriggerAgent`（`BaseAgent`継承）実装：`decide()`は`outputs/ai_publish_reports/`のmtimeベースの判断、`act()`は`PublishPipelineRunner.run()`への委譲のみ
+- [x] `AgentManager.from_config()`に`PublishTriggerAgent`をDI（三重ゲート方式：`AI_AGENT_ENABLED` かつ `PUBLISH_TRIGGER_AGENT_ENABLED` かつ `AiPublishConfig.is_ready()`の3条件がすべて揃った場合のみ有効化）
+- [x] `scripts/run_publish_trigger_agent.py`新規作成（`--dry-run` / `--article-id`対応）
+- [x] `docs/design/publish_trigger_agent_foundation.md`設計書作成（実装完了後の事後整備として2026-07-02追加）
+- [x] Agent＝判断／PipelineRunner＝実行／AiPublishService＝WordPress下書き投稿処理の3層責務分離を徹底（`AiPublishService`・`NewsAgent`・`WorkflowTriggerAgent`は無変更）
+- [x] E2Eテスト120/120 PASS、既存回帰（`v2.0.0` 118/118・`v2.2.0` 120/120・`v2.3.0` 110/110・`v1.20.0` 170/170）PASS
+- [ ] `docs/architecture.md`への追記（Agent → Pipeline → Runnerパターンの表への追加）は未着手
+- [ ] `.env.example`への環境変数追記は未着手（v1.14.0以降の複数バージョンにまたがる既存負債。別タスクで対応予定）
+
+---
+
 ## v2.x 以降の候補（未着手）
 
-- [ ] **v2.4.0 Publish Trigger Agent Foundation**（`AiPublishService`（v1.18.0）の実行タイミングを判断するAgent。News Agent / Workflow Trigger Agentと同じ「Agent（判断）→ Pipeline（実行）→ 対象サービス」パターンを再利用し、`PublishPipelineRunner`を追加する想定）
 - [ ] Windows タスクスケジューラによる定時自動実行（Scheduler Agent）
 - [ ] 重要度別の公開制御（S→即時公開・A→予約投稿・B→下書き）
 

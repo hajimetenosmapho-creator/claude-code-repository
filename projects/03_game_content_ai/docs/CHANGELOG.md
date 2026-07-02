@@ -22,6 +22,38 @@
 
 ---
 
+## [v2.4.0] - 2026-07-02 ★ Publish Trigger Agent Foundation
+
+### Added
+
+- `src/ai/publish_trigger_agent_config.py`: `PublishTriggerAgentConfig`（`enabled` / `min_interval_minutes` / `reports_dir` / `publish_enabled` / `project_root`。`PUBLISH_TRIGGER_AGENT_ENABLED`（デフォルト`false`）・`PUBLISH_TRIGGER_AGENT_MIN_INTERVAL_MINUTES`（デフォルト`1440`分＝24時間）の環境変数、および既存`AiPublishConfig.from_env().is_ready()`（`AI_PUBLISH_ENABLED`＋WordPress認証情報3点）を再利用した`publish_enabled`判定から`from_env(project_root)`で構築）
+- `src/ai/publish_trigger_agent.py`: `PublishTriggerAgent`（`BaseAgent`継承）。`decide()`は`outputs/ai_publish_reports/`配下のレポートファイル（読み取り専用）のmtimeから経過時間を判断し、`act()`は`PublishPipelineRunner.run()`のみを呼ぶ
+- `src/pipeline/publish_pipeline_runner.py`: `PublishPipelineRunner`。`AiPublishService.from_env()` / `service.run()` / `service.get_results()`を`run()`メソッド内で直接呼び出す薄いラッパー（`WorkflowPipelineRunner`と同じくsubprocess不使用）
+- `scripts/run_publish_trigger_agent.py`新規作成（`--dry-run` / `--article-id`対応の手動実行エントリ）
+- `tests/test_e2e_v2_4_0_publish_trigger_agent_foundation.py`新規作成（39件）
+- `docs/design/publish_trigger_agent_foundation.md`新規作成（本リリースで追加。実装完了後の事後整備）
+
+### Changed
+
+- `src/ai/agent_manager.py`: `AgentManager.from_config()`の`executors`構築部分を更新。三重ゲート方式（1段目：`AI_AGENT_ENABLED`、2・3段目：`PublishTriggerAgentConfig.is_ready()`＝`PUBLISH_TRIGGER_AGENT_ENABLED`かつ`AiPublishConfig.is_ready()`）が揃った場合のみ、`PublishPipelineRunner` / `PublishTriggerAgent`を生成し`AgentExecutor(PublishTriggerAgent(...))`を`executors`に追加登録する（`NewsAgent` / `WorkflowTriggerAgent`のDIは無変更のまま維持）
+- `src/ai/__init__.py`: `PublishTriggerAgent` / `PublishTriggerAgentConfig`を新規export
+- `src/pipeline/__init__.py`: `PublishPipelineRunner`を新規export
+
+### Note
+
+- `PublishTriggerAgent`＝「判断」、`PublishPipelineRunner`＝「実行」、`AiPublishService`＝「WordPress下書き投稿処理」という3層の責務分離を徹底（`NewsAgent`・`WorkflowTriggerAgent`と同じAgent → Pipeline → Runnerパターンの3例目）
+- **三重ゲート方式**：`AI_AGENT_ENABLED=true`にしただけではPublishは自動実行されない。`PUBLISH_TRIGGER_AGENT_ENABLED=true`（デフォルト`false`）を明示的に設定し、かつ既存の`AI_PUBLISH_ENABLED=true`＋WordPress認証情報3点（`WORDPRESS_URL` / `WORDPRESS_USERNAME` / `WORDPRESS_APP_PASSWORD`）が揃っている場合にのみ`PublishTriggerAgent`がDIされる
+- `dry_run=True`の場合、`AgentExecutor`（v2.0.0の既存設計）により`PublishTriggerAgent.act()`自体が呼ばれないため、`PublishPipelineRunner.run()`（＝WordPressへの実書き込み）は構造的に発生しない
+- デフォルトは無効（`PUBLISH_TRIGGER_AGENT_ENABLED=false`）。既存フローに影響なし
+- 詳細設計は`docs/design/publish_trigger_agent_foundation.md`を参照
+
+### Tested
+
+- `tests/test_e2e_v2_4_0_publish_trigger_agent_foundation.py`: 120/120 PASS
+- 既存回帰確認：`v2.0.0`（118/118 PASS）・`v2.2.0`（120/120 PASS）・`v2.3.0`（110/110 PASS）・`v1.20.0`（170/170 PASS）
+
+---
+
 ## [v2.3.0] - 2026-07-02 ★ Workflow Trigger Agent Foundation
 
 ### Added
