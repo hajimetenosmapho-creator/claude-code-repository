@@ -20,6 +20,79 @@
 - **対応状況**：未修正。`src/`はv2.1.0（本ドキュメント整備リリース）の変更対象外のため、コード修正は行っていない
 - **今後の対応**：別リリースで`src/analytics/analytics_manager.py`側のディレクトリ作成漏れを調査・修正する想定
 
+### [KI-2] v2.6.0 Scheduler Agent Foundation のCHANGELOG記載漏れ（解消済み）
+
+- **発見日**：2026-07-02（v2.7.0 Workflow Engine Foundation ドキュメント整備作業中）
+- **症状**：commit `0d28d30`（v2.6.0 Scheduler Agent Foundation）にCHANGELOG.md / ROADMAP.mdへの記載が伴っていなかった
+- **対応状況**：解消済み。本ドキュメント整備作業（2026-07-02）で、実装済みコード（`src/scheduler/`配下・`tests/test_e2e_v2_6_0_scheduler_agent_foundation.py`）の内容を確認し、下記「[v2.6.0]」として遡及的に追記した
+- **今後の対応**：不要（本エントリで解消済み）
+
+---
+
+## [v2.7.0] - 2026-07-02 ★ Workflow Engine Foundation
+
+### Added
+
+- `src/workflow_engine/`（新規パッケージ）：Scheduler（v2.6.0）が生成する`SchedulerEvent`を起点に、既存3つのTrigger Agent（`NewsAgent` v2.2.0 → `ReviewTriggerAgent` v2.5.0 → `PublishTriggerAgent` v2.4.0）を決まった順序で実行するオーケストレーション層
+  - `workflow_engine_step.py`: `WorkflowEngineStep`（NEWS / REVIEW / PUBLISHの3種類）、`ALL_WORKFLOW_ENGINE_STEPS`
+  - `workflow_engine_definition.py`: `WorkflowEngineDefinition`（実行するステップの並びを定義）
+  - `workflow_engine_event.py`: `WorkflowEngineEvent`（`job_id` / `source` / `triggered_at` / `trigger_reason` / `metadata`）、`SOURCE_SCHEDULER` / `SOURCE_MANUAL`
+  - `workflow_engine_context.py`: `WorkflowEngineContext`
+  - `workflow_engine_result.py`: `WorkflowEngineStepResult` / `WorkflowEngineResult`、`REASON_NOT_REACHED`
+  - `workflow_engine_config.py`: `WorkflowEngineConfig`（`WORKFLOW_ENGINE_ENABLED`、デフォルト`false`）
+  - `workflow_engine_executor.py`: `WorkflowEngineExecutor`（既存`AgentExecutor.execute()`を無改修のまま順に呼び出す実行エンジン）
+  - `workflow_engine_manager.py`: `WorkflowEngineManager` / `NullWorkflowEngineManager`
+- `scripts/run_workflow_engine.py`新規作成（`--dry-run` / `--job-id`対応。固定・最小限（1件）のデモSchedulerJobのみを扱う）
+- `tests/test_e2e_v2_7_0_workflow_engine_foundation.py`新規作成（163件、`FakeAgent`によるExecutor単体テストを含む）
+- `docs/design/workflow_engine_foundation_charter.md`新規作成（Project Charter）
+- `docs/design/workflow_engine_foundation.md`新規作成（Architecture Design。Architecture Review完了・修正必須事項3点反映済み）
+
+### Note
+
+- パッケージ・クラス名（`WorkflowEngine`接頭辞）の両方を`src/ai/workflow_*.py`（v1.20.0、AI記事改善6ステップ用）と分離し、名前衝突を回避した
+- Gate二層構造：Workflow Engine全体は二重ゲート（`AI_AGENT_ENABLED` × `WORKFLOW_ENGINE_ENABLED`）、各ステップ（NEWS/REVIEW/PUBLISH）の実行可否は既存Trigger AgentのConfigの`is_ready()`をそのまま再利用する
+- 打ち切り基準：実行した結果として失敗した（`AgentResult.success=False`）場合のみ後続ステップを打ち切る。Gate閉鎖・`decide()`によるスキップは失敗として扱わず、後続ステップの実行を継続する。打ち切り発生時も未到達ステップは`WorkflowEngineResult.steps`に`REASON_NOT_REACHED`として記録され、常に`len(definition.steps)`件になる
+- `WorkflowEngineManager`は`AgentManager`（v2.0.0）を経由せず、既存の`NewsAgent` / `ReviewTriggerAgent` / `PublishTriggerAgent`とそれぞれの`Config` / `PipelineRunner`を無改修のままimportして独自に構築する（既存4 Trigger Agent・`AgentManager` / `AgentExecutor`・Scheduler本体はいずれも無改修）
+- `WorkflowTriggerAgent`（v2.3.0、AI改善6ステップ）は`PublishTriggerAgent`との役割重複を理由に今回のステップには含めない（将来Releaseで再検討）
+- **運用上の制約**：`AgentManager`経由の既存script群（`run_news_agent.py`等）と`scripts/run_workflow_engine.py`を同時実行しないこと。`decide()`から`act()`完了までロック機構がないため、同時実行するとNews収集・レビューレポート生成・WordPress下書き投稿等が二重に発生するリスクがある（ロック実装はRelease 2.7の対象外、`docs/design/workflow_engine_foundation.md` 13.1節）
+- `scripts/run_workflow_engine.py`は固定・最小限（1件のみ）のデモSchedulerJobを扱う。複数Job・設定ファイル化・動的登録・SchedulerRepositoryの永続化はいずれも対象外（Future Extensions）
+- デフォルトは無効（`WORKFLOW_ENGINE_ENABLED=false`）。既存フローに影響なし
+
+### Tested
+
+- `tests/test_e2e_v2_7_0_workflow_engine_foundation.py`: 163/163 PASS
+- 既存回帰確認：`v2.0.0`（118/118 PASS）・`v2.2.0`（120/120 PASS）・`v2.3.0`（110/110 PASS）・`v2.4.0`（120/120 PASS）・`v2.5.0`（118/118 PASS）・`v2.6.0`（118/118 PASS）・`v1.20.0`（170/170 PASS）
+
+---
+
+## [v2.6.0] - 2026-07-02 ★ Scheduler Agent Foundation
+
+> 本エントリはcommit `0d28d30`時点でCHANGELOG.mdへの記載が漏れていたため、v2.7.0ドキュメント整備作業（2026-07-02）で実装済みコードを確認のうえ遡及的に追記したものです（[KI-2]参照）。
+
+### Added
+
+- `src/scheduler/`（新規パッケージ）：`SchedulerJob` / `TriggerType` / `SchedulerEvent` / `SchedulerRepository` / `InMemorySchedulerRepository` / `SchedulerManager` / `SchedulerEngine` / `ClockProvider` / `SystemClockProvider` / `SchedulerConfig` / Scheduler例外群（`SchedulerError` / `SchedulerJobNotFoundError` / `DuplicateSchedulerJobError`）を新規実装
+  - `scheduler_job.py`: `TriggerType`（DAILY / INTERVAL / ONCEの3種類のみ、cron完全互換ではない）、`SchedulerJob`（`job_id` / `name` / `trigger_type` / `schedule` / `enabled` / `metadata`）
+  - `scheduler_event.py`: `SchedulerEvent`（`job_id` / `execute_time` / `trigger_reason` / `metadata`）。Schedulerは判断結果としてこのEventを生成するのみで、実際のAgent起動・処理実行は一切行わない
+  - `scheduler_repository.py`: `SchedulerRepository`（ABC）/ `InMemorySchedulerRepository`（Foundation Releaseではメモリ管理のみ、永続化は対象外）
+  - `scheduler_manager.py`: `SchedulerManager`（Jobの登録・削除・取得・一覧・enable/disable。`NewsAgent`等の既存Trigger Agentは一切importしない）
+  - `scheduler_engine.py`: `SchedulerEngine`（`evaluate(jobs, now)`は副作用のない純粋関数。`run_due(jobs)`は`ClockProvider`経由で現在時刻を取得する便利メソッド）、`ClockProvider` / `SystemClockProvider`
+  - `scheduler_config.py`: `SchedulerConfig`（`SCHEDULER_ENABLED`、デフォルト`false`）
+  - `exceptions.py`: `SchedulerError` / `SchedulerJobNotFoundError` / `DuplicateSchedulerJobError`
+- `tests/test_e2e_v2_6_0_scheduler_agent_foundation.py`新規作成（118件）
+
+### Note
+
+- `src/scheduler/`は`src/ai/` / `src/pipeline/`を一切importしない独立パッケージとして設計されている（Event Driven Architecture：Schedulerは判断のみを行い、実際の処理起動はSchedulerEventを受け取る側の責務とする）
+- 本バージョン時点では、`SchedulerEvent`を受け取ってAgentを起動する呼び出し元は未実装（Foundation Releaseのため、判定エンジンの骨組みのみ）。この接続はv2.7.0（Workflow Engine Foundation）で実装された
+- Foundation Releaseのため、cron完全互換ではない（TriggerTypeはDAILY / INTERVAL / ONCEの3種類のみ、分単位マッチング）。retry・last_run_at保持・永続化・Windows Task Scheduler / Linux cron連携はいずれも対象外（将来Releaseの拡張候補）
+- デフォルトは無効（`SCHEDULER_ENABLED=false`）
+- 設計書（Project Charter / Architecture Design）は本リリースでは作成されなかった（[KI-2]参照。既知のドキュメント負債。詳細な設計判断は各クラスのdocstringに記録されている）
+
+### Tested
+
+- `tests/test_e2e_v2_6_0_scheduler_agent_foundation.py`: 118/118 PASS（v2.7.0ドキュメント整備作業時に再実行し確認）
+
 ---
 
 ## [v2.5.0] - 2026-07-02 ★ Review Trigger Agent Foundation

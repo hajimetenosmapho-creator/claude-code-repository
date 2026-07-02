@@ -287,9 +287,42 @@
 
 ---
 
+## v2.6.0 — Scheduler Agent Foundation（2026-07-02 完了）★ Release 2.0 続き
+
+> 本エントリはcommit `0d28d30`時点でROADMAP.mdへの記載が漏れていたため、v2.7.0ドキュメント整備作業（2026-07-02）で実装済みコードを確認のうえ遡及的に追記したものです（`docs/CHANGELOG.md` [KI-2]参照）。
+
+- [x] `src/scheduler/`新規パッケージ実装：`SchedulerJob` / `TriggerType`（DAILY/INTERVAL/ONCE） / `SchedulerEvent` / `SchedulerRepository`（ABC）/ `InMemorySchedulerRepository` / `SchedulerManager` / `SchedulerEngine`（`evaluate()` / `run_due()`） / `SchedulerConfig`
+- [x] Event Driven Architecture：Schedulerは判定のみ行い`SchedulerEvent`を生成する。既存Trigger Agentの起動は一切行わない（`src/ai/` / `src/pipeline/`を一切importしない独立パッケージ）
+- [x] `tests/test_e2e_v2_6_0_scheduler_agent_foundation.py`新規作成（118件）
+- [ ] `SchedulerEvent`を受け取ってAgentを起動する呼び出し元（→ v2.7.0で実装）
+- [ ] Project Charter / Architecture Design設計書（見送り。既知のドキュメント負債としてv2.7.0のドキュメント整備時に記録）
+- [ ] Windows タスクスケジューラ / Linux cron連携、永続化、retry、last_run_at保持（いずれも対象外、将来Release候補）
+
+---
+
+## v2.7.0 — Workflow Engine Foundation（2026-07-02 完了）★ Release 2.0 続き
+
+- [x] Project Charter作成：`docs/design/workflow_engine_foundation_charter.md`
+- [x] Architecture Design確定：`docs/design/workflow_engine_foundation.md`（Architecture Review完了・修正必須事項3点反映済み）
+- [x] `src/workflow_engine/`新規パッケージ実装：`WorkflowEngineStep` / `WorkflowEngineDefinition` / `WorkflowEngineEvent` / `WorkflowEngineContext` / `WorkflowEngineStepResult` / `WorkflowEngineResult` / `WorkflowEngineConfig` / `WorkflowEngineExecutor` / `WorkflowEngineManager`
+- [x] Scheduler（v2.6.0）→ Workflow Engine → NewsAgent → ReviewTriggerAgent → PublishTriggerAgentの直列実行基盤を確立（既存4 Trigger Agent・`AgentManager` / `AgentExecutor`・Scheduler本体はいずれも無改修）
+- [x] Gate二層構造（Workflow Engine全体の二重ゲート × ステップ別の既存Config再利用）、打ち切り基準（実行失敗のみ打ち切り、Gate閉鎖/decide()スキップは継続）を確立
+- [x] `scripts/run_workflow_engine.py`新規作成（`--dry-run` / `--job-id`対応。固定・最小限のデモJob1件のみ）
+- [x] `tests/test_e2e_v2_7_0_workflow_engine_foundation.py`新規作成（163件、`FakeAgent`によるExecutor単体テスト含む）
+- [x] E2Eテスト163/163 PASS、既存回帰（`v2.0.0` 118/118・`v2.2.0` 120/120・`v2.3.0` 110/110・`v2.4.0` 120/120・`v2.5.0` 118/118・`v2.6.0` 118/118・`v1.20.0` 170/170）PASS
+- [ ] 複数実行主体の排他制御（ロック機構）：運用制約として明記のみ、実装は対象外（→ 将来Release候補）
+- [ ] SchedulerJobの永続化・複数Job登録・設定ファイル化：対象外（→ 将来Release候補）
+- [ ] `WorkflowTriggerAgent`（AI改善6ステップ）の統合：`PublishTriggerAgent`との役割重複整理後に再検討
+
+---
+
 ## v2.x 以降の候補（未着手）
 
-- [ ] Windows タスクスケジューラによる定時自動実行（Scheduler Agent）
+- [ ] Windows タスクスケジューラ等の外部スケジューラから `scripts/run_workflow_engine.py` を定時起動する実運用連携（Scheduler Engine自体の内部実装はv2.6.0で完了。OS側との実連携は未着手）
+- [ ] 複数実行主体（`AgentManager`経由の既存script群とWorkflow Engine経由のscript）の排他制御（ロック機構）の実装（v2.7.0では運用制約として明記するのみ）
+- [ ] SchedulerJobの永続化（JSON/DB化）・複数Job登録・設定ファイル化・動的登録
+- [ ] `WorkflowTriggerAgent`（AI改善6ステップ）とWorkflow Engineの統合（`PublishTriggerAgent`との役割重複整理が前提）
+- [ ] Workflow Engineの条件分岐・Retry・並列実行
 - [ ] 重要度別の公開制御（S→即時公開・A→予約投稿・B→下書き）
 
 ---

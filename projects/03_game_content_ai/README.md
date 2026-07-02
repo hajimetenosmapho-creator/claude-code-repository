@@ -194,3 +194,19 @@ python main.py --max-articles 3
 - Windowsタスクスケジューラによる定時自動実行
 - 重要度別の公開制御（S→公開・A→予約・B→下書き）
 - 半自律的なブログ運営支援
+
+---
+
+## Release 2.x（Agent / Scheduler / Workflow Engine、2026-07-02時点）
+
+> **注意**：本README本体（上記セクション）はv1.7.0時点の内容のまま更新が追いついていません（既知の文書負債）。v1.8.0以降〜Release 2.x（Agent Foundation・Scheduler・Workflow Engine等）の詳細は`docs/CHANGELOG.md` / `docs/ROADMAP.md` / `docs/architecture.md` / `docs/design/`配下の各設計書を参照してください。
+
+Release 2.xでは、`main.py`による通常実行に加えて、「今この処理を実行すべきか」を判断してから実行するAgent層（`src/ai/`）・実行層（`src/pipeline/`）・判定層（`src/scheduler/`）・オーケストレーション層（`src/workflow_engine/`）が段階的に追加されています。いずれもデフォルト無効（Configuration First）で、`main.py`の通常実行には影響しません。
+
+- **Workflow Engine（v2.7.0）**：Scheduler → Workflow Engine → NewsAgent → ReviewTriggerAgent → PublishTriggerAgentの順で自動実行する基盤。`./venv/Scripts/python.exe scripts/run_workflow_engine.py`で手動実行できます（`--dry-run` / `--job-id`対応）
+  - `AI_AGENT_ENABLED=true` かつ `WORKFLOW_ENGINE_ENABLED=true` が前提条件（二重ゲート）
+  - 固定・最小限（1件のみ）のデモJobのみを扱います（複数Job登録・設定ファイル化は未対応）
+  - **`scripts/run_news_agent.py`等、既存のAgent系scriptと同時実行しないでください**（`decide()`から`act()`完了までロック機構がなく、同時実行するとNews収集・レビューレポート生成・WordPress下書き投稿などが二重に発生するおそれがあります）
+  - 詳細・設計判断は`docs/architecture.md`「Workflow Engine層」・`docs/design/workflow_engine_foundation.md`を参照
+
+この節はRelease 2.7時点の要点のみをまとめたものです。README全体の刷新（v1.8.0〜v2.6.0分の反映）は別タスクとして今後検討します。
