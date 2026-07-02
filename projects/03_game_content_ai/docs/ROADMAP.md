@@ -316,6 +316,21 @@
 
 ---
 
+## v2.8.0 — Execution History Foundation（2026-07-02 完了）★ Release 2.0 続き
+
+- [x] Project Charter作成：`docs/design/execution_history_foundation_charter.md`
+- [x] Architecture Design確定：`docs/design/execution_history_foundation.md`
+- [x] `src/execution_history/`新規パッケージ実装：`ExecutionHistoryConfig` / `ExecutionHistoryEvent` / `StepExecutionRecord` / `StepExecutionStatus` / `WorkflowExecutionRecord` / `WorkflowExecutionStatus` / `ExecutionHistoryStore` / `JsonExecutionHistoryStore` / `ExecutionHistoryManager` / `NullExecutionHistoryManager`
+- [x] Workflow Engine（v2.7.0）が実行したWorkflowの開始・終了・各Stepの結果を観測して記録する基盤を確立（実行判断・分岐・再試行判断には一切関与しない、記録専用）
+- [x] `workflow_engine` → `execution_history`の一方向依存を維持。既存Workflow Engineの実行制御ロジックは無変更（`WorkflowEngineExecutor` / `WorkflowEngineManager`へのDI追加のみ）
+- [x] `scripts/show_execution_history.py`新規作成（読み取り専用CLI、`--run-id` / `--limit`対応）
+- [x] `tests/test_e2e_v2_8_0_execution_history_foundation.py`新規作成（182件）
+- [x] E2Eテスト182/182 PASS、既存回帰（`v2.0.0` 118/118・`v2.2.0` 120/120・`v2.3.0` 110/110・`v2.4.0` 120/120・`v2.5.0` 118/118・`v2.6.0` 118/118・`v2.7.0` 163/163・`v1.20.0` 170/170）PASS
+- [ ] Retry Engine・Workflow Monitor・Metrics Foundation・Dashboard Foundation：対象外（→ 将来Release候補）
+- [ ] JSON保存からDB永続化への差し替え：対象外（`ExecutionHistoryStore`インターフェースにより将来差し替え可能な設計のみ用意）
+
+---
+
 ## v2.x 以降の候補（未着手）
 
 - [ ] Windows タスクスケジューラ等の外部スケジューラから `scripts/run_workflow_engine.py` を定時起動する実運用連携（Scheduler Engine自体の内部実装はv2.6.0で完了。OS側との実連携は未着手）
@@ -324,6 +339,8 @@
 - [ ] `WorkflowTriggerAgent`（AI改善6ステップ）とWorkflow Engineの統合（`PublishTriggerAgent`との役割重複整理が前提）
 - [ ] Workflow Engineの条件分岐・Retry・並列実行
 - [ ] 重要度別の公開制御（S→即時公開・A→予約投稿・B→下書き）
+- [ ] Retry Engine（Execution History v2.8.0の`WorkflowExecutionRecord.status=FAILED`を起点とした再実行）
+- [ ] Workflow Monitor・Metrics Foundation・Dashboard Foundation（Execution History v2.8.0が保存した履歴データを消費する側）
 
 ---
 

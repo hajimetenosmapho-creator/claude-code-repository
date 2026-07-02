@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-02（v2.8.0 — Execution History層を追記。Workflow Engineが実行したWorkflowの観測・記録を担う新規パッケージ`src/execution_history/`の設計判断、`workflow_engine → execution_history`の一方向依存を明記）  
 更新日：2026-07-02（v2.7.0 — Workflow Engine層を追記。Scheduler → Workflow Engine → NewsAgent → ReviewTriggerAgent → PublishTriggerAgentの関係、既存Agentの独立性を維持したまま上位オーケストレーション層を追加した設計判断を明記）  
 更新日：2026-07-02（v2.6.0 — Scheduler層を追記。v2.6.0リリース時に未実施だった本追記を、v2.7.0ドキュメント整備時にあわせて実施。`docs/CHANGELOG.md` [KI-2]参照）  
 更新日：2026-07-02（v2.5.0 — ReviewTriggerAgent → ReviewPipelineRunner → AiPublishReviewService の関係を追記。ReviewTriggerAgentのみ二重ゲートである理由を明記）  
@@ -489,3 +490,49 @@ cd projects/03_game_content_ai
 4. Agent層・Pipeline層・Scheduler層への変更は不要（Workflow Engine層は既存資産を呼ぶ側であり、呼ばれる側ではない）
 
 詳細は`docs/design/workflow_engine_foundation.md`（Project Charter・Architecture Design）を参照。
+
+---
+
+## Execution History層（`src/execution_history/`、v2.8.0 追加）
+
+Workflow Engine（v2.7.0）が実行した各Workflowについて、「いつ・何が・どういう順序で・成功したか失敗したか」を**観測して記録するだけ**の最小基盤。
+
+```
+Scheduler        （判断、v2.6.0、無改修）
+   ↓ SchedulerEvent
+Workflow Engine    （実行、v2.7.0）─────観測─────→ Execution History（記録のみ、v2.8.0）
+   ↓                                                    ↓
+NewsAgent → ReviewTriggerAgent → PublishTriggerAgent   logs/execution_history/*.json
+```
+
+### 責務の境界（原則）
+
+- **Execution Historyは「実行の観測・記録」のみを担当する。** Workflow Engineの実行判断・分岐・打ち切り基準（`workflow_engine_foundation.md` 8.3節）には一切関与しない。どのステップを実行するか・どこで打ち切るかは引き続き`WorkflowEngineExecutor`が単独で決定し、Execution Historyはその結果を受け取って記録するだけである
+- **Release 2.8では履歴は記録専用。** Retry Engine・Workflow Monitor・Metrics Foundation・Dashboard Foundationは、いずれも本層が保存した履歴データを将来消費する側であり、v2.8.0では実装しない
+- **`workflow_engine` → `execution_history`の一方向依存を維持する。** `src/execution_history/`配下のいずれのモジュールも`workflow_engine` / `ai` / `pipeline` / `scheduler`を一切importしない。`WorkflowEngineStep`のような他パッケージの型を直接受け取らず、`str`（`step.value`）のみを受け渡す
+- **無効時（`EXECUTION_HISTORY_ENABLED=false`）はno-op。** `NullExecutionHistoryManager`が全メソッドを何もせず無視することで、Workflow Engine側の呼び出しコードを分岐させずに済む（`NullWorkflowEngineManager` / `NullLogManager`と同型のパターン）
+
+### データモデルとStore
+
+- `WorkflowExecutionRecord`（1回のWorkflow実行）：`run_id` / `workflow_name` / `source` / `job_id` / `status`（RUNNING/SUCCESS/FAILED） / `started_at` / `finished_at` / `steps` / `events` / `error_message`
+- `StepExecutionRecord`（1Stepの実行）：`step` / `status`（RUNNING/SUCCESS/FAILED/SKIPPED/NOT_REACHED） / `started_at` / `finished_at` / `error_message` / `skipped_reason`
+- `ExecutionHistoryStore`（ABC、`SchedulerRepository`と同型）→ `JsonExecutionHistoryStore`（初期実装。1実行=1 JSONファイル、`logs/execution_history/{run_id}.json`）。将来DB化する場合はABCを満たす新実装を追加するだけで差し替え可能
+- 記録は`start_run → start_step → finish_step → finish_run`のたびに同じファイルへ**都度上書き保存**する。実行途中でプロセスが異常終了しても「RUNNINGのまま止まった記録」が残る
+
+### Workflow Engineとの連携（最小限のDI）
+
+`WorkflowEngineExecutor`に`history_manager`引数（省略時は`NullExecutionHistoryManager`）を追加し、既存の分岐結果（Gate閉鎖によるスキップ・打ち切りによる未到達・実行成功/失敗）をそのまま`ExecutionHistoryManager`へ横流しして記録する。`WorkflowEngineManager.from_config()`が`ExecutionHistoryConfig.from_env()` → `ExecutionHistoryManager.from_config()`を構築してDIする。既存の実行制御ロジック（Gate二層構造・打ち切り基準・`WorkflowEngineResult`の組み立て）は無変更。
+
+デフォルトは有効（`EXECUTION_HISTORY_ENABLED=true`）。ローカルJSONファイルへの記録のみで外部への副作用を持たないため、`LOG_ENABLED`（v1.8.0）と同じ「原則有効」をデフォルトとした（Agent系ゲートのデフォルト`false`とは性質が異なる）。
+
+### 履歴の確認方法
+
+```bash
+cd projects/03_game_content_ai
+./venv/Scripts/python.exe scripts/show_execution_history.py                 # 一覧表示（新しい順）
+./venv/Scripts/python.exe scripts/show_execution_history.py --run-id <ID>   # 指定run_idの詳細表示
+```
+
+読み取り専用CLI。`EXECUTION_HISTORY_ENABLED=false`（記録無効）の場合でも、過去に記録済みの履歴は閲覧できる（読み取りと書き込みのゲートを分離）。
+
+詳細は`docs/design/execution_history_foundation.md`（Project Charter・Architecture Design）を参照。

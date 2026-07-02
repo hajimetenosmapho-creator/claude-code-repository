@@ -1,5 +1,5 @@
 """
-Workflow Engine Executor（v2.7.0）
+Workflow Engine Executor（v2.7.0、v2.8.0でExecution History連携を追加）
 
 WorkflowEngineExecutor: WorkflowEngineDefinitionに従い、既存Agentを順序どおりに実行するエンジン
 
@@ -16,12 +16,21 @@ WorkflowEngineExecutor: WorkflowEngineDefinitionに従い、既存Agentを順序
       definition.steps と同じ件数になる。未到達ステップは
       executed=False, success=False, skipped_reason=REASON_NOT_REACHED として
       記録する（同設計書8.3節、修正推奨事項）。
+    - [v2.8.0] history_manager（省略時は NullExecutionHistoryManager）へ、既存の
+      分岐結果をそのまま横流しして記録するのみ。実行判断・分岐・打ち切り基準には
+      一切関与しない（docs/design/execution_history_foundation.md 2章・7章）。
 """
 from __future__ import annotations
 
 from datetime import datetime
 
 from ai import AgentContext, AgentExecutor, AgentTask
+from execution_history import (
+    ExecutionHistoryManager,
+    NullExecutionHistoryManager,
+    StepExecutionStatus,
+    WorkflowExecutionStatus,
+)
 
 from .workflow_engine_context import WorkflowEngineContext
 from .workflow_engine_definition import WorkflowEngineDefinition
@@ -32,6 +41,8 @@ from .workflow_engine_result import (
 )
 from .workflow_engine_step import WorkflowEngineStep
 
+WORKFLOW_NAME = "workflow_engine"
+
 
 class WorkflowEngineExecutor:
     """WorkflowEngineDefinitionに従い、ステップに対応するAgentExecutorを順に実行する。"""
@@ -41,10 +52,12 @@ class WorkflowEngineExecutor:
         definition: WorkflowEngineDefinition,
         step_executors: dict[WorkflowEngineStep, AgentExecutor | None],
         step_skip_reasons: dict[WorkflowEngineStep, str] | None = None,
+        history_manager: ExecutionHistoryManager | NullExecutionHistoryManager | None = None,
     ):
         self._definition = definition
         self._step_executors = step_executors
         self._step_skip_reasons = step_skip_reasons or {}
+        self._history_manager = history_manager or NullExecutionHistoryManager()
 
     def run(self, context: WorkflowEngineContext) -> WorkflowEngineResult:
         """
@@ -62,6 +75,13 @@ class WorkflowEngineExecutor:
         started_at = datetime.now()
         context.started_at = started_at
 
+        history_record = self._history_manager.start_run(
+            run_id=context.run_id,
+            workflow_name=WORKFLOW_NAME,
+            source=context.event.source,
+            job_id=context.event.job_id,
+        )
+
         step_results: list[WorkflowEngineStepResult] = []
         stopped_early = False
 
@@ -75,6 +95,12 @@ class WorkflowEngineExecutor:
                         success=False,
                         skipped_reason=REASON_NOT_REACHED,
                     )
+                )
+                self._history_manager.finish_step(
+                    history_record,
+                    step.value,
+                    StepExecutionStatus.NOT_REACHED,
+                    skipped_reason=REASON_NOT_REACHED,
                 )
                 continue
 
@@ -93,7 +119,12 @@ class WorkflowEngineExecutor:
                         skipped_reason=reason,
                     )
                 )
+                self._history_manager.finish_step(
+                    history_record, step.value, StepExecutionStatus.SKIPPED, skipped_reason=reason
+                )
                 continue
+
+            self._history_manager.start_step(history_record, step.value)
 
             agent_context = AgentContext(
                 task=AgentTask(
@@ -117,7 +148,15 @@ class WorkflowEngineExecutor:
                 )
             )
 
-            if not agent_result.success:
+            if agent_result.success:
+                self._history_manager.finish_step(history_record, step.value, StepExecutionStatus.SUCCESS)
+            else:
+                self._history_manager.finish_step(
+                    history_record,
+                    step.value,
+                    StepExecutionStatus.FAILED,
+                    error_message=agent_result.error_message,
+                )
                 stopped_early = True
 
         context.step_results = step_results
@@ -125,6 +164,11 @@ class WorkflowEngineExecutor:
         context.finished_at = finished_at
 
         overall_success = all(r.success for r in step_results)
+
+        self._history_manager.finish_run(
+            history_record,
+            WorkflowExecutionStatus.SUCCESS if overall_success else WorkflowExecutionStatus.FAILED,
+        )
 
         return WorkflowEngineResult(
             steps=step_results,

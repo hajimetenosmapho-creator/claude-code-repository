@@ -29,6 +29,40 @@
 
 ---
 
+## [v2.8.0] - 2026-07-02 ★ Execution History Foundation
+
+### Added
+
+- `src/execution_history/`（新規パッケージ）：Workflow Engine（v2.7.0）が実行した各Workflowについて、実行の開始・終了・各Stepの結果を観測して記録するだけの最小基盤
+  - `execution_history_config.py`: `ExecutionHistoryConfig`（`EXECUTION_HISTORY_ENABLED`、デフォルト`true`。`EXECUTION_HISTORY_DIR`、デフォルト`logs/execution_history`）
+  - `execution_history_event.py`: `ExecutionHistoryEvent`、`EVENT_WORKFLOW_STARTED` / `EVENT_WORKFLOW_FINISHED` / `EVENT_STEP_STARTED` / `EVENT_STEP_FINISHED`
+  - `step_execution_record.py`: `StepExecutionRecord`、`StepExecutionStatus`（RUNNING/SUCCESS/FAILED/SKIPPED/NOT_REACHED）
+  - `workflow_execution_record.py`: `WorkflowExecutionRecord`、`WorkflowExecutionStatus`（RUNNING/SUCCESS/FAILED）
+  - `execution_history_store.py`: `ExecutionHistoryStore`（ABC、`SchedulerRepository`と同型）
+  - `json_execution_history_store.py`: `JsonExecutionHistoryStore`（1実行=1 JSONファイル、`logs/execution_history/{run_id}.json`）
+  - `execution_history_manager.py`: `ExecutionHistoryManager` / `NullExecutionHistoryManager`
+- `scripts/show_execution_history.py`新規作成（読み取り専用CLI。`--run-id` / `--limit`対応。`EXECUTION_HISTORY_ENABLED=false`でも過去の履歴を閲覧可能）
+- `tests/test_e2e_v2_8_0_execution_history_foundation.py`新規作成（182件）
+- `docs/design/execution_history_foundation_charter.md`新規作成（Project Charter）
+- `docs/design/execution_history_foundation.md`新規作成（Architecture Design）
+
+### Changed
+
+- `src/workflow_engine/workflow_engine_executor.py`：`history_manager`引数を追加（省略時は`NullExecutionHistoryManager`）。各ステップの分岐結果を`ExecutionHistoryManager`へ横流しして記録する呼び出しを追加。既存の実行制御ロジック（Gate二層構造・打ち切り基準・`WorkflowEngineResult`の組み立て）は無変更
+- `src/workflow_engine/workflow_engine_manager.py`：`from_config()`内で`ExecutionHistoryConfig.from_env()` → `ExecutionHistoryManager.from_config()`を構築し、`WorkflowEngineExecutor`へDIする処理を追加
+
+### Note
+
+- **Execution Historyは「実行の観測・記録」専任**：Workflow Engineの実行判断・分岐・再試行判断には一切関与しない。どのステップを実行するか・どこで打ち切るかは引き続き`WorkflowEngineExecutor`が単独で決定し、Execution Historyはその結果を受け取って記録するのみ
+- Release 2.8では履歴は**記録専用**。Retry Engine・Workflow Monitor・Metrics Foundation・Dashboard Foundationはいずれも対象外（将来Release）
+- `src/execution_history/`は`src/workflow_engine/` / `src/ai/` / `src/pipeline/` / `src/scheduler/`のいずれもimportしない。**`workflow_engine` → `execution_history`の一方向依存**を維持する（`WorkflowEngineStep`型を直接渡さず、`step.value`という`str`のみを受け渡す）
+- デフォルトは有効（`EXECUTION_HISTORY_ENABLED=true`）。`LOG_ENABLED`（v1.8.0）と同じく、ローカルJSONファイルへの記録のみで外部への副作用を持たないため「原則有効」とした（Agent系ゲートのデフォルト`false`とは性質が異なる）
+- 無効時（`EXECUTION_HISTORY_ENABLED=false`）は`NullExecutionHistoryManager`が全メソッドをno-opで処理し、Workflow Engine本体の動作・戻り値は一切変わらない
+- JSON書き込み失敗時は警告を出力して処理を継続する（履歴記録の失敗がWorkflow本体の成否に影響しない設計）
+- E2Eテスト182/182 PASS、既存回帰（`v2.0.0` 118/118・`v2.2.0` 120/120・`v2.3.0` 110/110・`v2.4.0` 120/120・`v2.5.0` 118/118・`v2.6.0` 118/118・`v2.7.0` 163/163・`v1.20.0` 170/170）PASS
+
+---
+
 ## [v2.7.0] - 2026-07-02 ★ Workflow Engine Foundation
 
 ### Added
