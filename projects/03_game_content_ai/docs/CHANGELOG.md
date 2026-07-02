@@ -29,6 +29,41 @@
 
 ---
 
+## [v3.0.0] - 2026-07-02 ★ Retry Engine Foundation
+
+### Added
+
+- `src/retry_engine/`（新規パッケージ）：Workflow Monitor（v2.9.0）が`FAILED` / `TIMEOUT`と判定したWorkflowを、Workflow Engineの公開APIを通じて再実行する最小基盤
+  - `retry_policy.py`: `RetryPolicy`（再実行対象の状態と最大試行回数を保持する、env非依存の業務ルール。`target_statuses`は`{FAILED, TIMEOUT}`固定、`max_attempts`は`RETRY_MAX_ATTEMPTS`、デフォルト`3`）
+  - `retry_config.py`: `RetryConfig`（`RETRY_ENGINE_ENABLED`、デフォルト`false`）
+  - `retry_request.py`: `RetryRequest`（`run_id` / `attempt` / `requested_at` / `dry_run` / `reason`）
+  - `retry_result.py`: `RetryResult`、`RetryOutcome`（`RETRIED` / `SKIPPED` / `NOT_FOUND` / `DISABLED`の4値）
+  - `retry_executor.py`: `RetryExecutor`（`WorkflowEngineManager`の公開APIを呼び出すだけの薄いコンポーネント。`RetryPolicy`を一切保持しない）
+  - `retry_manager.py`: `RetryManager` / `NullRetryManager`（Retry可否判定・`RetryRequest`生成・`RetryExecutor`への委譲を担う起動口。`retry(run_id, attempt=1, dry_run=False)`）
+- `tests/test_e2e_v3_0_0_retry_engine_foundation.py`新規作成（130件）
+- `docs/design/retry_engine_foundation_charter.md`新規作成（Project Charter）
+- `docs/design/retry_engine_foundation.md`新規作成（Architecture Design。Architecture Review完了・指摘事項4点反映済み。実装後の追加調整として`RetryManager.retry()`への`dry_run`引数追加を反映）
+
+### Note
+
+- **Retry判定・Retry Policy適用・RetryRequest生成はRetryManagerが担当し、RetryExecutorはWorkflowEngineManagerの公開APIを呼び出すだけの薄いコンポーネントとする**（Architecture Review反映）。`RetryExecutor`のコンストラクタは`policy`引数を持たない
+- **`RetryManager.retry(run_id, attempt=1, dry_run=False)`でdry-run retryが可能**：`dry_run=True`を指定すると、生成される`RetryRequest.dry_run`が`RetryExecutor`経由で`WorkflowEngineManager.run(event, dry_run=True)`まで伝播し、実際のNews収集・WordPress下書き投稿を伴わずに再実行経路のみを確認できる。`dry_run`はキーワード引数でデフォルト`False`のため、既存の`retry(run_id)` / `retry(run_id, attempt=N)`という呼び出しの後方互換性は完全に維持される。`RetryExecutor` / `RetryRequest`の責務・データ構造はいずれも変更していない（`RetryRequest.dry_run`は初版から定義済みのフィールドを公開APIから使えるようにしただけ）
+- **Workflowの状態を自ら保持しない（Stateless）**：状態判定は`WorkflowMonitorManager.get_status()`（v2.9.0の公開API）を毎回呼び出して取得する（Read Before Retry）。Execution Historyは直接参照・解釈しない
+- **`WorkflowEngineManager`の公開API（`run()`）のみを呼び出す**：`WorkflowEngineExecutor`等の内部実装には一切依存しない
+- `RetryManager.from_config()`は、呼び出し元が構築済みの`WorkflowEngineManager` / `WorkflowMonitorManager`をDependency Injectionで受け取る（Configから再構築しない）。これにより`src/retry_engine/`は`execution_history` / `ai` / `pipeline` / `scheduler`を一切importせず、`workflow_engine`と`workflow_monitor`の2パッケージのみに依存する
+- `WorkflowMonitorStatus`はEnumとして比較する（文字列比較は行わない）
+- デフォルトは無効（`RETRY_ENGINE_ENABLED=false`）。実際にWorkflowを再実行する（外部副作用を伴いうる）ため、`AI_AGENT_ENABLED` / `WORKFLOW_ENGINE_ENABLED`と同じ「安全側で止める」原則を適用（結果として三重ゲート）
+- 再実行イベントの`source`は新規定数を追加せず、既存の`SOURCE_MANUAL`を再利用する（`workflow_engine`パッケージは無改修）。再実行由来であることは`WorkflowEngineEvent.metadata`（`retried_from` / `attempt`）で判別可能にする
+- **Workflow Engine（v2.7.0）・Workflow Monitor（v2.9.0）・Execution History（v2.8.0）はいずれも無改修**
+- 対象外：Retry Queue・Retry History・RetryDecision・RetryReason Enum・Exponential Backoff・Adaptive Retry・Metrics・Dashboard・Notification・Circuit Breaker・AI Retry Decision・Parallel Retry・Distributed Retry・Manual Retry UI・CLIエントリスクリプト（いずれも将来Release候補）
+
+### Tested
+
+- `tests/test_e2e_v3_0_0_retry_engine_foundation.py`: 130/130 PASS（`dry_run`引数追加分5件を含む）
+- 既存回帰確認：`v2.0.0`（118/118 PASS）・`v2.2.0`（120/120 PASS）・`v2.3.0`（110/110 PASS）・`v2.4.0`（120/120 PASS）・`v2.5.0`（118/118 PASS）・`v2.6.0`（118/118 PASS）・`v2.7.0`（163/163 PASS）・`v2.8.0`（182/182 PASS）・`v2.9.0`（103/103 PASS）・`v1.20.0`（170/170 PASS）
+
+---
+
 ## [v2.9.0] - 2026-07-02 ★ Workflow Monitor Foundation
 
 ### Added

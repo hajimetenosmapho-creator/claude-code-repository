@@ -347,17 +347,33 @@
 
 ---
 
-## v2.x 以降の候補（未着手）
+## v3.0.0 — Retry Engine Foundation（2026-07-02 完了）★ Release 2.0 続き
+
+- [x] Project Charter作成：`docs/design/retry_engine_foundation_charter.md`
+- [x] Architecture Design確定：`docs/design/retry_engine_foundation.md`（Architecture Review完了・指摘事項4点反映済み）
+- [x] `src/retry_engine/`新規パッケージ実装：`RetryPolicy` / `RetryConfig` / `RetryRequest` / `RetryResult` / `RetryOutcome` / `RetryExecutor` / `RetryManager` / `NullRetryManager`
+- [x] Workflow Monitor（v2.9.0）が`FAILED` / `TIMEOUT`と判定したWorkflowを、Workflow Engine（v2.7.0）の公開API（`WorkflowEngineManager.run()`）を通じて再実行する基盤を確立
+- [x] Retry可否判定・RetryPolicy適用・RetryRequest生成はRetryManagerが担当し、RetryExecutorはWorkflowEngineManagerの公開APIを呼び出すだけの薄いコンポーネントとする設計に整理（Architecture Review反映）
+- [x] Workflowの状態は保持しない（Stateless）。`WorkflowMonitorManager`の公開API（`get_status()`）を毎回呼び出して最新状態を取得する（Read Before Retry）。Execution Historyは直接参照・解釈しない
+- [x] Workflow Engine（v2.7.0）・Workflow Monitor（v2.9.0）・Execution History（v2.8.0）はいずれも無改修。`retry_engine` → `workflow_engine` / `workflow_monitor`の2パッケージのみへの依存
+- [x] 追加調整：`RetryManager.retry(run_id, attempt=1, dry_run=False)`。`dry_run=True`でdry-run retryが可能（既存呼び出しの後方互換性は維持。`RetryExecutor` / `RetryRequest`の責務・データ構造は無変更）
+- [x] `tests/test_e2e_v3_0_0_retry_engine_foundation.py`新規作成（130件、`dry_run`引数追加分5件を含む）
+- [x] E2Eテスト130/130 PASS、既存回帰（`v2.0.0` 118/118・`v2.2.0` 120/120・`v2.3.0` 110/110・`v2.4.0` 120/120・`v2.5.0` 118/118・`v2.6.0` 118/118・`v2.7.0` 163/163・`v2.8.0` 182/182・`v2.9.0` 103/103・`v1.20.0` 170/170）PASS
+- [ ] Retry Queue・Retry History・RetryDecision・RetryReason Enum・Exponential Backoff・Adaptive Retry・Metrics・Dashboard・Notification・Circuit Breaker・AI Retry Decision・Parallel/Distributed Retry・Manual Retry UI・CLIエントリスクリプト：対象外（→ 将来Release候補）
+
+---
+
+## v3.x 以降の候補（未着手）
 
 - [ ] Windows タスクスケジューラ等の外部スケジューラから `scripts/run_workflow_engine.py` を定時起動する実運用連携（Scheduler Engine自体の内部実装はv2.6.0で完了。OS側との実連携は未着手）
 - [ ] 複数実行主体（`AgentManager`経由の既存script群とWorkflow Engine経由のscript）の排他制御（ロック機構）の実装（v2.7.0では運用制約として明記するのみ）
 - [ ] SchedulerJobの永続化（JSON/DB化）・複数Job登録・設定ファイル化・動的登録
 - [ ] `WorkflowTriggerAgent`（AI改善6ステップ）とWorkflow Engineの統合（`PublishTriggerAgent`との役割重複整理が前提）
-- [ ] Workflow Engineの条件分岐・Retry・並列実行
 - [ ] 重要度別の公開制御（S→即時公開・A→予約投稿・B→下書き）
-- [ ] Retry Engine（Workflow Monitor v2.9.0の`WorkflowMonitorStatus.FAILED` / `TIMEOUT`判定を起点とした再実行）
-- [ ] Metrics Foundation・Dashboard Foundation（Workflow Monitor v2.9.0の判定結果・Execution History v2.8.0の履歴データを消費する側）
+- [ ] Metrics Foundation・Dashboard Foundation（Workflow Monitor v2.9.0の判定結果・Execution History v2.8.0の履歴データ・Retry Engine v3.0.0の`RetryResult`を消費する側）
 - [ ] `CANCELLED`の正式な判定方法・`WAITING`の導入タイミング（Workflow Monitor v2.9.0で予約値として定義済み。Workflow Engine・Schedulerのデータモデル拡張が前提）
+- [ ] `scripts/run_retry_engine.py`（CLIエントリポイント）・Scheduler連携による定期自動再試行（Retry Engine v3.0.0では実装対象外。単発の`RetryManager.retry(run_id)`呼び出しのみ提供）
+- [ ] Retry Queue / Priority Queue・Retry History（再試行回数の永続化）・RetryDecision（Retry可否判定の専用コンポーネント化）・RetryReason Enum・Exponential Backoff・Adaptive Retry・Failure Classification・AI Retry Decision・Parallel/Distributed Retry・Circuit Breaker・Dead Letter Queue・Manual Retry UI・Notification（Retry Engine v3.0.0ではいずれも対象外。詳細は`docs/design/retry_engine_foundation.md` 11章 Future Extensions）
 
 ---
 

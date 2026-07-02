@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-02（v3.0.0 — Retry Engine層を追記。Workflow Monitorの公開APIのみを読み取り、Workflow Engineの公開APIのみを通じて再実行を依頼する新規パッケージ`src/retry_engine/`の設計判断、`retry_engine → workflow_engine` / `retry_engine → workflow_monitor`の一方向依存を明記）  
 更新日：2026-07-02（v2.9.0 — Workflow Monitor層を追記。Execution Historyを唯一の情報源（Single Source of Truth）としてWorkflowの実行状態を判定するだけの新規パッケージ`src/workflow_monitor/`の設計判断、`workflow_monitor → execution_history`の一方向依存を明記）  
 更新日：2026-07-02（v2.8.0 — Execution History層を追記。Workflow Engineが実行したWorkflowの観測・記録を担う新規パッケージ`src/execution_history/`の設計判断、`workflow_engine → execution_history`の一方向依存を明記）  
 更新日：2026-07-02（v2.7.0 — Workflow Engine層を追記。Scheduler → Workflow Engine → NewsAgent → ReviewTriggerAgent → PublishTriggerAgentの関係、既存Agentの独立性を維持したまま上位オーケストレーション層を追加した設計判断を明記）  
@@ -597,3 +598,60 @@ cd projects/03_game_content_ai
 Workflow Monitorは、`WorkflowMonitorStatus.FAILED` / `TIMEOUT`を起点としたRetry Engine、`elapsed_seconds`を集計するMetrics Foundation、`list_status()`を参照するDashboard Foundationの前提基盤として位置づける。いずれもv2.9.0の対象外であり、将来Releaseで検討する。
 
 詳細は`docs/design/workflow_monitor_foundation.md`（Project Charter・Architecture Design）を参照。
+
+---
+
+## Retry Engine層（`src/retry_engine/`、v3.0.0 追加）
+
+Workflow Monitor（v2.9.0）が`FAILED` / `TIMEOUT`と判定したWorkflowを、Workflow Engine（v2.7.0）の公開APIを通じて再実行する最小基盤。Workflow Monitor・Workflow Engineいずれの判定・実行ロジックにも変更を加えない。
+
+```
+Scheduler        （判断、v2.6.0、無改修）
+   ↓ SchedulerEvent
+Workflow Engine    （実行、v2.7.0、無改修）─────観測─────→ Execution History（記録、v2.8.0、無改修）
+   ↓          ▲                                                  ↓
+NewsAgent → ReviewTriggerAgent → PublishTriggerAgent      logs/execution_history/*.json
+   ↓          │                                                  ↓ 読み取り専用
+（既存Agent群、無改修）                                    Workflow Monitor（状態判定、v2.9.0、無改修）
+              │                                                  ↓ 公開API（get_status）
+              │                                           Retry Engine（再実行判断・依頼、v3.0.0）
+              └──────────────── 公開API（run） ─────────────────┘
+```
+
+### 責務の境界（原則）
+
+- **Retry可否判定・RetryPolicy適用・RetryRequest生成はRetryManagerが担当する。** `RetryExecutor`は`WorkflowEngineManager`の公開APIを呼び出すだけの薄いコンポーネントであり、`RetryPolicy`を一切保持しない（コンストラクタに`policy`引数を持たない）
+- **Workflowの状態は保持しない（Stateless）。** `RetryManager.retry(run_id)`は`run_id`のみを受け取り、その場で`WorkflowMonitorManager.get_status(run_id)`を呼んで最新状態を取得する（Read Before Retry）。Execution Historyは直接参照・解釈しない
+- **`WorkflowEngineManager`の公開API（`run()`）のみを呼び出す。** `WorkflowEngineExecutor`等の内部実装には一切依存しない
+- **`retry_engine` → `workflow_engine` / `workflow_monitor`の2パッケージのみへの一方向依存。** `execution_history` / `ai` / `pipeline` / `scheduler`はいずれもimportしない。`RetryManager.from_config()`は呼び出し元が構築済みの`WorkflowEngineManager` / `WorkflowMonitorManager`をDependency Injectionで受け取る（Configから再構築しない）ことでこれを実現している
+- **`WorkflowMonitorStatus`はEnumとして比較する。** 文字列比較は行わない
+
+### 再実行対象の判定（RetryPolicy）
+
+| 項目 | 内容 |
+|---|---|
+| 対象ステータス | `WorkflowMonitorStatus.FAILED` / `WorkflowMonitorStatus.TIMEOUT`（固定。環境変数では変更不可） |
+| 最大試行回数 | `RetryPolicy.max_attempts`（`RETRY_MAX_ATTEMPTS`、デフォルト`3`） |
+| 試行回数の記憶 | Retry Engine自身は記憶しない。`RetryRequest.attempt`として呼び出し元が指定する |
+
+### Feature Gate
+
+デフォルトは無効（`RETRY_ENGINE_ENABLED=false`）。Retry Engineは実際にWorkflowを再実行する（News収集・WordPress下書き投稿などの外部副作用を再度発生させうる）ため、`AI_AGENT_ENABLED` / `WORKFLOW_ENGINE_ENABLED`と同じ「安全側で止める」原則を適用する。結果として`AI_AGENT_ENABLED × WORKFLOW_ENGINE_ENABLED × RETRY_ENGINE_ENABLED`の三重ゲートになる。
+
+### 再実行イベントの識別
+
+再実行イベントの`source`には新規定数を追加せず、既存の`SOURCE_MANUAL`（`workflow_engine`パッケージ、無改修）を再利用する。再実行由来であることは`WorkflowEngineEvent.metadata`（`retried_from` / `attempt`）で判別できる。
+
+### Dry-run retry（追加調整）
+
+`RetryManager.retry(run_id, attempt=1, dry_run=False)`で`dry_run`を指定できる。`dry_run=True`にすると、生成される`RetryRequest.dry_run`が`RetryExecutor`を経由して`WorkflowEngineManager.run(event, dry_run=True)`まで伝播し、実際のNews収集・WordPress下書き投稿を伴わずに「再実行が正しい経路で呼ばれるか」だけを確認できる。`dry_run`はキーワード引数でデフォルト`False`のため、既存の`retry(run_id)` / `retry(run_id, attempt=N)`という呼び出しの後方互換性は完全に維持される。`RetryExecutor`（`WorkflowEngineManager`の公開APIを呼び出すだけの薄いコンポーネント）・`RetryRequest`（データ構造）の責務はいずれも変更していない。
+
+### Workflow Engine・Workflow Monitorとの関係
+
+`RetryManager` / `RetryExecutor`は`WorkflowEngineManager`（v2.7.0）・`WorkflowMonitorManager`（v2.9.0）の公開APIのみを利用し、いずれも無改修。呼び出し元（将来のCLI・Scheduler連携）が両Managerを構築し、`RetryManager.from_config()`へDependency Injectionで渡す構成とする。
+
+### 本Releaseの対象外
+
+Retry Queue / Priority Queue・Retry History（再試行回数の永続化）・RetryDecision（Retry可否判定の専用コンポーネント化）・RetryReason Enum・Exponential Backoff・Adaptive Retry・Failure Classification・AI Retry Decision・Parallel/Distributed Retry・Circuit Breaker・Dead Letter Queue・Manual Retry UI・Notification・Metrics/Dashboard・CLIエントリスクリプト（`scripts/run_retry_engine.py`）は、いずれもv3.0.0の対象外であり、将来Releaseで検討する。
+
+詳細は`docs/design/retry_engine_foundation.md`（Project Charter・Architecture Design）を参照。
