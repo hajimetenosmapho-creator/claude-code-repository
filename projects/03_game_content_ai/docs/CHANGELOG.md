@@ -28,6 +28,45 @@
 - **対応状況**：解消済み。本ドキュメント整備作業（2026-07-02）で、実装済みコード（`src/scheduler/`配下・`tests/test_e2e_v2_6_0_scheduler_agent_foundation.py`）の内容を確認し、下記「[v2.6.0]」として遡及的に追記した
 - **今後の対応**：不要（本エントリで解消済み）
 
+### [KI-3] v3.1.0テストの「retry_engine無改修」チェックがv3.2.0以降でFAILする（設計上の既知差分）
+
+- **発見日**：2026-07-02（v3.2.0 Retry Queue Integration 実装時）
+- **対象**：`tests/test_e2e_v3_1_0_retry_queue_foundation.py`のテスト24（`src/retry_engine/retry_manager.py`に変更がないことを確認する`git diff`チェック）
+- **症状**：v3.2.0で`retry_manager.py`を意図的に変更したため、本チェック1件がFAILする（151/152 PASS）
+- **原因**：v3.1.0のテストは「v3.1.0時点でretry_engineが無改修だった」という当時の事実をArchitecture Guardとして固定していたものであり、将来のRelease全体にわたって成立し続けることを意図した制約ではなかった
+- **対応状況**：対応しない。v3.2.0のProject Charter / Architecture Design / Architecture Reviewで`retry_manager.py`の変更は正式に承認済みである。本質的な制約である「`src/retry_queue/`配下の無改修」は、v3.1.0テストの残り151件（`retry_queue`パッケージ自体・その公開APIの挙動）と、v3.2.0の新規テスト（`test_e2e_v3_2_0_retry_queue_integration.py`のテスト14）の両方で別途確認済み。ユーザー確認の結果、v3.1.0テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした
+- **今後の対応**：不要（本エントリで説明を確定）。将来Releaseで`retry_engine`側に変更が入るたびに同様のFAILが起こりうるが、その都度Charter/Design側で「どのファイルが変更対象として承認されているか」を確認すればよく、個別のFAILは許容する
+
+---
+
+## [v3.2.0] - 2026-07-02 ★ Retry Queue Integration
+
+### Added
+
+- `src/retry_engine/retry_manager.py`（変更）：`RetryManager`が`RetryQueueManager` / `NullRetryQueueManager`をDependency Injectionで保持できるようにし、以下2メソッドを追加した
+  - `enqueue_retry(run_id, workflow_name, retry_attempt=1, priority=None)`: `RetryQueueManager.enqueue()`への薄い委譲のみ（判定・加工は一切行わない）
+  - `dequeue_retry()`: `RetryQueueManager.dequeue()`への薄い委譲のみ
+  - `RetryManager.from_config()`に`retry_queue_manager`引数（デフォルト`None`）を追加。省略時は`RetryManager.__init__`内で`NullRetryQueueManager()`にフォールバックするため、既存の4引数呼び出しは無変更で動作する
+  - `NullRetryManager`にも同名2メソッドを追加。ただし`RetryQueueManager` / `NullRetryQueueManager`への参照は一切保持せず、常に自前で`outcome=DISABLED`を返す（Retry Engine自体が無効な場合は、Retry Queueの有効/無効に関わらず一律で無効化するため）
+- `tests/test_e2e_v3_2_0_retry_queue_integration.py`新規作成（102件）
+- `docs/design/retry_queue_integration_charter.md`新規作成（Project Charter、承認済み）
+- `docs/design/retry_queue_integration.md`新規作成（Architecture Design。Architecture Review完了・**Approve with Minor Recommendations**、指摘事項3点をテスト観点へ反映済み）
+
+### Note
+
+- **Queue管理とRetry実行の責務分離を維持。** `enqueue_retry()` / `dequeue_retry()`は`RetryQueueManager`の対応メソッドへの委譲のみであり、容量チェック・重複チェック・優先度ソート等のQueue管理ロジックは一切`retry_engine`側に複製していない
+- **`retry()`（Retry実行）と`enqueue_retry()` / `dequeue_retry()`（Queue操作）は呼び出しグラフ上で完全に独立。** `dequeue_retry()`が取り出した`RetryQueueItem`を自動的に`retry()`へ渡す変換ロジックは持たない（自動実行はしない。Scheduler連携も本Releaseの対象外）
+- **`src/retry_queue/`は本Releaseでも無改修。** `retry_engine`が`retry_queue`の公開シンボル（`RetryQueueManager` / `NullRetryQueueManager` / `RetryQueueResult` / `RetryQueueOutcome`）をimportする片方向の依存が新規に追加された（`retry_engine → retry_queue`）
+- `NullRetryManager`の`reason`文言（"Retry Engine is disabled..."）と、Retry Engineは有効だがQueueだけが無効な場合の`reason`文言（`NullRetryQueueManager`由来の"Retry Queue is disabled (RETRY_QUEUE_ENABLED=false)."）は意図的に区別されており、呼び出し元はどちらのゲートが閉じているかを`reason`文字列から判別できる
+- 対象外：Queueから取り出した項目の自動再実行・Scheduler連携・Queue永続化・優先度付けアルゴリズムの高度化・CLIエントリスクリプト（いずれも将来Release候補）
+
+### Tested
+
+- `tests/test_e2e_v3_2_0_retry_queue_integration.py`: 102/102 PASS
+- 既存回帰確認：`v2.0.0`（118/118）・`v2.2.0`（120/120）・`v2.3.0`（110/110）・`v2.4.0`（120/120）・`v2.5.0`（118/118）・`v2.6.0`（118/118）・`v2.7.0`（163/163）・`v2.8.0`（182/182）・`v2.9.0`（103/103）・`v3.0.0`（130/130）・`v1.20.0`（170/170）全PASS
+- `v3.1.0`（151/152 PASS）：1件FAILは既知の差分（`[KI-3]`参照）。`retry_queue`パッケージ自体・その公開APIの挙動を検証する残り151件はすべてPASSしており、「`src/retry_queue/`無改修」は本Releaseの新規テスト（テスト14）でも別途確認済み
+- `v1.10.0`（Analytics Foundation）は`[KI-1]`（既知の問題、本Releaseと無関係）によりFAIL。本Releaseのcommit対象には含めない
+
 ---
 
 ## [v3.1.0] - 2026-07-02 ★ Retry Queue Foundation

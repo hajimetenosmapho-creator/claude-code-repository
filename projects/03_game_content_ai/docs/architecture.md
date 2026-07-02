@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-02（v3.2.0 — Retry Queue Integration層を追記。`RetryManager`が`RetryQueueManager`をDependency Injectionで保持し、`enqueue_retry()` / `dequeue_retry()`という薄い委譲メソッドで再実行対象をQueueへ登録・取得できるようにした設計判断、`retry_engine → retry_queue`の新規一方向依存、`src/retry_queue/`が本Releaseでも無改修であることを明記）  
 更新日：2026-07-02（v3.1.0 — Retry Queue層を追記。再実行待ちの`run_id`を保持・出し入れするだけの新規パッケージ`src/retry_queue/`の設計判断、他のどの`src/*`パッケージもimportしない独立した葉パッケージであること、Retry Engineとの実配線は本Releaseでは未実施であることを明記）  
 更新日：2026-07-02（v3.0.0 — Retry Engine層を追記。Workflow Monitorの公開APIのみを読み取り、Workflow Engineの公開APIのみを通じて再実行を依頼する新規パッケージ`src/retry_engine/`の設計判断、`retry_engine → workflow_engine` / `retry_engine → workflow_monitor`の一方向依存を明記）  
 更新日：2026-07-02（v2.9.0 — Workflow Monitor層を追記。Execution Historyを唯一の情報源（Single Source of Truth）としてWorkflowの実行状態を判定するだけの新規パッケージ`src/workflow_monitor/`の設計判断、`workflow_monitor → execution_history`の一方向依存を明記）  
@@ -706,10 +707,89 @@ Retry Engineにおける「Stateless」は「Workflowの実行状態を自ら保
 
 ### Retry Engineとの関係（本Releaseでは未配線）
 
-`RetryQueueManager`と`RetryManager`（Retry Engine、v3.0.0）の実際の配線（`RetryManager`が再実行対象を即座に実行するのではなく`RetryQueueManager.enqueue()`へ委ねる、または`dequeue()`した項目に対して`RetryManager.retry()`を呼ぶ、という統合）は本Releaseでは行っていない。`retry_engine` / `workflow_engine` / `workflow_monitor` / `execution_history`はいずれも無改修である。
+`RetryQueueManager`と`RetryManager`（Retry Engine、v3.0.0）の実際の配線（`RetryManager`が再実行対象を即座に実行するのではなく`RetryQueueManager.enqueue()`へ委ねる、または`dequeue()`した項目に対して`RetryManager.retry()`を呼ぶ、という統合）は本Releaseでは行っていない。`retry_engine` / `workflow_engine` / `workflow_monitor` / `execution_history`はいずれも無改修である。**登録・取得の配線自体はv3.2.0で実装した（下記「Retry Queue Integration層」参照）。ただし`dequeue()`した項目を自動的に`RetryManager.retry()`へ渡す自動実行は、v3.2.0でも引き続き行っていない。**
 
 ### 本Releaseの対象外
 
-Retry Engineとの実配線・Scheduler連携（定期的な`dequeue()`）・Queue永続化（SQLite/Redis）・`COMPLETED` / `FAILED`への到達（`mark_completed()` / `mark_failed()`相当の結果フィードバックAPI）・Priority Queueの効率化（`heapq`ベースへの差し替え）・Dead Letter Queue・Notification・Dashboard/API/UI・並行アクセス対応（スレッド安全性）は、いずれもv3.1.0の対象外であり、将来Releaseで検討する。
+Retry Engineとの実配線・Scheduler連携（定期的な`dequeue()`）・Queue永続化（SQLite/Redis）・`COMPLETED` / `FAILED`への到達（`mark_completed()` / `mark_failed()`相当の結果フィードバックAPI）・Priority Queueの効率化（`heapq`ベースへの差し替え）・Dead Letter Queue・Notification・Dashboard/API/UI・並行アクセス対応（スレッド安全性）は、いずれもv3.1.0の対象外であり、将来Releaseで検討する。**Retry Engineとの実配線（登録・取得のみ）はv3.2.0で実装した（下記参照）。**
 
 詳細は`docs/design/retry_queue_foundation.md`（Architecture Design）を参照。
+
+---
+
+## Retry Queue Integration層（`src/retry_engine/retry_manager.py`、v3.2.0 追加）
+
+Retry Engine（v3.0.0）とRetry Queue（v3.1.0）の間に、片方向の配線を1本追加する最小統合。
+自動実行・Scheduler連携・永続化は行わず、「登録できる」「取得できる」という配線のみを
+確立する。
+
+```
+Retry Engine（再実行判断・依頼、v3.0.0）
+   │
+   ├── RetryManager が RetryQueueManager を保持する（DI） ★v3.2.0
+   │      ├─ enqueue_retry()  … RetryQueueManager.enqueue() へ委譲
+   │      └─ dequeue_retry()  … RetryQueueManager.dequeue() へ委譲
+   │
+   └── RetryManager.retry()（既存、無改修） ─── Queueとは独立した経路のまま
+
+Retry Queue（Queue管理、v3.1.0、無改修）
+```
+
+### 変更範囲
+
+- 変更ファイルは`src/retry_engine/retry_manager.py`の1点のみ。`src/retry_queue/`配下は
+  本Releaseでも**無改修**（7ファイルとも1バイトも変更していない）
+- `RetryManager.__init__`に`queue: RetryQueueManager | NullRetryQueueManager | None = None`
+  引数を追加。省略時は`NullRetryQueueManager()`にフォールバックする
+- `RetryManager.from_config()`に`retry_queue_manager`引数（デフォルト`None`）を追加。
+  既存の4引数呼び出しはすべて本Release前と同じ挙動になる（後方互換性維持）
+- `RetryManager.enqueue_retry(run_id, workflow_name, retry_attempt=1, priority=None)` /
+  `RetryManager.dequeue_retry()`を新設。いずれも`RetryQueueManager`の対応メソッドへの
+  **委譲のみ**であり、容量チェック・重複チェック・優先度ソート等のQueue管理ロジックは
+  一切`retry_engine`側に複製しない（Queue管理とRetry実行の責務分離を維持）
+- `NullRetryManager`にも同名2メソッドを追加。ただし`RetryQueueManager` /
+  `NullRetryQueueManager`への参照は一切持たず、常に自前で`outcome=DISABLED`を返す。
+  Retry Engine自体が無効な場合は、Retry Queueの有効/無効に関わらず一律で無効化される
+
+### `retry()`との独立性
+
+`retry()`（Workflow再実行）と`enqueue_retry()` / `dequeue_retry()`（Queue操作）は、
+`RetryManager`内で状態や呼び出しを共有しない。`dequeue_retry()`が返した
+`RetryQueueItem`を使って実際に再実行するかどうかは、呼び出し元が
+`RetryManager.retry(item.run_id, attempt=item.retry_attempt)`を**別途明示的に**
+呼ぶ運用を前提とし、`RetryManager`自身がその橋渡しを行うことは本Releaseでは行わない。
+
+### Feature Gateの独立性
+
+Retry EngineのFeature Gate（`RETRY_ENGINE_ENABLED`）とRetry QueueのFeature Gate
+（`RETRY_QUEUE_ENABLED`）は引き続き独立している。`enqueue_retry()` /
+`dequeue_retry()`の`reason`文言により、呼び出し元はどちらのゲートが閉じているかを
+判別できる。
+
+| ケース | `outcome` | `reason` |
+|---|---|---|
+| `RETRY_ENGINE_ENABLED=false`（`NullRetryManager`） | `DISABLED` | "Retry Engine is disabled (...)"（Retry Engine起因） |
+| `RETRY_ENGINE_ENABLED=true`だが`RETRY_QUEUE_ENABLED=false` | `DISABLED` | "Retry Queue is disabled (RETRY_QUEUE_ENABLED=false)."（`retry_queue`パッケージ既存の文言、Retry Queue起因） |
+
+### 依存関係
+
+```
+retry_engine ──→ retry_queue（公開APIのみ：RetryQueueManager / NullRetryQueueManager /
+                  RetryQueueResult / RetryQueueOutcome） ★v3.2.0で新規追加
+retry_engine ──→ workflow_engine（既存、無改修）
+retry_engine ──→ workflow_monitor（既存、無改修）
+
+retry_queue  ──→ （なし。標準ライブラリのみ、無改修のまま）
+```
+
+`retry_queue`が`retry_engine`を参照する辺は存在しない（`retry_queue`は本Releaseでも
+無改修であり、そもそも`retry_engine`の存在を知らない）。循環importは発生しない。
+
+### 本Releaseの対象外
+
+Queueから取り出した項目の自動再実行・Scheduler連携（定期的な`dequeue()`処理）・
+Queue永続化・優先度付けアルゴリズムの高度化・CLIエントリスクリプトは、いずれも
+v3.2.0の対象外であり、将来Releaseで検討する。
+
+詳細は`docs/design/retry_queue_integration_charter.md`（Project Charter）・
+`docs/design/retry_queue_integration.md`（Architecture Design）を参照。

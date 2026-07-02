@@ -1,5 +1,5 @@
 """
-Retry Manager（v3.0.0）
+Retry Manager（v3.0.0 / v3.2.0でRetry Queue統合を追加）
 
 RetryManager:     Retry Engine全体の起動口
 NullRetryManager: RETRY_ENGINE_ENABLED=false（デフォルト）、または下位ゲートが閉じている
@@ -20,11 +20,25 @@ NullRetryManager: RETRY_ENGINE_ENABLED=false（デフォルト）、または下
     - retry() は dry_run（デフォルト False）を受け取り、生成する RetryRequest.dry_run へ
       そのまま渡す。RetryExecutor.execute() の既存挙動（RetryRequest.dry_run を
       WorkflowEngineManager.run(event, dry_run=...) へ伝播する）は変更しない。
+
+    - （v3.2.0）RetryManager は RetryQueueManager / NullRetryQueueManager を
+      Dependency Injection で保持できる（省略時は NullRetryQueueManager() に
+      フォールバックする）。enqueue_retry() / dequeue_retry() は
+      RetryQueueManager.enqueue() / dequeue() への薄い委譲のみであり、
+      判定・加工は一切行わない（docs/design/retry_queue_integration.md 4章）。
+    - （v3.2.0）retry()（Retry実行）と enqueue_retry() / dequeue_retry()（Queue操作）は
+      呼び出しグラフ上で完全に独立している。dequeue_retry() が取り出した
+      RetryQueueItem を retry() へ渡す変換ロジックは持たない（自動実行はしない。
+      同設計書5章・10章 Design Decision #4）。
+    - （v3.2.0）src/retry_queue/ は本Releaseでも無改修。RetryManager は
+      retry_queue パッケージの公開シンボル（__init__.py の __all__）のみを
+      importする（同設計書6章）。
 """
 from __future__ import annotations
 
 from datetime import datetime
 
+from retry_queue import NullRetryQueueManager, RetryQueueManager, RetryQueueOutcome, RetryQueueResult
 from workflow_engine import NullWorkflowEngineManager, WorkflowEngineManager
 from workflow_monitor import NullWorkflowMonitorManager, WorkflowMonitorManager, WorkflowMonitorStatus
 
@@ -43,10 +57,17 @@ class RetryManager:
     RetryExecutorには「再実行する」と決まった依頼だけを渡す。
     """
 
-    def __init__(self, policy: RetryPolicy, executor: RetryExecutor, monitor: WorkflowMonitorManager):
+    def __init__(
+        self,
+        policy: RetryPolicy,
+        executor: RetryExecutor,
+        monitor: WorkflowMonitorManager,
+        queue: "RetryQueueManager | NullRetryQueueManager | None" = None,
+    ):
         self._policy = policy
         self._executor = executor
         self._monitor = monitor
+        self._queue = queue if queue is not None else NullRetryQueueManager()
 
     @classmethod
     def from_config(
@@ -55,6 +76,7 @@ class RetryManager:
         retry_policy: RetryPolicy,
         workflow_engine_manager: "WorkflowEngineManager | NullWorkflowEngineManager",
         workflow_monitor_manager: "WorkflowMonitorManager | NullWorkflowMonitorManager",
+        retry_queue_manager: "RetryQueueManager | NullRetryQueueManager | None" = None,
     ) -> "RetryManager | NullRetryManager":
         """
         呼び出し元が構築済みの WorkflowEngineManager / WorkflowMonitorManager を
@@ -62,6 +84,10 @@ class RetryManager:
 
         RETRY_ENGINE_ENABLED が false、または workflow_engine_manager が
         NullWorkflowEngineManager（下位ゲートが閉じている）の場合は NullRetryManager を返す。
+
+        retry_queue_manager は省略可能（デフォルト None）。省略した場合は
+        RetryManager.__init__ 内で NullRetryQueueManager() にフォールバックするため、
+        本引数を渡さない既存の呼び出しはすべて本Release前と同じ挙動になる。
         """
         if not retry_config.is_ready():
             return NullRetryManager()
@@ -69,7 +95,12 @@ class RetryManager:
             return NullRetryManager()
 
         executor = RetryExecutor(workflow_engine_manager=workflow_engine_manager)
-        return cls(policy=retry_policy, executor=executor, monitor=workflow_monitor_manager)
+        return cls(
+            policy=retry_policy,
+            executor=executor,
+            monitor=workflow_monitor_manager,
+            queue=retry_queue_manager,
+        )
 
     def retry(self, run_id: str, attempt: int = 1, dry_run: bool = False) -> RetryResult:
         """
@@ -96,6 +127,33 @@ class RetryManager:
         request = RetryRequest(run_id=run_id, attempt=attempt, requested_at=datetime.now(), dry_run=dry_run)
         return self._executor.execute(request, record)
 
+    def enqueue_retry(
+        self,
+        run_id: str,
+        workflow_name: str,
+        retry_attempt: int = 1,
+        priority: int | None = None,
+    ) -> RetryQueueResult:
+        """
+        再実行対象を Retry Queue へ登録する。RetryQueueManager.enqueue() への委譲のみを
+        行い、判定・加工は一切行わない（RetryPolicy／Workflow Monitorへの問い合わせも
+        行わない。Queue登録可否の判断はretry_queue側の責務のまま）。
+        """
+        return self._queue.enqueue(
+            run_id=run_id,
+            workflow_name=workflow_name,
+            retry_attempt=retry_attempt,
+            priority=priority,
+        )
+
+    def dequeue_retry(self) -> RetryQueueResult:
+        """
+        Retry Queue から再実行対象を1件取り出す。RetryQueueManager.dequeue() への
+        委譲のみを行う。取り出した項目に対して retry() を呼ぶかどうかは呼び出し元の
+        判断に委ねられ、RetryManager自身は一切自動実行しない。
+        """
+        return self._queue.dequeue()
+
     def _skip_reason(self, monitor_status: WorkflowMonitorStatus, attempt: int) -> str:
         if monitor_status not in self._policy.target_statuses:
             return (
@@ -108,11 +166,33 @@ class RetryManager:
 class NullRetryManager:
     """RETRY_ENGINE_ENABLED=false（デフォルト）、または下位ゲートが閉じている場合のダミー実装。"""
 
+    _DISABLED_REASON = (
+        "Retry Engine is disabled (RETRY_ENGINE_ENABLED=false, "
+        "or AI_AGENT_ENABLED/WORKFLOW_ENGINE_ENABLED is not ready)."
+    )
+
     def retry(self, run_id: str, attempt: int = 1, dry_run: bool = False) -> RetryResult:
         return RetryResult(
             original_run_id=run_id, outcome=RetryOutcome.DISABLED, attempt=attempt,
             monitor_status=None,
-            reason="Retry Engine is disabled (RETRY_ENGINE_ENABLED=false, "
-                   "or AI_AGENT_ENABLED/WORKFLOW_ENGINE_ENABLED is not ready).",
+            reason=self._DISABLED_REASON,
             workflow_engine_result=None,
         )
+
+    def enqueue_retry(
+        self,
+        run_id: str,
+        workflow_name: str,
+        retry_attempt: int = 1,
+        priority: int | None = None,
+    ) -> RetryQueueResult:
+        """
+        RETRY_ENGINE_ENABLED=false（デフォルト）、または下位ゲートが閉じている場合は、
+        Retry Queueが有効かどうかに関わらずRetry Engine自体が無効であるため、
+        Queueへの参照を一切保持せずDISABLEDを返す（retry_queue側は一切呼び出さない）。
+        """
+        return RetryQueueResult(outcome=RetryQueueOutcome.DISABLED, item=None, reason=self._DISABLED_REASON)
+
+    def dequeue_retry(self) -> RetryQueueResult:
+        """enqueue_retry()と同じ理由でDISABLEDを返す（retry_queue側は一切呼び出さない）。"""
+        return RetryQueueResult(outcome=RetryQueueOutcome.DISABLED, item=None, reason=self._DISABLED_REASON)
