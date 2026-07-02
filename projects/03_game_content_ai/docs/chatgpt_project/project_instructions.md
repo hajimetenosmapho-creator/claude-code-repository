@@ -143,13 +143,29 @@
 - 1セッションで扱う作業は、「小さく作る」原則に沿って、1つの意味のある単位に絞る
 - 区切りの良いタイミングで、実装だけでなくドキュメント（CHANGELOG／ROADMAP等）も合わせて更新してから区切る
 
-**セッション終了ルール**：以下の条件が揃った場合は、Claude Codeセッションを終了（exit）し、新しいセッションで作業を再開することを推奨する。これを標準運用とする。
+**Session と Release の対応**：1 Session＝1 Release を基本の目安とするが、強制ルールではない。小規模な変更（typo修正・軽微なバグ修正等）を既存Sessionにまとめてよい場合や、1つのReleaseがレビュー待ちを挟んで複数Sessionにまたがる場合もある。目安から外れること自体は問題とせず、都度の判断を優先する。
 
-- Release完了
-- commit完了
-- push完了
-- origin/main同期済み
-- Working Treeがclean
+**Session の状態区分**：Claude Code の Session／Task の内部仕様（自動判定の有無等）はドキュメントで確認できないため断定しない。本プロジェクトでは、以下を**運用上の呼称**として定義し、人間が状況を把握するための目安として使う。将来Claude Code側のUI名称・仕様が変わった場合でも、本章の運用上の意味はそのまま維持する。
+
+| 状態 | 運用上の意味 |
+|---|---|
+| Working | 実装・テスト・ドキュメント更新などを実際に進めている状態 |
+| Awaiting input | ChatGPTレビュー待ち、またはユーザーの承認・判断待ちの状態（5章「開発フロー」・6章「レビュー方針」の各ゲートに対応） |
+| Completed | Claude Codeの内部状態を指すものではなく、該当Releaseが本章の「セッション終了ルール」の条件（Release完了・commit完了・push完了・origin/main同期済み・Working Treeがclean）を満たした「Release完了状態」を意味する、本プロジェクト独自の運用上の呼称 |
+
+**Task の粒度**：
+
+- Task の粒度は、基本的に `ROADMAP.md` の該当Releaseチェックリスト1行と対応させる
+- 必要に応じて、そのチェック項目を複数Taskへ細分化してもよい
+- ただし、Release完了時には `ROADMAP.md` のチェックリストへ集約し、二重管理にならないようにする
+
+**Session一時停止（Awaiting input）の扱い**：Claude Code の Session は終了後も再開（`--resume` / `/resume`）によりコンテキストを保持したまま継続できる。ChatGPTレビュー待ち・ユーザー確認待ちで作業が止まる場合、直ちにSessionを終了する必要はない。再開の見込みが近い場合は、Sessionを終了せず**一時停止（Awaiting input）**として保持してよい。
+
+**セッション終了ルール**：以下は、Claude Codeセッションを終了（exit）し、新しいセッションで作業を再開することを推奨する標準的なケースである。義務ではなく推奨運用として扱う。
+
+- Release完了条件（Release完了・commit完了・push完了・origin/main同期済み・Working Treeがclean）をすべて満たした場合
+- ChatGPTレビュー待ち・ユーザー確認待ちについて、長期間再開予定がない場合
+- 現在のReleaseとは別のReleaseへ着手する場合
 
 ---
 

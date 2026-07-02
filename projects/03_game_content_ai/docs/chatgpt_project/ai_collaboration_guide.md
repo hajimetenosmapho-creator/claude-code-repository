@@ -82,12 +82,13 @@ Claude Code自身がレビュー依頼の要否を判断して黙って進める
 
 ## 6. Claude Code終了タイミング
 
-Claude Codeセッションを終了するタイミングの判断基準は `project_instructions.md`（10章）の条件（Release完了・commit完了・push完了・origin/main同期済み・Working Treeがclean）に従う。
+Claude Codeセッションを終了するタイミングの判断基準は `project_instructions.md`（10章）に従う。
 
 本文書では、それに加えて協業上の観点を補足する。
 
 - ChatGPTのレビュー待ちに入った場合（5章の依頼を出した後）、Claude Codeは新しい実装作業を先に進めず、レビュー結果の反映を待つ区切りとする
-- セッションを終了する前に、次にChatGPTへ何を確認してもらう必要があるかを人間に明示してから終える
+- レビュー待ちの間、Sessionを終了するか一時停止（Awaiting input）で保持するかは `project_instructions.md`（10章）の基準に従って人間が判断する。再開見込みが近い場合は一時停止で足り、都度の引継ぎプロンプト作成は不要である
+- Sessionを終了する場合は、終了前に次にChatGPTへ何を確認してもらう必要があるかを人間に明示してから終える
 
 ---
 
@@ -97,6 +98,7 @@ Claude Codeセッションを終了するタイミングの判断基準は `proj
 - 橋渡しの際、Project Instructions／Development Charterに書かれている内容は改めて説明しない（11章のチャット引継ぎルールと同じ考え方）
 - 橋渡しする内容は、直前の判断結果・次にやること・未解決の論点に限定する
 - ChatGPT側での設計変更がClaude Codeでの実装に影響する場合は、変更内容を要約してからClaude Codeセッションに渡す（逆方向も同様）
+- **`handoff_template.md` によるチャット引継ぎは、ChatGPTなど別ツール・別チャットへ橋渡しする場合にのみ用いる**。同一のClaude Code Session内で作業を再開できる場合（一時停止からの再開等）は、引継ぎプロンプトの作成を省略してよい
 
 ---
 
