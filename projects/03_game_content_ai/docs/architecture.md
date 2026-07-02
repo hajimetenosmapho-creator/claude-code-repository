@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-02（v2.9.0 — Workflow Monitor層を追記。Execution Historyを唯一の情報源（Single Source of Truth）としてWorkflowの実行状態を判定するだけの新規パッケージ`src/workflow_monitor/`の設計判断、`workflow_monitor → execution_history`の一方向依存を明記）  
 更新日：2026-07-02（v2.8.0 — Execution History層を追記。Workflow Engineが実行したWorkflowの観測・記録を担う新規パッケージ`src/execution_history/`の設計判断、`workflow_engine → execution_history`の一方向依存を明記）  
 更新日：2026-07-02（v2.7.0 — Workflow Engine層を追記。Scheduler → Workflow Engine → NewsAgent → ReviewTriggerAgent → PublishTriggerAgentの関係、既存Agentの独立性を維持したまま上位オーケストレーション層を追加した設計判断を明記）  
 更新日：2026-07-02（v2.6.0 — Scheduler層を追記。v2.6.0リリース時に未実施だった本追記を、v2.7.0ドキュメント整備時にあわせて実施。`docs/CHANGELOG.md` [KI-2]参照）  
@@ -536,3 +537,63 @@ cd projects/03_game_content_ai
 読み取り専用CLI。`EXECUTION_HISTORY_ENABLED=false`（記録無効）の場合でも、過去に記録済みの履歴は閲覧できる（読み取りと書き込みのゲートを分離）。
 
 詳細は`docs/design/execution_history_foundation.md`（Project Charter・Architecture Design）を参照。
+
+---
+
+## Workflow Monitor層（`src/workflow_monitor/`、v2.9.0 追加）
+
+Execution History（v2.8.0）が記録した`WorkflowExecutionRecord`を読み取り、Workflowの実行状態を**判定するだけ**の最小基盤。Workflow Engine・Execution Historyいずれの実行・記録処理にも関与しない。
+
+```
+Scheduler        （判断、v2.6.0、無改修）
+   ↓ SchedulerEvent
+Workflow Engine    （実行、v2.7.0、無改修）─────観測─────→ Execution History（記録、v2.8.0、無改修）
+   ↓                                                              ↓
+NewsAgent → ReviewTriggerAgent → PublishTriggerAgent      logs/execution_history/*.json
+                                                                   ↓ 読み取り専用
+                                                            Workflow Monitor（状態判定、v2.9.0）
+                                                                   ↓
+                                                     scripts/show_workflow_status.py（CLI）
+```
+
+### 責務の境界（原則）
+
+- **Execution Historyを唯一の情報源（Single Source of Truth）とする。** Workflow Engineの内部状態・メモリ上の状態・一時キャッシュには一切依存しない。すべての状態判定は`ExecutionHistoryStore`から読み取った`WorkflowExecutionRecord`から導出する
+- **Workflow単位（`run_id`）の判定のみ。** `StepExecutionRecord`はExecution Historyの生データをそのままコピーして保持するのみで、Step単位の独自判定ロジックは持たない
+- **`workflow_monitor` → `execution_history`の一方向依存を維持する。** `src/workflow_monitor/`配下のいずれのモジュールも`workflow_engine` / `ai` / `pipeline` / `scheduler`を一切importしない
+- **読み取り専用・stateless。** Execution Historyへの書き込みは一切行わない（`ExecutionHistoryStore.save()`を呼ばない）。判定結果を独自に永続化・キャッシュせず、呼び出されるたびに最新のレコードを読み直して判定する
+
+### 判定される状態
+
+| 状態 | 判定方針 |
+|---|---|
+| `RUNNING` | `WorkflowExecutionRecord.status == RUNNING`かつTimeout未経過 |
+| `SUCCESS` | `WorkflowExecutionRecord.status == SUCCESS` |
+| `FAILED` | `WorkflowExecutionRecord.status == FAILED` |
+| `TIMEOUT` | `status == RUNNING`のまま、`started_at`から`WorkflowMonitorConfig.timeout_seconds`（デフォルト3600秒）以上経過 |
+| `CANCELLED` | **将来拡張用の予約値。** Workflow Engine・Execution Historyのいずれにも「キャンセル」を表す状態が存在しないため、判定ロジックからは到達しない |
+| `WAITING` | **将来拡張用の予約値。** 実行待ちキューが現時点で存在しないため、判定ロジックからは到達しない |
+
+### Timeoutの判定方針
+
+Workflow Monitor自身はTimeoutの閾値を保持しない。閾値は`WorkflowMonitorConfig`（`WORKFLOW_MONITOR_TIMEOUT_SECONDS`、デフォルト3600秒）に一元化されており、Workflow Monitor本体にはハードコードされていない。この設定駆動の構造により、将来のRetry Engine・Metrics Foundation・Dashboard Foundationも同じ閾値を参照できる。
+
+### Workflow Engine・Execution Historyとの関係
+
+`WorkflowMonitor`は`ExecutionHistoryStore`（ABC、v2.8.0）を読み取り専用で参照するのみで、Workflow Engine（v2.7.0）・Execution History（v2.8.0）・既存4 Trigger Agent・Scheduler本体はいずれも無改修。デフォルトは有効（`WORKFLOW_MONITOR_ENABLED=true`）。Execution Historyと同じく「読み取り専用・外部副作用なし」であるため。
+
+### 履歴の確認方法
+
+```bash
+cd projects/03_game_content_ai
+./venv/Scripts/python.exe scripts/show_workflow_status.py                 # 一覧表示（新しい順）
+./venv/Scripts/python.exe scripts/show_workflow_status.py --run-id <ID>   # 指定run_idの詳細表示
+```
+
+読み取り専用CLI。`WORKFLOW_MONITOR_ENABLED=false`（Feature Gate無効）の場合でも、ゲート判定をバイパスして常に判定結果を表示する（`show_execution_history.py`と同じ「読み取りと書き込みのゲート分離」の考え方）。
+
+### 将来の拡張（Retry Engine・Metrics・Dashboardの前提基盤）
+
+Workflow Monitorは、`WorkflowMonitorStatus.FAILED` / `TIMEOUT`を起点としたRetry Engine、`elapsed_seconds`を集計するMetrics Foundation、`list_status()`を参照するDashboard Foundationの前提基盤として位置づける。いずれもv2.9.0の対象外であり、将来Releaseで検討する。
+
+詳細は`docs/design/workflow_monitor_foundation.md`（Project Charter・Architecture Design）を参照。

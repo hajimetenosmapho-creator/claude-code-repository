@@ -326,8 +326,24 @@
 - [x] `scripts/show_execution_history.py`新規作成（読み取り専用CLI、`--run-id` / `--limit`対応）
 - [x] `tests/test_e2e_v2_8_0_execution_history_foundation.py`新規作成（182件）
 - [x] E2Eテスト182/182 PASS、既存回帰（`v2.0.0` 118/118・`v2.2.0` 120/120・`v2.3.0` 110/110・`v2.4.0` 120/120・`v2.5.0` 118/118・`v2.6.0` 118/118・`v2.7.0` 163/163・`v1.20.0` 170/170）PASS
-- [ ] Retry Engine・Workflow Monitor・Metrics Foundation・Dashboard Foundation：対象外（→ 将来Release候補）
+- [ ] Retry Engine・Workflow Monitor・Metrics Foundation・Dashboard Foundation：対象外（→ Workflow Monitorはv2.9.0で実装。Retry Engine・Metrics・Dashboardは引き続き将来Release候補）
 - [ ] JSON保存からDB永続化への差し替え：対象外（`ExecutionHistoryStore`インターフェースにより将来差し替え可能な設計のみ用意）
+
+---
+
+## v2.9.0 — Workflow Monitor Foundation（2026-07-02 完了）★ Release 2.0 続き
+
+- [x] Project Charter作成：`docs/design/workflow_monitor_foundation_charter.md`
+- [x] Architecture Design確定：`docs/design/workflow_monitor_foundation.md`（Architecture Review完了・指摘事項3点反映済み）
+- [x] `src/workflow_monitor/`新規パッケージ実装：`WorkflowMonitorStatus` / `WorkflowMonitorConfig` / `WorkflowMonitorRecord` / `WorkflowMonitor` / `WorkflowMonitorManager` / `NullWorkflowMonitorManager`
+- [x] Execution History（v2.8.0）が記録した`WorkflowExecutionRecord`を唯一の情報源（Single Source of Truth）として、Workflowの実行状態を判定するだけの基盤を確立
+- [x] `RUNNING` / `SUCCESS` / `FAILED` / `TIMEOUT`の4状態判定に対応。`CANCELLED` / `WAITING`はEnumに定義するが、判定対象となる元データが存在しないため将来拡張用の予約値とする
+- [x] Workflow Engine（v2.7.0）・Execution History（v2.8.0）はいずれも無改修。`workflow_monitor` → `execution_history`の一方向依存のみ
+- [x] `scripts/show_workflow_status.py`新規作成（読み取り専用CLI。`--run-id` / `--limit`対応。ゲートをバイパスして常に判定結果を表示）
+- [x] `tests/test_e2e_v2_9_0_workflow_monitor_foundation.py`新規作成（103件）
+- [x] E2Eテスト103/103 PASS、既存回帰（`v2.0.0` 118/118・`v2.2.0` 120/120・`v2.3.0` 110/110・`v2.4.0` 120/120・`v2.5.0` 118/118・`v2.6.0` 118/118・`v2.7.0` 163/163・`v2.8.0` 182/182・`v1.20.0` 170/170）PASS
+- [x] Retry Engine・Metrics Foundation・Dashboard Foundationの前提基盤として位置づけ（いずれも本Releaseの対象外）
+- [ ] `CANCELLED`の正式な判定方法・`WAITING`の導入タイミング：対象外（→ 将来Release候補）
 
 ---
 
@@ -339,8 +355,9 @@
 - [ ] `WorkflowTriggerAgent`（AI改善6ステップ）とWorkflow Engineの統合（`PublishTriggerAgent`との役割重複整理が前提）
 - [ ] Workflow Engineの条件分岐・Retry・並列実行
 - [ ] 重要度別の公開制御（S→即時公開・A→予約投稿・B→下書き）
-- [ ] Retry Engine（Execution History v2.8.0の`WorkflowExecutionRecord.status=FAILED`を起点とした再実行）
-- [ ] Workflow Monitor・Metrics Foundation・Dashboard Foundation（Execution History v2.8.0が保存した履歴データを消費する側）
+- [ ] Retry Engine（Workflow Monitor v2.9.0の`WorkflowMonitorStatus.FAILED` / `TIMEOUT`判定を起点とした再実行）
+- [ ] Metrics Foundation・Dashboard Foundation（Workflow Monitor v2.9.0の判定結果・Execution History v2.8.0の履歴データを消費する側）
+- [ ] `CANCELLED`の正式な判定方法・`WAITING`の導入タイミング（Workflow Monitor v2.9.0で予約値として定義済み。Workflow Engine・Schedulerのデータモデル拡張が前提）
 
 ---
 

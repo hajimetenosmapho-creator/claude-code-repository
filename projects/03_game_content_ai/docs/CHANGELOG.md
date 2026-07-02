@@ -29,6 +29,38 @@
 
 ---
 
+## [v2.9.0] - 2026-07-02 ★ Workflow Monitor Foundation
+
+### Added
+
+- `src/workflow_monitor/`（新規パッケージ）：Execution History（v2.8.0）が記録した`WorkflowExecutionRecord`を読み取り、Workflowの実行状態を判定するだけの最小基盤
+  - `workflow_monitor_status.py`: `WorkflowMonitorStatus`（RUNNING/SUCCESS/FAILED/TIMEOUT/CANCELLED/WAITINGの6値。CANCELLED/WAITINGは将来拡張用の予約値で判定ロジックからは到達しない）
+  - `workflow_monitor_config.py`: `WorkflowMonitorConfig`（`WORKFLOW_MONITOR_ENABLED`、デフォルト`true`。`WORKFLOW_MONITOR_TIMEOUT_SECONDS`、デフォルト`3600`秒）
+  - `workflow_monitor_record.py`: `WorkflowMonitorRecord`（`run_id` / `monitor_status` / `source_status` / `elapsed_seconds` / `reason` / `steps`等）
+  - `workflow_monitor.py`: `WorkflowMonitor`（`ExecutionHistoryStore`を読み取り専用で参照し状態を判定するロジック本体）
+  - `workflow_monitor_manager.py`: `WorkflowMonitorManager` / `NullWorkflowMonitorManager`
+- `scripts/show_workflow_status.py`新規作成（読み取り専用CLI。`--run-id` / `--limit`対応。`WORKFLOW_MONITOR_ENABLED=false`でもゲートをバイパスして常に判定結果を表示）
+- `tests/test_e2e_v2_9_0_workflow_monitor_foundation.py`新規作成（103件）
+- `docs/design/workflow_monitor_foundation_charter.md`新規作成（Project Charter）
+- `docs/design/workflow_monitor_foundation.md`新規作成（Architecture Design。Architecture Review完了・指摘事項3点反映済み）
+
+### Note
+
+- **Execution Historyを唯一の情報源（Single Source of Truth）とする**：Workflow Engineの内部状態・メモリ上の状態・一時キャッシュには一切依存せず、すべての状態判定は`ExecutionHistoryStore`から読み取った`WorkflowExecutionRecord`から導出する
+- 判定対応は`RUNNING` / `SUCCESS` / `FAILED` / `TIMEOUT`の4状態。`TIMEOUT`は`status=RUNNING`のまま`WorkflowMonitorConfig.timeout_seconds`（デフォルト3600秒）を超過した場合に判定される。`CANCELLED` / `WAITING`はEnumに定義されるが、判定対象となる元データがWorkflow Engine・Execution Historyのいずれにも存在しないため、将来拡張用の予約値として判定ロジックには組み込まれていない
+- Workflow Monitorは読み取り専用。Execution Historyへの書き込みは一切行わない（`ExecutionHistoryStore.save()`を呼ばない）。stateless設計で、判定結果を独自に永続化・キャッシュしない
+- `src/workflow_monitor/`は`src/execution_history/`のみをimportする一方向依存。`workflow_engine` / `ai` / `pipeline` / `scheduler`はいずれもimportしない
+- **Workflow Engine（v2.7.0）・Execution History（v2.8.0）はいずれも無改修**
+- 将来のRetry Engine・Metrics Foundation・Dashboard Foundationの前提基盤として位置づける。これらはいずれも本Releaseの対象外
+- デフォルトは有効（`WORKFLOW_MONITOR_ENABLED=true`）。Execution History（v2.8.0）と同じ「読み取り専用・外部副作用なし」の理由による
+
+### Tested
+
+- `tests/test_e2e_v2_9_0_workflow_monitor_foundation.py`: 103/103 PASS
+- 既存回帰確認：`v2.0.0`（118/118 PASS）・`v2.2.0`（120/120 PASS）・`v2.3.0`（110/110 PASS）・`v2.4.0`（120/120 PASS）・`v2.5.0`（118/118 PASS）・`v2.6.0`（118/118 PASS）・`v2.7.0`（163/163 PASS）・`v2.8.0`（182/182 PASS）・`v1.20.0`（170/170 PASS）
+
+---
+
 ## [v2.8.0] - 2026-07-02 ★ Execution History Foundation
 
 ### Added
