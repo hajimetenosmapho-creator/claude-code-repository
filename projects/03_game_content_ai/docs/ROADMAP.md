@@ -363,6 +363,20 @@
 
 ---
 
+## v3.1.0 — Retry Queue Foundation（2026-07-02 完了）★ Release 2.0 続き
+
+- [x] Architecture Design確定：`docs/design/retry_queue_foundation.md`（Project Charterはチャット上で提示された内容が前提。別ファイル化は本Releaseでは未実施）
+- [x] `src/retry_queue/`新規パッケージ実装：`RetryQueueStatus` / `RetryQueueItem` / `RetryQueueOutcome` / `RetryQueueResult` / `RetryQueueConfig` / `RetryQueueManager` / `NullRetryQueueManager`
+- [x] `enqueue` / `dequeue` / `remove` / `list` / `exists` / `count` の6操作を実装。Queue管理のみを責務とし、Retry実行・Workflow Engine呼び出し・Retry Engine呼び出し・Workflow Monitor呼び出し・Execution History呼び出しはいずれも行わない
+- [x] `retry_queue`はWorkflow Engine・Workflow Monitor・Retry Engine・Execution Historyのいずれもimportしない、標準ライブラリのみに依存する独立した葉パッケージとして実装（Retry Engine v3.0.0よりもさらに徹底した独立性）
+- [x] `RETRY_QUEUE_ENABLED`のデフォルトは`true`（Queue操作はメモリ上の`dict`を読み書きするだけで外部副作用を伴わないため、Execution History/Workflow Monitorと同じ「安全に既定で有効にできる」分類とした）
+- [x] `COMPLETED` / `FAILED`は将来拡張用の予約値として定義（`WorkflowMonitorStatus.CANCELLED` / `WAITING`の前例を踏襲。本Releaseの操作からは到達しない）
+- [x] `tests/test_e2e_v3_1_0_retry_queue_foundation.py`新規作成（152件）
+- [x] E2Eテスト152/152 PASS、既存回帰（`v2.0.0` 118/118・`v2.2.0` 120/120・`v2.3.0` 110/110・`v2.4.0` 120/120・`v2.5.0` 118/118・`v2.6.0` 118/118・`v2.7.0` 163/163・`v2.8.0` 182/182・`v2.9.0` 103/103・`v3.0.0` 130/130・`v1.20.0` 170/170）PASS。`v1.10.0`は`[KI-1]`（既知の問題、本Releaseと無関係）によりFAIL
+- [ ] Retry Engineとの実配線・Scheduler連携・Queue永続化（SQLite/Redis）・`COMPLETED`/`FAILED`への到達（結果フィードバックAPI）・Priority Queueの効率化（heapqベース）・Dead Letter Queue・Notification・Dashboard/API/UI：対象外（→ 将来Release候補）
+
+---
+
 ## v3.x 以降の候補（未着手）
 
 - [ ] Windows タスクスケジューラ等の外部スケジューラから `scripts/run_workflow_engine.py` を定時起動する実運用連携（Scheduler Engine自体の内部実装はv2.6.0で完了。OS側との実連携は未着手）
@@ -370,10 +384,12 @@
 - [ ] SchedulerJobの永続化（JSON/DB化）・複数Job登録・設定ファイル化・動的登録
 - [ ] `WorkflowTriggerAgent`（AI改善6ステップ）とWorkflow Engineの統合（`PublishTriggerAgent`との役割重複整理が前提）
 - [ ] 重要度別の公開制御（S→即時公開・A→予約投稿・B→下書き）
-- [ ] Metrics Foundation・Dashboard Foundation（Workflow Monitor v2.9.0の判定結果・Execution History v2.8.0の履歴データ・Retry Engine v3.0.0の`RetryResult`を消費する側）
+- [ ] Metrics Foundation・Dashboard Foundation（Workflow Monitor v2.9.0の判定結果・Execution History v2.8.0の履歴データ・Retry Engine v3.0.0の`RetryResult`・Retry Queue v3.1.0の`RetryQueueItem`を消費する側）
 - [ ] `CANCELLED`の正式な判定方法・`WAITING`の導入タイミング（Workflow Monitor v2.9.0で予約値として定義済み。Workflow Engine・Schedulerのデータモデル拡張が前提）
 - [ ] `scripts/run_retry_engine.py`（CLIエントリポイント）・Scheduler連携による定期自動再試行（Retry Engine v3.0.0では実装対象外。単発の`RetryManager.retry(run_id)`呼び出しのみ提供）
-- [ ] Retry Queue / Priority Queue・Retry History（再試行回数の永続化）・RetryDecision（Retry可否判定の専用コンポーネント化）・RetryReason Enum・Exponential Backoff・Adaptive Retry・Failure Classification・AI Retry Decision・Parallel/Distributed Retry・Circuit Breaker・Dead Letter Queue・Manual Retry UI・Notification（Retry Engine v3.0.0ではいずれも対象外。詳細は`docs/design/retry_engine_foundation.md` 11章 Future Extensions）
+- [x] Retry Queue：v3.1.0で実装済み（Queue管理のみ。`enqueue` / `dequeue` / `remove` / `list` / `exists` / `count`）
+- [ ] Retry QueueとRetry Engineの実配線（`RetryQueueManager.dequeue()`した項目に対して`RetryManager.retry()`を呼ぶ統合）・Retry Queueの永続化（SQLite/Redis）・`COMPLETED`/`FAILED`への到達（結果フィードバックAPI）・Priority Queueの効率化（heapqベース）・Dead Letter Queue（Retry Queue v3.1.0では対象外。詳細は`docs/design/retry_queue_foundation.md` 11章 Future Extension）
+- [ ] Retry History（再試行回数の永続化）・RetryDecision（Retry可否判定の専用コンポーネント化）・RetryReason Enum・Exponential Backoff・Adaptive Retry・Failure Classification・AI Retry Decision・Parallel/Distributed Retry・Circuit Breaker・Manual Retry UI・Notification（Retry Engine v3.0.0ではいずれも対象外。詳細は`docs/design/retry_engine_foundation.md` 11章 Future Extensions）
 
 ---
 

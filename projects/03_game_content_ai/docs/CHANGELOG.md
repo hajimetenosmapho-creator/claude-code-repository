@@ -19,6 +19,7 @@
 - **v1.10.0実装当時の状況**：`docs/design/analytics_foundation.md` の「Definition of Done」は全項目未チェック（`[ ]`）のままであり、実装当時に本当にテストがPASSしていたかを裏付ける記録は見つからなかった。実装当時の成否は不明。
 - **対応状況**：未修正。`src/`はv2.1.0（本ドキュメント整備リリース）の変更対象外のため、コード修正は行っていない
 - **今後の対応**：別リリースで`src/analytics/analytics_manager.py`側のディレクトリ作成漏れを調査・修正する想定
+- **2026-07-02追記（v3.1.0 Retry Queue Foundation 回帰確認時に再確認）**：より正確な原因を特定した。テスト内で保存先ファイル名が`"20260630_analytics.jsonl"`のように**日付をハードコード**して期待値としているが、実際に保存されるファイルは`datetime.now()`ベースの当日日付（例：`20260702_analytics.jsonl`）になるため、システム日付が`2026-06-30`を過ぎた時点でファイル名が一致せず`FileNotFoundError`になる（`logs/analytics/`サブディレクトリ自体は作成されている可能性がある）。Release 3.1（Retry Queue Foundation）はこの問題と無関係であり、本Releaseでは対応しない（Out of Scope）。対応は別リリースで検討する
 
 ### [KI-2] v2.6.0 Scheduler Agent Foundation のCHANGELOG記載漏れ（解消済み）
 
@@ -26,6 +27,41 @@
 - **症状**：commit `0d28d30`（v2.6.0 Scheduler Agent Foundation）にCHANGELOG.md / ROADMAP.mdへの記載が伴っていなかった
 - **対応状況**：解消済み。本ドキュメント整備作業（2026-07-02）で、実装済みコード（`src/scheduler/`配下・`tests/test_e2e_v2_6_0_scheduler_agent_foundation.py`）の内容を確認し、下記「[v2.6.0]」として遡及的に追記した
 - **今後の対応**：不要（本エントリで解消済み）
+
+---
+
+## [v3.1.0] - 2026-07-02 ★ Retry Queue Foundation
+
+### Added
+
+- `src/retry_queue/`（新規パッケージ）：再実行待ちの`run_id`を保持・出し入れするだけの最小基盤。Retry実行・Workflow Engine呼び出し・Retry Engine呼び出し・Workflow Monitor呼び出し・Execution History呼び出しはいずれも行わない
+  - `retry_queue_status.py`: `RetryQueueStatus`（`WAITING` / `PROCESSING` / `CANCELLED` / `COMPLETED` / `FAILED`の5値。`COMPLETED` / `FAILED`は将来拡張用の予約値で本Releaseの操作からは到達しない。`WorkflowMonitorStatus.CANCELLED` / `WAITING`の前例を踏襲）
+  - `retry_queue_item.py`: `RetryQueueItem`（`run_id` / `workflow_name` / `enqueue_time` / `priority` / `retry_attempt` / `status`。`frozen=True`にせず、`WorkflowMonitorRecord`と同様「Manager内部で書き換えられる記録」として設計）
+  - `retry_queue_result.py`: `RetryQueueOutcome`（`ENQUEUED` / `DEQUEUED` / `REMOVED` / `REJECTED` / `NOT_FOUND` / `EMPTY` / `DISABLED`の7値）、`RetryQueueResult`
+  - `retry_queue_config.py`: `RetryQueueConfig`（`RETRY_QUEUE_ENABLED`、デフォルト`true`。`RETRY_QUEUE_MAX_SIZE`、デフォルト`100`。`RETRY_QUEUE_DEFAULT_PRIORITY`、デフォルト`0`）
+  - `retry_queue_manager.py`: `RetryQueueManager`（`enqueue` / `dequeue` / `remove` / `list` / `exists` / `count` の6操作のみを提供。内部に`dict[str, RetryQueueItem]`を保持する）
+  - `null_retry_queue_manager.py`: `NullRetryQueueManager`（`RETRY_QUEUE_ENABLED=false`時のダミー実装。Charterで明示的にファイル分離が指定されているため、`retry_engine`の`NullRetryManager`（`retry_manager.py`に同居）とは異なり独立ファイルとした）
+- `tests/test_e2e_v3_1_0_retry_queue_foundation.py`新規作成（152件）
+- `docs/design/retry_queue_foundation.md`新規作成（Architecture Design。Project Charterはチャット上で提示された内容をSource of Truthとし、別ファイル化は本Releaseでは行っていない）
+
+### Note
+
+- **Queue管理（出し入れ）のみを責務とする。** Retry可否判定・Retry実行はいずれも行わない（それらは`RetryPolicy` / `RetryManager`の責務のまま）
+- **`src/retry_queue/`は他のどの`src/*`パッケージもimportしない、標準ライブラリのみに依存する独立した葉パッケージ。** `workflow_engine` / `workflow_monitor` / `retry_engine` / `execution_history` / `ai` / `pipeline` / `scheduler`のいずれも呼び出さない。Retry Engine（`workflow_engine` / `workflow_monitor`の2パッケージに依存）よりもさらに徹底した独立性を持つ
+- `dequeue()`は`priority`昇順（数値が小さいほど高優先。Unix `nice`と同じ向き）・`enqueue_time`昇順で先頭の項目を取り出す。取り出された項目は`status=PROCESSING`に更新された上でQueueから削除される（以後`list()` / `exists()` / `count()`には現れない）
+- `remove()`で取り消された項目は`status=CANCELLED`に更新された上でQueueから削除される
+- `enqueue()`は重複`run_id`・容量超過（`RETRY_QUEUE_MAX_SIZE`）のいずれも例外ではなく`RetryQueueResult(outcome=REJECTED)`で表現する（業務上想定される分岐は例外を投げない方針。`retry_engine`と同じ）
+- 呼び出し元へ返す`RetryQueueItem`は常にコピー（`dataclasses.replace()`）であり、呼び出し元が書き換えても内部ストアには影響しない
+- **`RETRY_QUEUE_ENABLED`のデフォルトは`true`**（`RETRY_ENGINE_ENABLED`のデフォルト`false`とは異なる判断）。Queue操作（enqueue/dequeue/remove/list/exists/count）はプロセス内メモリ上の`dict`を読み書きするだけで外部副作用を一切伴わないため、`EXECUTION_HISTORY_ENABLED` / `WORKFLOW_MONITOR_ENABLED`（読み取り中心、デフォルト`true`）と同じ分類とした
+- Retry Queue自身はファイル・DBへの書き込みを一切行わない（完全にin-memory。プロセスが終了するとQueueの内容は失われる。永続化はOut of Scope）
+- **本Releaseでは`RetryQueueManager`と`RetryManager`（Retry Engine）の実配線は行っていない。** `src/retry_queue/`はどのパッケージからもimportされない、消費者不在のまま先行リリースされるFoundation層（`WorkflowMonitorManager`・v2.9.0と同型のパターン）
+- 対象外：Retry Engineとの実配線・Scheduler連携・Queue永続化（SQLite/Redis）・`COMPLETED` / `FAILED`への到達（結果フィードバックAPI）・Priority Queueの効率化（heapqベース）・Dead Letter Queue・Notification・Dashboard/API/UI（いずれも将来Release候補）
+
+### Tested
+
+- `tests/test_e2e_v3_1_0_retry_queue_foundation.py`: 152/152 PASS
+- 既存回帰確認：`v2.0.0`（118/118 PASS）・`v2.2.0`（120/120 PASS）・`v2.3.0`（110/110 PASS）・`v2.4.0`（120/120 PASS）・`v2.5.0`（118/118 PASS）・`v2.6.0`（118/118 PASS）・`v2.7.0`（163/163 PASS）・`v2.8.0`（182/182 PASS）・`v2.9.0`（103/103 PASS）・`v3.0.0`（130/130 PASS）・`v1.20.0`（170/170 PASS）
+- `v1.10.0`（Analytics Foundation）は`[KI-1]`（既知の問題。日付ハードコードによるテスト不具合、Release 3.1とは無関係）によりFAIL。本Releaseのcommit対象には含めない
 
 ---
 

@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-02（v3.1.0 — Retry Queue層を追記。再実行待ちの`run_id`を保持・出し入れするだけの新規パッケージ`src/retry_queue/`の設計判断、他のどの`src/*`パッケージもimportしない独立した葉パッケージであること、Retry Engineとの実配線は本Releaseでは未実施であることを明記）  
 更新日：2026-07-02（v3.0.0 — Retry Engine層を追記。Workflow Monitorの公開APIのみを読み取り、Workflow Engineの公開APIのみを通じて再実行を依頼する新規パッケージ`src/retry_engine/`の設計判断、`retry_engine → workflow_engine` / `retry_engine → workflow_monitor`の一方向依存を明記）  
 更新日：2026-07-02（v2.9.0 — Workflow Monitor層を追記。Execution Historyを唯一の情報源（Single Source of Truth）としてWorkflowの実行状態を判定するだけの新規パッケージ`src/workflow_monitor/`の設計判断、`workflow_monitor → execution_history`の一方向依存を明記）  
 更新日：2026-07-02（v2.8.0 — Execution History層を追記。Workflow Engineが実行したWorkflowの観測・記録を担う新規パッケージ`src/execution_history/`の設計判断、`workflow_engine → execution_history`の一方向依存を明記）  
@@ -652,6 +653,63 @@ NewsAgent → ReviewTriggerAgent → PublishTriggerAgent      logs/execution_his
 
 ### 本Releaseの対象外
 
-Retry Queue / Priority Queue・Retry History（再試行回数の永続化）・RetryDecision（Retry可否判定の専用コンポーネント化）・RetryReason Enum・Exponential Backoff・Adaptive Retry・Failure Classification・AI Retry Decision・Parallel/Distributed Retry・Circuit Breaker・Dead Letter Queue・Manual Retry UI・Notification・Metrics/Dashboard・CLIエントリスクリプト（`scripts/run_retry_engine.py`）は、いずれもv3.0.0の対象外であり、将来Releaseで検討する。
+Retry Queue / Priority Queue・Retry History（再試行回数の永続化）・RetryDecision（Retry可否判定の専用コンポーネント化）・RetryReason Enum・Exponential Backoff・Adaptive Retry・Failure Classification・AI Retry Decision・Parallel/Distributed Retry・Circuit Breaker・Dead Letter Queue・Manual Retry UI・Notification・Metrics/Dashboard・CLIエントリスクリプト（`scripts/run_retry_engine.py`）は、いずれもv3.0.0の対象外であり、将来Releaseで検討する。Retry Queueはv3.1.0で実装した（下記参照）。
 
 詳細は`docs/design/retry_engine_foundation.md`（Project Charter・Architecture Design）を参照。
+
+---
+
+## Retry Queue層（`src/retry_queue/`、v3.1.0 追加）
+
+再実行待ちの`run_id`を保持・出し入れするだけの最小基盤。Queue管理（`enqueue` / `dequeue` / `remove` / `list` / `exists` / `count`）のみを責務とし、Retry実行・Workflow Engine呼び出し・Retry Engine呼び出し・Workflow Monitor呼び出し・Execution History呼び出しはいずれも行わない。
+
+```
+Scheduler        （判断、v2.6.0、無改修）
+   │
+Workflow Engine    （実行、v2.7.0、無改修）
+   │
+Execution History（記録、v2.8.0、無改修）
+   │
+Workflow Monitor（状態判定、v2.9.0、無改修）
+   │
+Retry Engine（再実行判断・依頼、v3.0.0、無改修）
+   │
+   └── Retry Queue（Queue管理、v3.1.0） ★本Release
+```
+
+Retry Queueは概念上Retry Engineの補助コンポーネントとして位置づけられるが、本Releaseのスコープは「Queue管理のみ」であり、Retry Engineとの実際の配線（`RetryManager`が`RetryQueueManager`を呼び出す等）は行わない。そのため`src/retry_queue/`は本Release時点では**どのパッケージからも呼ばれない、独立したFoundation層**として先行実装される（`WorkflowMonitorManager`・v2.9.0が実呼び出し元を持たないまま先行リリースされた前例と同型のパターン）。
+
+### 責務の境界（原則）
+
+- **Queue管理（出し入れ）のみを責務とする。** Retry可否判定・Retry実行はいずれも行わない（それらは`RetryPolicy` / `RetryManager`の責務のまま。責務の混在を避ける）
+- **`retry_queue`は他のどの`src/*`パッケージもimportしない、標準ライブラリのみに依存する独立した葉パッケージ。** `workflow_engine` / `workflow_monitor` / `retry_engine` / `execution_history` / `ai` / `pipeline` / `scheduler`のいずれも呼び出さない。Retry Engine（`workflow_engine` / `workflow_monitor`の2パッケージに依存）よりもさらに徹底した独立性を持つ
+- Queueへの出し入れの可否判定は「容量上限（`RETRY_QUEUE_MAX_SIZE`）」「`run_id`の重複」の2点のみ
+
+### Queue操作とライフサイクル（RetryQueueStatus）
+
+| 操作 | 遷移 | 備考 |
+|---|---|---|
+| `enqueue()` | （新規）→ `WAITING` | 重複`run_id`・容量超過時は登録せず`REJECTED`を返す |
+| `dequeue()` | `WAITING` → `PROCESSING` | `priority`昇順（数値が小さいほど高優先）・`enqueue_time`昇順で先頭を取り出し、Queueから削除する |
+| `remove()` | `WAITING` → `CANCELLED` | Queueから削除する |
+| ― | ― → `COMPLETED` / `FAILED` | 将来拡張用の予約値。実際の再実行結果をQueueへフィードバックする仕組み（Retry Engineとの連携）が必要だが本Releaseの対象外。`WorkflowMonitorStatus.CANCELLED` / `WAITING`が判定ロジックから到達しない予約値として定義されている前例を踏襲 |
+
+`dequeue()` / `remove()`で取り出された項目はQueueの内部ストア（`dict[str, RetryQueueItem]`）から削除され、以後`list()` / `exists()` / `count()`には現れない。呼び出し元へ返す`RetryQueueItem`は常にコピー（`dataclasses.replace()`）であり、呼び出し元が書き換えても内部ストアには影響しない。
+
+### Feature Gate
+
+デフォルトは有効（`RETRY_QUEUE_ENABLED=true`）。`RETRY_ENGINE_ENABLED`（デフォルト`false`）とは異なる判断であり、理由はRetry QueueのQueue操作（enqueue/dequeue/remove/list/exists/count）がいずれもプロセス内メモリ上の`dict`を読み書きするだけで、外部副作用（Workflowの再実行等）を一切伴わないためである。この性質は`EXECUTION_HISTORY_ENABLED` / `WORKFLOW_MONITOR_ENABLED`（いずれもデフォルト`true`、読み取り中心）と同じ分類に属すると判断した。
+
+### 永続化しない（Stateless の再定義）
+
+Retry Engineにおける「Stateless」は「Workflowの実行状態を自ら保持せず、毎回Workflow Monitorに問い合わせる」ことを意味していたが、Retry Queueはこの意味では成立しない（Queueに入っている項目を保持すること自体が本コンポーネントの責務であるため）。Retry Queueが保持するのは「再実行待ちの`run_id`とそのメタデータ」というQueue管理専用の状態のみであり、Workflowの実行結果・監視ステータス（`WorkflowMonitorStatus`）を独自に複製・キャッシュすることはない。Queueの内容はすべてプロセス内メモリ（`dict`）上にあり、ファイル・DBへの書き込みは一切行わない。プロセスが終了するとQueueの内容は失われる（永続化はOut of Scope）。
+
+### Retry Engineとの関係（本Releaseでは未配線）
+
+`RetryQueueManager`と`RetryManager`（Retry Engine、v3.0.0）の実際の配線（`RetryManager`が再実行対象を即座に実行するのではなく`RetryQueueManager.enqueue()`へ委ねる、または`dequeue()`した項目に対して`RetryManager.retry()`を呼ぶ、という統合）は本Releaseでは行っていない。`retry_engine` / `workflow_engine` / `workflow_monitor` / `execution_history`はいずれも無改修である。
+
+### 本Releaseの対象外
+
+Retry Engineとの実配線・Scheduler連携（定期的な`dequeue()`）・Queue永続化（SQLite/Redis）・`COMPLETED` / `FAILED`への到達（`mark_completed()` / `mark_failed()`相当の結果フィードバックAPI）・Priority Queueの効率化（`heapq`ベースへの差し替え）・Dead Letter Queue・Notification・Dashboard/API/UI・並行アクセス対応（スレッド安全性）は、いずれもv3.1.0の対象外であり、将来Releaseで検討する。
+
+詳細は`docs/design/retry_queue_foundation.md`（Architecture Design）を参照。
