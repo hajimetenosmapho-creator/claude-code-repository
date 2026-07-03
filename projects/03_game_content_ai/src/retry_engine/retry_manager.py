@@ -33,16 +33,35 @@ NullRetryManager: RETRY_ENGINE_ENABLED=false（デフォルト）、または下
     - （v3.2.0）src/retry_queue/ は本Releaseでも無改修。RetryManager は
       retry_queue パッケージの公開シンボル（__init__.py の __all__）のみを
       importする（同設計書6章）。
+
+    - （v3.8.0）RetryManager は RetryEventConsumer（retry_event_consumer、新設）を
+      Constructor Injection で保持できる（省略時は RetryEventConsumer() に
+      自動フォールバックする。RetryEventConsumerはConfig不要のStatelessな
+      コンポーネントであるため、v3.4.0の RetrySchedulerSource と同様に
+      「省略時は安全な実装へ自動フォールバックする」方式を採用する。
+      docs/design/retry_engine_event_consumption.md 13章 Design Decision #5）。
+    - （v3.8.0）recognize_retry_events() を新設し、
+      RetryEventConsumer.recognize_all() への薄い委譲のみを行う。
+      retry()（Retry実行）・enqueue_retry() / dequeue_retry()（Queue操作）とは
+      呼び出しグラフ上で完全に独立しており、認識結果を使って自動的に
+      何かを実行する処理はここにはない（自動実行はしない。同設計書9.2節）。
+    - （v3.8.0）RetryManager が scheduler パッケージへ依存する初めてのReleaseだが、
+      importするのは SchedulerEvent 型のみ（SchedulerEngine 等の実行系クラスは
+      importしない）。src/scheduler/ / src/retry_scheduler_decision/ /
+      src/retry_scheduler_source/ / src/retry_queue/ は本Releaseでも無改修
+      （同設計書3章）。
 """
 from __future__ import annotations
 
 from datetime import datetime
 
 from retry_queue import NullRetryQueueManager, RetryQueueManager, RetryQueueOutcome, RetryQueueResult
+from scheduler import SchedulerEvent
 from workflow_engine import NullWorkflowEngineManager, WorkflowEngineManager
 from workflow_monitor import NullWorkflowMonitorManager, WorkflowMonitorManager, WorkflowMonitorStatus
 
 from .retry_config import RetryConfig
+from .retry_event_consumer import RetryCandidateEvent, RetryEventConsumer
 from .retry_executor import RetryExecutor
 from .retry_policy import RetryPolicy
 from .retry_request import RetryRequest
@@ -63,11 +82,13 @@ class RetryManager:
         executor: RetryExecutor,
         monitor: WorkflowMonitorManager,
         queue: "RetryQueueManager | NullRetryQueueManager | None" = None,
+        event_consumer: RetryEventConsumer | None = None,
     ):
         self._policy = policy
         self._executor = executor
         self._monitor = monitor
         self._queue = queue if queue is not None else NullRetryQueueManager()
+        self._event_consumer = event_consumer if event_consumer is not None else RetryEventConsumer()
 
     @classmethod
     def from_config(
@@ -77,6 +98,7 @@ class RetryManager:
         workflow_engine_manager: "WorkflowEngineManager | NullWorkflowEngineManager",
         workflow_monitor_manager: "WorkflowMonitorManager | NullWorkflowMonitorManager",
         retry_queue_manager: "RetryQueueManager | NullRetryQueueManager | None" = None,
+        event_consumer: RetryEventConsumer | None = None,
     ) -> "RetryManager | NullRetryManager":
         """
         呼び出し元が構築済みの WorkflowEngineManager / WorkflowMonitorManager を
@@ -88,6 +110,10 @@ class RetryManager:
         retry_queue_manager は省略可能（デフォルト None）。省略した場合は
         RetryManager.__init__ 内で NullRetryQueueManager() にフォールバックするため、
         本引数を渡さない既存の呼び出しはすべて本Release前と同じ挙動になる。
+
+        event_consumer も省略可能（デフォルト None）。省略した場合は
+        RetryManager.__init__ 内で RetryEventConsumer() にフォールバックするため、
+        本引数を渡さない既存の呼び出しはすべて本Release前と同じ挙動になる（v3.8.0）。
         """
         if not retry_config.is_ready():
             return NullRetryManager()
@@ -100,6 +126,7 @@ class RetryManager:
             executor=executor,
             monitor=workflow_monitor_manager,
             queue=retry_queue_manager,
+            event_consumer=event_consumer,
         )
 
     def retry(self, run_id: str, attempt: int = 1, dry_run: bool = False) -> RetryResult:
@@ -154,6 +181,17 @@ class RetryManager:
         """
         return self._queue.dequeue()
 
+    def recognize_retry_events(self, events: list[SchedulerEvent]) -> list[RetryCandidateEvent]:
+        """
+        SchedulerEventのリストから、Retry候補由来のものだけを認識する。
+        RetryEventConsumer.recognize_all() への薄い委譲のみを行う。
+
+        retry()（Retry実行）・enqueue_retry() / dequeue_retry()（Queue操作）とは
+        呼び出しグラフ上で完全に独立している。認識結果（RetryCandidateEvent）を
+        使って自動的に何かを実行する処理はここにはない（自動実行はしない）。
+        """
+        return self._event_consumer.recognize_all(events)
+
     def _skip_reason(self, monitor_status: WorkflowMonitorStatus, attempt: int) -> str:
         if monitor_status not in self._policy.target_statuses:
             return (
@@ -196,3 +234,12 @@ class NullRetryManager:
     def dequeue_retry(self) -> RetryQueueResult:
         """enqueue_retry()と同じ理由でDISABLEDを返す（retry_queue側は一切呼び出さない）。"""
         return RetryQueueResult(outcome=RetryQueueOutcome.DISABLED, item=None, reason=self._DISABLED_REASON)
+
+    def recognize_retry_events(self, events: list[SchedulerEvent]) -> list[RetryCandidateEvent]:
+        """
+        RETRY_ENGINE_ENABLED=false（デフォルト）、または下位ゲートが閉じている場合でも、
+        認識処理自体はQueue操作・実行を一切伴わない副作用のない読み取りであるため、
+        DISABLEDという特別な結果型は用いず、常に空リストを返す
+        （「受け取れるが何もしない」）。RetryEventConsumerへの参照は保持しない。
+        """
+        return []

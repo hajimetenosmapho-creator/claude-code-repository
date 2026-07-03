@@ -22,12 +22,22 @@ Workflow Monitor（v2.9.0）が FAILED / TIMEOUT と判定したWorkflowを、Wo
       Workflow Monitor に問い合わせる。
     - RETRY_ENGINE_ENABLED=false（デフォルト）の場合はNullRetryManagerがすべて
       no-opで動作する。
+
+    - （v3.8.0）RetryManager が RetryEventConsumer（retry_event_consumer、新設）を
+      Constructor Injection で保持できるようになった（Retry Engine Event
+      Consumption）。recognize_retry_events() を通じて、Scheduler（v3.7.0）が
+      生成したRetry候補由来のSchedulerEventを認識できるが、認識のみで
+      実行判断・Queue操作には一切関与しない。src/scheduler/ /
+      src/retry_scheduler_decision/ / src/retry_scheduler_source/ /
+      src/retry_queue/ はいずれも本Releaseでも無改修
+      （詳細は docs/design/retry_engine_event_consumption.md）
 """
 from .retry_config import RetryConfig
 from .retry_policy import DEFAULT_TARGET_STATUSES, RetryPolicy
 from .retry_request import RetryRequest
 from .retry_result import RetryOutcome, RetryResult
 from .retry_executor import RetryExecutor
+from .retry_event_consumer import RetryCandidateEvent, RetryEventConsumer
 from .retry_manager import NullRetryManager, RetryManager
 
 __all__ = [
@@ -38,6 +48,8 @@ __all__ = [
     "RetryOutcome",
     "RetryResult",
     "RetryExecutor",
+    "RetryCandidateEvent",
+    "RetryEventConsumer",
     "RetryManager",
     "NullRetryManager",
 ]

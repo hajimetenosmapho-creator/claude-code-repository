@@ -68,6 +68,65 @@
 - **対応状況**：対応しない。v3.7.0のProject Charter / Architecture Design / Architecture Reviewで`evaluate()` / `run_due()`への統合（`retry_decision`が`None`でない場合にのみ出力が変わること）は正式に承認済みである。本質的な後方互換性の制約（`retry_decision=None`の場合に限り、本Release前とまったく同じ結果を返すこと）は、v3.7.0の新規テスト（`tests/test_e2e_v3_7_0_retry_scheduler_event_integration.py`のテスト1〜4）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`・`[KI-4]`と同じ扱い）
 - **今後の対応**：不要（本エントリで説明を確定）。将来Release（自動Retry実行等）で`evaluate()` / `run_due()`にさらに変更が入る場合も、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
 
+### [KI-7] v3.8.0でのRetry Engine Event Consumptionにより、v3.0.0〜v3.7.0の一部Architecture GuardがFAILする（設計上の意図的な差分）
+
+- **発見日**：2026-07-03（v3.8.0 Retry Engine Event Consumption Test工程実施時）
+- **対象と症状**：
+  - `tests/test_e2e_v3_0_0_retry_engine_foundation.py`（134/136 PASS）：テスト21「`retry_event_consumer.py` / `retry_manager.py`が`scheduler`をimportしない」が2件FAIL
+  - `tests/test_e2e_v3_1_0_retry_queue_foundation.py`（151/152 PASS）：テスト24「`src/retry_engine/retry_manager.py`に変更がない（`git diff`）」が1件FAIL
+  - `tests/test_e2e_v3_2_0_retry_queue_integration.py`（99/102 PASS）：テスト14「`src/retry_engine/__init__.py`に変更がない（`git diff`）」・テスト16「`retry_engine.__all__`が本Release前と同一」・テスト17「`from_config()`の第5引数が`retry_queue_manager`」の3件FAIL
+  - `tests/test_e2e_v3_3_0_retry_scheduler_integration.py`（69/72 PASS）：テスト18「`retry_manager.py` / `__init__.py`に変更がない（`git diff`）」2件FAIL（テスト17は`[KI-4]`の既存差分で本Releaseとは無関係）
+  - `tests/test_e2e_v3_4_0_retry_scheduler_wiring.py`（92/94 PASS）：テスト20「`retry_manager.py` / `__init__.py`に変更がない（`git diff`）」2件FAIL
+  - `tests/test_e2e_v3_5_0_retry_scheduler_decision.py`（69/72 PASS）：テスト19「`retry_manager.py` / `__init__.py`に変更がない（`git diff`）」2件FAIL（テスト18は`[KI-4]`の既存差分で本Releaseとは無関係）
+  - `tests/test_e2e_v3_6_0_retry_scheduler_decision_wiring.py`（100/104 PASS）：テスト24「`retry_manager.py` / `__init__.py`に変更がない（`git diff`）」2件FAIL（テスト16・17は`[KI-6]`の既存差分で本Releaseとは無関係）
+  - `tests/test_e2e_v3_7_0_retry_scheduler_event_integration.py`（72/74 PASS）：テスト21「`retry_manager.py` / `__init__.py`に変更がない（`git diff`）」2件FAIL
+- **原因**：v3.8.0（Retry Engine Event Consumption）で`src/retry_engine/`に`retry_event_consumer.py`を新規追加し、`retry_manager.py`（`event_consumer`引数・`recognize_retry_events()`追加）・`__init__.py`（新規シンボルexport）を変更した（`docs/design/retry_engine_event_consumption.md`）。これにより`retry_engine`パッケージが初めて`scheduler`パッケージ（`SchedulerEvent`型のみ）に依存するようになった。v3.0.0〜v3.7.0の各テストは「その時点で`retry_engine`が無改修だった／`scheduler`をimportしていなかった」という当時の事実をArchitecture Guardとして固定していたものであり、`[KI-3]`・`[KI-4]`と同種の既知差分である
+- **対応状況**：対応しない。v3.8.0のProject Charter / Architecture Design / Architecture Reviewで`retry_event_consumer.py`の新規追加・`retry_manager.py`の変更（`event_consumer`引数・`recognize_retry_events()`追加）・`__init__.py`の`__all__`更新はいずれも正式に承認済みである。本質的な制約（`scheduler` / `retry_scheduler_decision` / `retry_scheduler_source` / `retry_queue`のゼロ改修、`dequeue()` / `remove()` / Retry実行に到達しないこと、`retry_engine → scheduler`の依存が`SchedulerEvent`型のみに限定されること、`RetryManager` / `NullRetryManager`の既存4メソッドの後方互換性）は、v3.8.0の新規テスト（`tests/test_e2e_v3_8_0_retry_engine_event_consumption.py`、70件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`・`[KI-4]`・`[KI-6]`と同じ扱い）
+- **今後の対応**：不要（本エントリで説明を確定）。`git diff --quiet`ベースのチェック（v3.1.0テスト24・v3.2.0テスト14・v3.3.0〜v3.7.0の各`git diff`チェック）はコミット時点の差分を見る性質上、本Releaseをcommitすれば自然に解消する（`[KI-3]`・`[KI-4]`と同じ挙動）。一方、v3.0.0テスト21（`scheduler`非import確認）・v3.2.0テスト16（`__all__`不変確認）・テスト17（`from_config()`第5引数確認）は`git diff`を使わない恒久的な静的検査であり、コミットの有無に関わらず本Release以降も成立しなくなる（`[KI-4]`2026-07-03追記のv3.3.0テスト17と同型）。将来Releaseで`retry_engine`側にさらに変更が入るたびに同様のFAILが起こりうるが、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
+
+---
+
+## [v3.8.0] - 2026-07-03 ★ Retry Engine Event Consumption
+
+### Added
+
+- `src/retry_engine/retry_event_consumer.py`（新規）：Scheduler（v3.7.0）が生成したRetry候補由来の`SchedulerEvent`を、Retry Engine側が受け取って認識するための最小コンポーネント
+  - `RETRY_JOB_ID_PREFIX = "retry:"`：`job_id`の予約プレフィックス定数（`scheduler_engine.py`のリテラルと値は同じだが、`retry_engine`側で独立して定数化。11章参照）
+  - `RetryCandidateEvent`（`frozen=True`の`dataclass`）：`run_id` / `candidate`（元の候補オブジェクトをそのまま保持、分解しない） / `source_event`（元の`SchedulerEvent`）の3フィールドのみを持つ軽量な認識結果
+  - `RetryEventConsumer`：`recognize(event)`（1件）・`recognize_all(events)`（複数件）の2メソッドのみを持つStatelessなコンポーネント。`job_id`が`"retry:"`で始まらないものは無視し、`"retry:"`で始まっていても`metadata["retry_candidate"]`が存在しない場合は防御的に無視する（例外を送出しない）
+- `src/retry_engine/retry_manager.py`（変更）：`RetryManager`が`RetryEventConsumer`をConstructor Injectionで保持できるようにし、以下を追加した
+  - `RetryManager.__init__` / `from_config()`に`event_consumer`引数（デフォルト`None`）を追加。省略時は`RetryEventConsumer()`に自動フォールバックする（`RetrySchedulerSource`と同じ「省略時は安全な実装へ自動フォールバックする」方式。`RetryEventConsumer`はConfig不要のStatelessなコンポーネントのため、`RetrySchedulerDecision`のような必須DIは採用しない）
+  - `recognize_retry_events(events) -> list[RetryCandidateEvent]`：`RetryEventConsumer.recognize_all()`への薄い委譲のみ。既存の`retry()` / `enqueue_retry()` / `dequeue_retry()`とは呼び出しグラフ上で完全に独立しており、認識結果を使って自動的に何かを実行する処理は持たない（自動実行はしない）
+  - `NullRetryManager`にも同名`recognize_retry_events(events)`を追加。`RetryEventConsumer`を一切構築・参照せず、常に空リスト`[]`を返す（「受け取れるが何もしない」）
+- `src/retry_engine/__init__.py`（変更）：`RetryCandidateEvent` / `RetryEventConsumer`を新規export。既存の9シンボルは維持
+- `tests/test_e2e_v3_8_0_retry_engine_event_consumption.py`新規作成（70件）
+- `docs/design/retry_engine_event_consumption_charter.md`新規作成（Project Charter、承認済み）
+- `docs/design/retry_engine_event_consumption.md`新規作成（Architecture Design。Architecture Review完了・**Approve with Minor Recommendations**、指摘事項2点を記録）
+
+### Note
+
+- **本Releaseは、v3.3.0〜v3.7.0までの「Scheduler側（発信側）」の統合とは異なり、初めて「Retry Engine側（受信側）」に手を入れるRelease。** `SchedulerEngine`（v3.7.0）が生成したRetry候補由来の`SchedulerEvent`を、`retry_engine`が受け取って認識できるようにする
+- **`retry_engine`が`scheduler`パッケージへ依存する初めてのReleaseだが、importするのは`SchedulerEvent`型のみ。** `SchedulerEngine` / `SchedulerManager`等の実行系クラスは一切importしない（`retry_event_consumer.py`のAST解析で構造的に確認済み）。`scheduler`側（逆方向）は本Releaseでも一切変更しない
+- **認識のみで、実行・Queue操作は一切行わない。** `RetryEventConsumer`・`recognize_retry_events()`のいずれも`RetryQueueManager.dequeue()` / `remove()`・`RetryManager.retry()`・`enqueue_retry()` / `dequeue_retry()`へ到達する経路を構造的に持たない（Spy・ASTの両方で確認済み）
+- **候補オブジェクトは分解せず`RetryCandidateEvent.candidate`にそのまま格納する。** v3.7.0 Design Decision #3（`metadata["retry_candidate"]`を分解しない方針）を受信側でも踏襲する。`candidate`の型は`Any`とし、`retry_engine`が`retry_queue`（`RetryQueueItem`）の内部構造に依存しないようにした
+- **Stateless。** `RetryEventConsumer`は内部状態を一切持たず、呼び出しごとに渡された`events`のみから結果を導出する。`RetryCandidateEvent`のキャッシュ・永続化は行わない
+- **Backward Compatibility を維持。** `RetryManager.__init__` / `from_config()`への`event_consumer`引数追加は末尾のデフォルト値付き引数のみであり、既存の`RetryManager(policy, executor, monitor)` / `RetryManager(policy, executor, monitor, queue=...)` / `RetryManager.from_config(...)`（新規引数を渡さない場合）は本Release後もまったく同じ結果になる。`retry()` / `enqueue_retry()` / `dequeue_retry()`（`RetryManager` / `NullRetryManager`とも）は1行も変更していない
+- **`scheduler` / `retry_scheduler_decision` / `retry_scheduler_source` / `retry_queue`はいずれも本Releaseでも無改修。** 変更は`retry_engine`配下2ファイル（新規1・変更1）と`__init__.py`のみ
+- **`"retry:"`プレフィックスは`retry_engine`側で独立して定数化した（`scheduler`側は無改修のため重複定義）。** 将来`scheduler`側がこの文字列を公開定数化した場合、`retry_engine`側はそれを参照する形に置き換えられる余地を残す（Minor Recommendation、下記参照）
+- 対象外：認識結果（`RetryCandidateEvent`）を使った自動Retry実行・実運用のComposition Root（`SchedulerEngine.run_due()`の結果を実際に`RetryManager.recognize_retry_events()`へ渡して回す起動スクリプト）・`job_id`プレフィックス衝突の構造的な防止・`RetryCandidateEvent.candidate`の型安全な公開（いずれも将来Release候補。詳細は`docs/design/retry_engine_event_consumption_charter.md` 4章・10章、`docs/design/retry_engine_event_consumption.md` 11章）
+
+### Architecture Review Minor Recommendations（今後の課題として維持）
+
+- **`"retry:"`プレフィックスの重複定義**：`scheduler_engine.py`のリテラルと`retry_event_consumer.py`の`RETRY_JOB_ID_PREFIX`が同じ値を独立に持つ。どちらか一方だけを変更すると認識が壊れるサイレントな結合が生じる。次Release以降で`scheduler`側の公開定数化を検討する余地がある
+- **`RetryCandidateEvent.candidate`が`Any`型であること**：型安全性は犠牲になるが、`retry_engine`が`retry_queue`の内部構造（`RetryQueueItem`のフィールド）に依存しないための意図的な選択。将来、認識結果を実際に消費する側（自動Retry実行）が現れた時点で、必要な型情報をどこまで公開するか再設計を推奨する
+
+### Tested
+
+- `tests/test_e2e_v3_8_0_retry_engine_event_consumption.py`: 70/70 PASS
+- 既存回帰確認：`v2.6.0`（118/118）・`v2.7.0`（163/163）・`v2.8.0`（182/182）・`v2.9.0`（103/103）全PASS
+- `v3.0.0`（134/136）・`v3.1.0`（151/152）・`v3.2.0`（99/102）・`v3.3.0`（69/72）・`v3.4.0`（92/94）・`v3.5.0`（69/72）・`v3.6.0`（100/104）・`v3.7.0`（72/74）：いずれも`[KI-7]`（本Releaseによる意図的な変更）を含む。うち`v3.3.0`のテスト17（`[KI-4]`）・`v3.5.0`のテスト18（`[KI-4]`）・`v3.6.0`のテスト16-17（`[KI-6]`）は本Releaseと無関係な既存差分
+- `v1.10.0`（Analytics Foundation）は`[KI-1]`（既知の問題、本Releaseと無関係）のため今回は実行対象外
+
 ---
 
 ## [v3.7.0] - 2026-07-03 ★ Retry Scheduler Event Integration
