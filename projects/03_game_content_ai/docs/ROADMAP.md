@@ -458,6 +458,22 @@
 
 ---
 
+## v3.7.0 — Retry Scheduler Event Integration（2026-07-03 完了）★ Release 2.0 続き
+
+- [x] Project Charter作成：`docs/design/retry_scheduler_event_integration_charter.md`（承認済み）
+- [x] Architecture Design確定：`docs/design/retry_scheduler_event_integration.md`（Architecture Review完了・Approve with Minor Recommendations、指摘事項2点を記録。ユーザー承認時のMinor Recommendation追記1件を含む）
+- [x] `src/scheduler/scheduler_engine.py`変更：`evaluate()` / `run_due()`が、`RetrySchedulerDecision`の選択結果（`select_candidates()`、v3.6.0）をRetry候補由来の`SchedulerEvent`として出力に含められるようになった（Additive方式。既存のJob判定ループ（`_match*()`系）は1行も変更せず、新設の`_build_retry_events(now, retry_limit)`が返すリストを`events.extend(...)`で追加連結するのみ）
+- [x] `retry_decision`が`None`の場合、`evaluate()` / `run_due()`はv3.6.0時点と完全に同一の結果を返す（後方互換性維持。`_build_retry_events()`が`select_candidates()`のv3.6.0ガード節へ委譲するのみで、新たな分岐を追加していないため）
+- [x] Retry候補由来の`SchedulerEvent`の`job_id`は`"retry:" + run_id`とする（`RetryQueueItem`に`job_id`相当のフィールドが存在しない問題への対処。`scheduler`は`retry_queue`を直接importせず、`run_id`という1属性への構造的な期待（Duck Typing）のみに依存する）
+- [x] `metadata`は候補オブジェクトを分解せず`{"retry_candidate": 候補オブジェクト}`としてそのまま格納する。`metadata["retry_candidate"]`は本Release（v3.7.0）ではin-memoryの観測用途に限定し、永続化・JSON serialization・外部I/O契約とはしない（ユーザー承認時のMinor Recommendation）
+- [x] Retry Engineの起動・`RetryQueueManager.dequeue()` / `remove()`の呼び出し・Retry Queueへの書き込み（永続化を含む）はいずれも行わない（`_build_retry_events()`が呼び出すのは読み取り専用の`select_candidates()`のみ）
+- [x] `retry_scheduler_decision` / `retry_scheduler_source` / `retry_queue` / `retry_engine`は本Releaseでも無改修
+- [x] `tests/test_e2e_v3_7_0_retry_scheduler_event_integration.py`新規作成（74件）
+- [x] E2Eテスト74/74 PASS、既存回帰（`v2.6.0` 118/118・`v3.4.0` 94/94・`v1.20.0` 170/170）PASS。`v3.6.0`は102/104 PASSで、2件FAILは`docs/CHANGELOG.md` `[KI-6]`（本Releaseによる意図的な変更。`retry_decision`ありの場合にRetry候補由来の`SchedulerEvent`が追加されるようになったため）
+- [ ] 生成された`SchedulerEvent`（Retry候補由来）を消費する仕組み（Retry Engine起動・Workflow Engine起動等）・自動Retry実行・`RetryQueueManager.dequeue()` / `remove()`の使用・`job_id`プレフィックス衝突の構造的な防止・`metadata["retry_candidate"]`の型安全な公開（永続化・外部公開が必要になった場合）：対象外（→ 将来Release候補。次の節参照）
+
+---
+
 ## v3.x 以降の候補（未着手）
 
 - [ ] Windows タスクスケジューラ等の外部スケジューラから `scripts/run_workflow_engine.py` を定時起動する実運用連携（Scheduler Engine自体の内部実装はv2.6.0で完了。OS側との実連携は未着手）
@@ -475,8 +491,11 @@
 - [ ] 実運用のComposition Root：`RetryQueueConfig.is_ready()`（`RETRY_QUEUE_ENABLED`）を参照して`RetrySchedulerSource` / `NullRetrySchedulerSource`を組み立て、`SchedulerEngine`・`RetrySchedulerDecision`へ渡す実際の起動スクリプト（例：`scripts/run_scheduler.py`）。v3.4.0・v3.5.0ではテストコードでの組み立て例のみ（詳細は`docs/design/retry_scheduler_wiring.md` 11章、`docs/design/retry_scheduler_decision.md` 11章 Future Extension）
 - [x] pending retryから「次に処理すべき候補」を選ぶロジック：v3.5.0で実装済み（`RetrySchedulerDecision.select_candidates()` / `select_next_candidate()`。`RetrySchedulerSource`の既存順序をそのまま活用し、独自の並べ替えは行わない）
 - [x] `RetrySchedulerDecision`と`SchedulerEngine`のConstructor Injectionによる接続：v3.6.0で実装済み（`SchedulerEngine`が`RetrySchedulerDecision`を外部から直接DIで保持し、`select_candidates()` / `select_next_candidate()`で読み取れる。`SchedulerEngine`自身は`RetrySchedulerDecision`を生成しない）
-- [ ] 選択結果を`evaluate()` / `run_due()`の判定ロジックへ組み込む統合：`RetrySchedulerDecision`の選択結果を使って`SchedulerEvent`を生成する等の統合（v3.6.0では`evaluate()` / `run_due()`を無改修に保つ方針のため意図的に対象外。詳細は`docs/design/retry_scheduler_decision_wiring_charter.md` 4章・`docs/design/retry_scheduler_decision_wiring.md` 11章）
-- [ ] 自動Retry実行：`RetrySchedulerDecision.select_next_candidate()` / `select_candidates()`で選ばれた候補を、`RetryQueueManager.dequeue()`で取り出し`RetryManager.retry()`へ渡す一連の自動化。`dequeue()` / `remove()`の使用もこの段階で初めて解禁される想定（Retry Scheduler Integration v3.3.0・Retry Scheduler Wiring v3.4.0・Retry Scheduler Decision v3.5.0ではいずれも意図的に対象外）
+- [x] 選択結果を`evaluate()` / `run_due()`の判定ロジックへ組み込む統合：v3.7.0で実装済み（Retry Scheduler Event Integration。`RetrySchedulerDecision`の選択結果を使ってRetry候補由来の`SchedulerEvent`をAdditive方式で生成する。既存Job判定ループは無変更、`retry_decision=None`時は既存動作と完全互換）
+- [ ] 自動Retry実行：`RetrySchedulerDecision.select_next_candidate()` / `select_candidates()`で選ばれた候補（v3.7.0では`SchedulerEvent`として観測可能になった）を、`RetryQueueManager.dequeue()`で取り出し`RetryManager.retry()`へ渡す一連の自動化。`dequeue()` / `remove()`の使用もこの段階で初めて解禁される想定（Retry Scheduler Integration v3.3.0・Retry Scheduler Wiring v3.4.0・Retry Scheduler Decision v3.5.0・Retry Scheduler Event Integration v3.7.0ではいずれも意図的に対象外）
+- [ ] Retry候補由来の`SchedulerEvent`（v3.7.0）を消費する仕組み：Retry Engine起動・Workflow Engine起動等、実際に候補を処理する統合（v3.7.0では`SchedulerEvent`を生成するところまでで意図的に対象外。詳細は`docs/design/retry_scheduler_event_integration_charter.md` 4章・`docs/design/retry_scheduler_event_integration.md` 11章）
+- [ ] `job_id`予約プレフィックス（`"retry:"`）の構造的な衝突防止：`SchedulerJob.job_id`が偶然同じプレフィックスを持つ場合の検証・防止（v3.7.0では慣習のみで構造的な強制なし。詳細は`docs/design/retry_scheduler_event_integration.md` 11章・13章 Design Decision #2）
+- [ ] `metadata["retry_candidate"]`の型安全な公開・永続化・JSON serialization対応：v3.7.0ではin-memoryの観測用途に限定（詳細は`docs/design/retry_scheduler_event_integration.md` 13章 Design Decision #3・11章）
 - [ ] Queueから取り出した項目の自動再実行・Scheduler連携（定期的な`dequeue()`処理）・Retry Queueの永続化（SQLite/Redis）・`COMPLETED`/`FAILED`への到達（結果フィードバックAPI）・Priority Queueの効率化（heapqベース）・Dead Letter Queue（Retry Queue Integration v3.2.0・Retry Scheduler Integration v3.3.0でも対象外。詳細は`docs/design/retry_queue_integration.md` / `docs/design/retry_scheduler_integration.md`）
 - [ ] Retry History（再試行回数の永続化）・RetryDecision（Retry可否判定の専用コンポーネント化）・RetryReason Enum・Exponential Backoff・Adaptive Retry・Failure Classification・AI Retry Decision・Parallel/Distributed Retry・Circuit Breaker・Manual Retry UI・Notification（Retry Engine v3.0.0ではいずれも対象外。詳細は`docs/design/retry_engine_foundation.md` 11章 Future Extensions）
 

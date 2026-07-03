@@ -59,6 +59,51 @@
 - **対応状況**：未修正。`git stash`でv3.6.0の変更（`src/scheduler/`配下2ファイルのみ）を一時退避したベースラインでも同数・同項目のFAILが再現することを確認済みであり、v3.6.0（`scheduler` / `retry_scheduler_decision`）とは無関係と判断した。対象パッケージ（`news_agent` / `workflow_trigger_agent` / `publish_trigger_agent` / `review_trigger_agent` / `workflow_engine`のCLIエントリスクリプト）はv3.6.0の変更対象外であり、本Releaseでの修正は行わない
 - **今後の対応**：別リリースで該当CLIスクリプト側（dry-run時のreturncode・標準出力メッセージ）を調査・修正する想定。原因はAPIキー未設定等の実行環境要因の可能性があるが、本Release時点では未特定
 
+### [KI-6] v3.7.0でのRetry Scheduler Event Integrationにより、v3.6.0の「retry_decision有無で結果完全一致」テスト2件がFAILする（設計上の意図的な差分）
+
+- **発見日**：2026-07-03（v3.7.0 Retry Scheduler Event Integration Test工程実施時）
+- **対象**：`tests/test_e2e_v3_6_0_retry_scheduler_decision_wiring.py`のテスト16（「retry_decision有無でevaluate()の結果が完全一致」）・テスト17（「retry_decision有無でrun_due()の結果が完全一致」）
+- **症状**：上記2件がFAILする（102/104 PASS）
+- **原因**：v3.6.0時点では`evaluate()` / `run_due()`が`retry_decision`の有無に関わらず常に同じ結果を返すことがArchitecture Guardとして固定されていた。v3.7.0（Retry Scheduler Event Integration）は、ユーザー指示「Retry候補を`SchedulerEvent`に反映する」を実現するため、`retry_decision`が注入されている場合に限り、Retry候補由来の`SchedulerEvent`を意図的に追加するようになった（Additive方式。`docs/design/retry_scheduler_event_integration.md` 13章 Design Decision #1）。したがって「有無で完全一致」という前提はv3.7.0以降成立しなくなる
+- **対応状況**：対応しない。v3.7.0のProject Charter / Architecture Design / Architecture Reviewで`evaluate()` / `run_due()`への統合（`retry_decision`が`None`でない場合にのみ出力が変わること）は正式に承認済みである。本質的な後方互換性の制約（`retry_decision=None`の場合に限り、本Release前とまったく同じ結果を返すこと）は、v3.7.0の新規テスト（`tests/test_e2e_v3_7_0_retry_scheduler_event_integration.py`のテスト1〜4）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`・`[KI-4]`と同じ扱い）
+- **今後の対応**：不要（本エントリで説明を確定）。将来Release（自動Retry実行等）で`evaluate()` / `run_due()`にさらに変更が入る場合も、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
+
+---
+
+## [v3.7.0] - 2026-07-03 ★ Retry Scheduler Event Integration
+
+### Added
+
+- `src/scheduler/scheduler_engine.py`（変更）：`evaluate()` / `run_due()`が、`RetrySchedulerDecision`の選択結果（`select_candidates()`、v3.6.0）をRetry候補由来の`SchedulerEvent`として出力に含められるようになった
+  - `evaluate(jobs, now, retry_limit=None)`：既存のJob判定ループは1行も変更せず、新設の`_build_retry_events(now, retry_limit)`が返すリストを`events.extend(...)`で追加連結する（Additive方式）
+  - `run_due(jobs, retry_limit=None)`：`evaluate()`への委譲は無変更。`retry_limit`をそのまま中継するのみ
+  - `_build_retry_events(now, retry_limit)`（新設、private）：`self.select_candidates(limit=retry_limit)`（v3.6.0）への委譲のみ。Retry候補ごとに`job_id="retry:" + run_id`・`execute_time=now`・`trigger_reason=REASON_RETRY_CANDIDATE_SELECTED`・`metadata={"retry_candidate": 候補オブジェクト}`という`SchedulerEvent`を生成する
+  - `REASON_RETRY_CANDIDATE_SELECTED`定数を追加
+- `src/scheduler/__init__.py`（変更）：モジュールdocstringにv3.7.0の変更点を追記のみ。`__all__`は無変更
+- `tests/test_e2e_v3_7_0_retry_scheduler_event_integration.py`新規作成（74件）
+- `docs/design/retry_scheduler_event_integration_charter.md`新規作成（Project Charter、承認済み）
+- `docs/design/retry_scheduler_event_integration.md`新規作成（Architecture Design。Architecture Review完了・**Approve with Minor Recommendations**、指摘事項2点を記録。ユーザー承認時のMinor Recommendation追記1件を含む）
+
+### Note
+
+- **既存のJob判定ループ（`_match*()`系）は1行も変更していない。** Retry候補の反映は、Job判定ループとは完全に独立した`_build_retry_events()`の結果を`events.extend()`で追加連結するだけのAdditive方式を採用した
+- **`retry_decision=None`の場合は既存動作と完全互換。** `_build_retry_events()`は`self.select_candidates()`（v3.6.0のガード節）への委譲のみで、`retry_decision`が`None`の場合は常に空リストを返す。新たな`None`チェックを`evaluate()`側に追加していないため、`retry_decision`省略時の出力はv3.6.0時点とまったく同一になる（後方互換性維持。v3.7.0新規テストのテスト1〜4で確認済み）
+- **`retry_decision`ありの場合、Retry候補が`SchedulerEvent`として追加されるため、v3.6.0の「結果完全一致」系テスト2件（テスト16・17）は既知差分となる。** これは`evaluate()` / `run_due()`への統合というv3.7.0の目的そのものによる意図的な差分であり、`[KI-6]`として記録した
+- **Retry Engineは起動しない。** `_build_retry_events()`が呼び出すのは`select_candidates()`（読み取り専用）のみで、`retry_engine`パッケージは一切importしない
+- **`RetryQueueManager.dequeue()` / `remove()`は使用しない。** `_build_retry_events()`から到達できる経路は`select_candidates()`のみで、Queueの状態を変更する操作へは構造的に到達できない
+- **Queueの更新・Retry Queueの永続化はいずれも行わない。** `SchedulerEngine`はRetry候補由来の`SchedulerEvent`を保持せず（Stateless）、呼び出しのたびに`select_candidates()`で再取得する
+- **`job_id`欠如問題への対処**：`RetryQueueItem`には`job_id`相当のフィールドが存在しないため、`run_id`属性に`"retry:"`という予約プレフィックスを付けた文字列を採用した。`scheduler`は`retry_queue`を直接importせず、`run_id`という1属性への構造的な期待（Duck Typing）のみに依存する
+- **`metadata["retry_candidate"]`は候補オブジェクトを分解せずそのまま格納する。** `metadata`のキーは`"retry_candidate"`の1つのみで、`workflow_name` / `priority`等を個別展開しない
+- **`metadata["retry_candidate"]`は本Release（v3.7.0）ではin-memoryの観測用途に限定する。** 永続化・JSON serialization（`RetryQueueItem`は`datetime` / Enumフィールドを含み標準の`json.dumps()`ではそのままシリアライズできない）・外部I/O契約とはしない（ユーザー承認時のMinor Recommendation）
+- 対象外：生成された`SchedulerEvent`（Retry候補由来）を消費する仕組み（Retry Engine起動・Workflow Engine起動等）・自動Retry実行・`job_id`プレフィックス衝突の構造的な防止・`metadata["retry_candidate"]`の型安全な公開（いずれも将来Release候補。詳細は`docs/design/retry_scheduler_event_integration_charter.md` 4章・10章、`docs/design/retry_scheduler_event_integration.md` 11章）
+
+### Tested
+
+- `tests/test_e2e_v3_7_0_retry_scheduler_event_integration.py`: 74/74 PASS
+- 既存回帰確認：`v2.6.0`（118/118）・`v3.4.0`（94/94）・`v1.20.0`（170/170）全PASS
+- `v3.6.0`（102/104 PASS）：2件FAILは`[KI-6]`（本Releaseによる意図的な変更。`retry_decision`ありの場合にRetry候補由来の`SchedulerEvent`が追加されるようになったため）
+- `v1.10.0`（Analytics Foundation）は`[KI-1]`（既知の問題、本Releaseと無関係）のため今回は実行対象外
+
 ---
 
 ## [v3.6.0] - 2026-07-03 ★ Retry Scheduler Decision Wiring
