@@ -47,6 +47,37 @@
 - **原因**：v3.4.0（Retry Scheduler Wiring）で`SchedulerEngine`が`RetrySchedulerSource` / `NullRetrySchedulerSource`をConstructor Injectionで保持できるようにし、`count_pending_retries()` / `list_pending_retries()`を追加した（`docs/design/retry_scheduler_wiring.md`）。これに伴い`src/scheduler/scheduler_engine.py`・`src/scheduler/__init__.py`（docstringのみ）が変更され、`retry_scheduler_source`が初めて`scheduler`パッケージから参照されるようになった。v2.7.0〜v3.3.0の各テストは「その時点でschedulerが無改修だった／retry_scheduler_sourceが誰からも参照されていなかった」という当時の事実をArchitecture Guardとして固定していたものであり、`[KI-3]`と同種の既知差分である
 - **対応状況**：対応しない。v3.4.0のProject Charter / Architecture Design / Architecture Reviewで`scheduler_engine.py`の変更（Constructor Injection追加・読み取り専用2メソッド追加）は正式に承認済みである。本質的な制約（`evaluate()` / `run_due()`の判定ロジック無変更、`retry_scheduler_source` / `retry_queue` / `retry_engine`のゼロ改修、dequeue/remove/Retry Engine起動が混入しないこと）は、v3.4.0の新規テスト（`tests/test_e2e_v3_4_0_retry_scheduler_wiring.py`、94件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`と同じ扱い）
 - **今後の対応**：不要（本エントリで説明を確定）。なお、これらの`git diff`チェックはコミット時点の差分を見る性質上、本Releaseをcommitすれば大部分は自然に解消する（`[KI-3]`が`retry_manager.py`のcommit後に非再現となったのと同じ挙動）。将来Releaseで`scheduler`側に変更が入るたびに同様のFAILが起こりうるが、その都度Charter/Design側で「どのファイルが変更対象として承認されているか」を確認すればよく、個別のFAILは許容する
+- **2026-07-03追記（v3.5.0 Retry Scheduler Decision Test工程実施時に再確認）**：`tests/test_e2e_v3_3_0_retry_scheduler_integration.py`のテスト17（「`retry_scheduler_source`を参照する既存ファイルが存在しない」）について、本チェックの性質を訂正する。テスト18（`git diff --quiet`ベース）は**コミット時点の差分**を見る性質上、v3.4.0のcommit後に自然解消したが、テスト17は`git diff`を使わず`src/`配下の全ファイルを走査して「`retry_scheduler_source`という文字列を含むファイルが1つも存在しないこと」を確認する**恒久的な静的検査**であり、v3.4.0で`scheduler_engine.py` / `scheduler/__init__.py`が`retry_scheduler_source`を参照するようになった時点で、コミットの有無に関わらず**恒久的に成立しなくなっていた**（v3.4.0時点でのFAILの記述時に「大部分は自然に解消する」とした「大部分」からテスト17は除外される）。v3.5.0（Retry Scheduler Decision）で新規追加した`src/retry_scheduler_decision/`が`retry_scheduler_source`の2人目の消費者として加わったことで、本チェックの実際値（FAILしたファイル一覧）に`retry_scheduler_decision/__init__.py` / `retry_scheduler_decision.py`が追加されたが、これは新規の不具合ではなく、v3.4.0時点で既に恒久化していた本項目の自然な延長である。`RetrySchedulerDecision`自体が`scheduler`等の既存ファイルから参照されない「消費者不在の先行実装」であることは、v3.5.0の新規テスト（`tests/test_e2e_v3_5_0_retry_scheduler_decision.py`のテスト18）で別途確認済み。新規Known Issue（`[KI-5]`）は追加せず、本エントリの説明補強で対応する
+
+---
+
+## [v3.5.0] - 2026-07-03 ★ Retry Scheduler Decision
+
+### Added
+
+- `src/retry_scheduler_decision/`（新規パッケージ）：`RetrySchedulerSource`（またはNullRetrySchedulerSource）が返す待機中の項目一覧から、「次に処理すべき候補」を選ぶだけの最小コンポーネント
+  - `retry_scheduler_decision.py`: `RetrySchedulerDecision`（`retry_source`をConstructor Injectionで**必須引数として**保持し、`select_candidates(limit)` / `select_next_candidate()`への薄い委譲のみを行う）
+  - `__init__.py`: `RetrySchedulerDecision`をexport
+- `tests/test_e2e_v3_5_0_retry_scheduler_decision.py`新規作成（72件）
+- `docs/design/retry_scheduler_decision_charter.md`新規作成（Project Charter、承認済み）
+- `docs/design/retry_scheduler_decision.md`新規作成（Architecture Design。Architecture Review完了・**Approve with Minor Recommendations**、指摘事項3点を記録）
+
+### Note
+
+- **`RetrySchedulerSource.list_pending_retries()`の既存順序（priority昇順・enqueue_time昇順）をそのまま活用し、独自の並べ替え・優先度計算は一切行わない。** `select_candidates(limit)`は`list_pending_retries(limit)`への1行委譲、`select_next_candidate()`は`select_candidates(limit=1)`の先頭要素（またはNone）を返す便利メソッド
+- **`retry_source`はデフォルト値を持たない必須引数とする。** `SchedulerEngine.__init__`の`retry_source`（デフォルト`None`）とは異なり、本コンポーネントにとって`retry_source`は唯一の実質的な入力であるため、省略時の安全な既定値という概念自体を持たない（`RetrySchedulerSource.__init__(queue)`がv3.3.0から必須引数であるのと同じ判断）
+- **Null Object Pattern（`NullRetrySchedulerDecision`）は採用しない。** プロジェクト全体で一貫している「実装クラス／Nullクラス」ペアからの意図的な逸脱。本コンポーネント自身には対応するFeature Gate/Config軸が存在せず、「無効化」は呼び出し元が`retry_source`に`NullRetrySchedulerSource()`を渡すことで既に完結している（その場合`select_candidates()`は常に`[]`、`select_next_candidate()`は常に`None`を返す）ため
+- **`SchedulerEngine`（`src/scheduler/`配下の全ファイル）は本Releaseでも無改修。** `retry_scheduler_decision`は`scheduler`を一切importせず、`scheduler`も本Releaseでは`retry_scheduler_decision`を一切importしない（相互に無関係）
+- **`retry_scheduler_source` / `retry_queue` / `retry_engine`はいずれも本Releaseでも無改修。** 新規の依存方向は`retry_scheduler_decision → retry_scheduler_source`の一方向のみ
+- **本Releaseでは`RetrySchedulerDecision`をどこからも呼び出さない。** `v3.3.0`の`RetrySchedulerSource`と同じ「消費者不在の先行実装」パターン
+- 対象外：`SchedulerEngine`との実配線・選択結果を使った実行（自動Retry実行）・`RetryQueueManager.dequeue()` / `remove()`の使用・Retry Engineの起動・Queueの永続化（いずれも将来Release候補。詳細は`docs/design/retry_scheduler_decision_charter.md` 4章・10章）
+
+### Tested
+
+- `tests/test_e2e_v3_5_0_retry_scheduler_decision.py`: 72/72 PASS
+- 既存回帰確認：`v2.0.0`（118/118）・`v2.2.0`（120/120）・`v2.3.0`（110/110）・`v2.4.0`（120/120）・`v2.5.0`（118/118）・`v2.6.0`（118/118）・`v2.7.0`（163/163）・`v2.8.0`（182/182）・`v2.9.0`（103/103）・`v3.0.0`（130/130）・`v3.1.0`（152/152）・`v3.2.0`（102/102）・`v3.4.0`（94/94）・`v1.20.0`（170/170）全PASS
+- `v3.3.0`（71/72 PASS）：1件FAILは`[KI-4]`の延長（2026-07-03追記参照。新規Known Issueは追加していない）
+- `v1.10.0`（Analytics Foundation）は`[KI-1]`（既知の問題、本Releaseと無関係）のため今回は実行対象外
 
 ---
 

@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-03（v3.5.0 — Retry Scheduler Decision層を追記。`RetrySchedulerSource`が返す既存順序（priority昇順・enqueue_time昇順）から「次に処理すべき候補」を選ぶだけの新規独立コンポーネント`RetrySchedulerDecision`の設計判断、`retry_scheduler_decision → retry_scheduler_source`の新規一方向依存、`SchedulerEngine`を含む既存パッケージが本Releaseでも無改修であること、プロジェクト内で初めてNull Object Patternを採用しない意図的な判断を明記）  
 更新日：2026-07-03（v3.4.0 — Retry Scheduler Wiring層を追記。`SchedulerEngine`が`RetrySchedulerSource` / `NullRetrySchedulerSource`（v3.3.0）をConstructor Injectionで保持し、`count_pending_retries()` / `list_pending_retries()`という判定サイクルとは独立した読み取り専用2メソッドを追加した設計判断、`scheduler → retry_scheduler_source`の新規一方向依存、`evaluate()` / `run_due()`の判定ロジックが無変更であること、`RetryQueueManager`を直接保持しない境界を明記）  
 更新日：2026-07-03（v3.3.0 — Retry Scheduler Integration層を追記。Retry Queueの状態をScheduler側の語彙で読み取る新規Adapterパッケージ`src/retry_scheduler_source/`の設計判断、`retry_scheduler_source → retry_queue`の新規一方向依存、`src/scheduler/` / `src/retry_queue/` / `src/retry_engine/`が本Releaseでも無改修であること、Feature Gate/Config/Managerパターンを追加せずNull Object Pattern（`RetrySchedulerSource` / `NullRetrySchedulerSource`）で有効/無効を表現する設計、本Releaseでは誰からも呼び出されない「消費者不在の先行実装」であることを明記）  
 更新日：2026-07-02（v3.2.0 — Retry Queue Integration層を追記。`RetryManager`が`RetryQueueManager`をDependency Injectionで保持し、`enqueue_retry()` / `dequeue_retry()`という薄い委譲メソッドで再実行対象をQueueへ登録・取得できるようにした設計判断、`retry_engine → retry_queue`の新規一方向依存、`src/retry_queue/`が本Releaseでも無改修であることを明記）  
@@ -939,7 +940,110 @@ retry_scheduler_source ──→ retry_queue（v3.3.0のまま、無改修）
 
 実運用のComposition Root（例：`scripts/run_scheduler.py`）・pending retryの参照結果を
 使った判断（`SchedulerEvent`への反映等）・自動Retry実行・`dequeue()` / `remove()`の使用・
-Queueの永続化は、いずれもv3.4.0の対象外であり、将来Releaseで検討する。
+Queueの永続化は、いずれもv3.4.0の対象外であり、将来Releaseで検討する
+（このうち「pending retryから次に処理すべき候補を選ぶロジック」はv3.5.0
+「Retry Scheduler Decision層」で実装された。次節参照。それ以外は引き続き対象外）。
 
 詳細は`docs/design/retry_scheduler_wiring_charter.md`（Project Charter）・
 `docs/design/retry_scheduler_wiring.md`（Architecture Design）を参照。
+
+---
+
+## Retry Scheduler Decision層（`src/retry_scheduler_decision/`、v3.5.0 追加）
+
+v3.4.0で`SchedulerEngine`が「読み取れる」ようになったRetry Queueの状態から、
+「次に処理すべき候補を選ぶ」という関心事を、新規独立コンポーネント
+`RetrySchedulerDecision`として切り出す。`SchedulerEngine`との実配線は行わず、
+候補を選ぶロジックの新設のみを範囲とする。
+
+```
+Scheduler（判断、v2.6.0 / v3.4.0、無改修）
+   │
+   ├── RetrySchedulerSource（Adapter、v3.3.0、無改修）
+   │        │
+   │        └── Retry Queue（v3.1.0、無改修）
+   │
+   └── RetrySchedulerDecision（新規、v3.5.0） ★本Release
+            │  ※本Releaseでは未接続。RetrySchedulerSourceを個別にDIで保持する
+            │    独立コンポーネントとして先行実装する
+            ▼
+      RetrySchedulerSource（同上と同じインスタンスを想定するが、
+                             SchedulerEngineとは独立した経路で保持される）
+```
+
+v3.4.0 Architecture Reviewで残した「`SchedulerEngine`に3つ目の異種責務（時刻判定・
+pending retry参照に続く判定/選択ロジック）が入る場合は責務分割を再検討する」という
+指摘を受け、`SchedulerEngine`にはこれ以上手を加えず、新規パッケージへ切り出した
+（`docs/design/retry_scheduler_decision_charter.md` 1章）。
+
+### 責務：候補選択のみ
+
+`RetrySchedulerDecision`は`RetrySchedulerSource.list_pending_retries()`が返す
+既存順序（priority昇順・enqueue_time昇順、`RetryQueueManager.list()`で整列済み）を
+そのまま活用し、独自の並べ替え・優先度計算は一切行わない。
+
+- `select_candidates(limit=None) -> list`：`list_pending_retries(limit)`への
+  1行委譲のみ
+- `select_next_candidate()`：`select_candidates(limit=1)`の先頭要素
+  （またはNone）を返す便利メソッド
+
+戻り値は`RetryQueueItem`（`retry_queue`の公開型）をそのまま返し、独自DTOへの変換は
+行わない。型ヒント上は無型の`list`とし、`retry_scheduler_decision → retry_scheduler_source`
+の一方向のみという依存方向を優先する。
+
+### Constructor Injectionを必須引数とする判断
+
+`retry_source`（`RetrySchedulerSource | NullRetrySchedulerSource`）はデフォルト値を
+持たない必須引数とする。`SchedulerEngine.__init__`の`retry_source`（デフォルト`None`
+→`NullRetrySchedulerSource()`フォールバック）とは異なり、`RetrySchedulerDecision`に
+とって`retry_source`は唯一の実質的な入力であり、省略時の安全な既定値という概念自体が
+存在しないため。`RetrySchedulerSource.__init__(queue)`（v3.3.0）が同じく必須引数で
+ある設計と一貫している。
+
+### Null Object Patternを採用しない判断
+
+プロジェクト全体では「実装クラス／Nullクラス」のペア（`RetryManager`/
+`NullRetryManager`、`RetryQueueManager`/`NullRetryQueueManager`、
+`RetrySchedulerSource`/`NullRetrySchedulerSource`等）が一貫しているが、
+`RetrySchedulerDecision`には対になる`NullRetrySchedulerDecision`を**作らない**。
+
+* 本コンポーネント自身には対応するFeature Gate/Config軸が存在しない
+* 「無効化」は、呼び出し元が`retry_source`に`NullRetrySchedulerSource()`を渡すことで
+  既に完結している（この場合`select_candidates()`は常に`[]`、
+  `select_next_candidate()`は常に`None`を返す）
+* Null Object Patternは、これまで「呼び出し元が持つFeature Gate的な判定の結果を、
+  コンポーネントの型として表現する」ために使われてきたが、本コンポーネントには
+  対応する判定軸がないため、機械的に適用しない
+
+これはプロジェクトの設計言語からの意図的な逸脱であり、`docs/design/retry_scheduler_decision.md`
+13章 Design Decision #2で詳細な根拠を記録している。
+
+### 依存関係
+
+```
+retry_scheduler_decision ──→ retry_scheduler_source（公開APIのみ：
+                              RetrySchedulerSource / NullRetrySchedulerSource）
+retry_scheduler_source   ──→ retry_queue（v3.3.0のまま、無改修）
+```
+
+`retry_scheduler_decision`は`scheduler` / `retry_queue` / `retry_engine`のいずれも
+直接importしない。`scheduler`側も本Releaseでは`retry_scheduler_decision`を一切
+importしない（相互に無関係。v3.4.0で新設された`SchedulerEngine`の`retry_source`
+とは別の独立した経路）。`SchedulerManager` / `SchedulerRepository` / `SchedulerJob` /
+`SchedulerEvent` / `SchedulerConfig`はいずれも無改修。新規Feature Gate・Configクラス・
+Managerパターン（`from_config()`等）はいずれも追加しない。
+
+### 消費者不在の先行実装（Foundation First）
+
+本Release時点では、`RetrySchedulerDecision`をどのパッケージからも呼び出さない。
+`WorkflowMonitorManager`（v2.9.0）・`RetryQueue`（v3.1.0）・`RetrySchedulerSource`
+（v3.3.0）が実呼び出し元を持たないまま先行リリースされた前例と同型のパターンである。
+
+### 本Releaseの対象外
+
+`SchedulerEngine`との実配線・選択結果を使った実行（自動Retry実行）・
+`RetryQueueManager.dequeue()` / `remove()`の使用・Retry Engineの起動・Queueの永続化は、
+いずれもv3.5.0の対象外であり、将来Releaseで検討する。
+
+詳細は`docs/design/retry_scheduler_decision_charter.md`（Project Charter）・
+`docs/design/retry_scheduler_decision.md`（Architecture Design）を参照。
