@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-03（v3.4.0 — Retry Scheduler Wiring層を追記。`SchedulerEngine`が`RetrySchedulerSource` / `NullRetrySchedulerSource`（v3.3.0）をConstructor Injectionで保持し、`count_pending_retries()` / `list_pending_retries()`という判定サイクルとは独立した読み取り専用2メソッドを追加した設計判断、`scheduler → retry_scheduler_source`の新規一方向依存、`evaluate()` / `run_due()`の判定ロジックが無変更であること、`RetryQueueManager`を直接保持しない境界を明記）  
 更新日：2026-07-03（v3.3.0 — Retry Scheduler Integration層を追記。Retry Queueの状態をScheduler側の語彙で読み取る新規Adapterパッケージ`src/retry_scheduler_source/`の設計判断、`retry_scheduler_source → retry_queue`の新規一方向依存、`src/scheduler/` / `src/retry_queue/` / `src/retry_engine/`が本Releaseでも無改修であること、Feature Gate/Config/Managerパターンを追加せずNull Object Pattern（`RetrySchedulerSource` / `NullRetrySchedulerSource`）で有効/無効を表現する設計、本Releaseでは誰からも呼び出されない「消費者不在の先行実装」であることを明記）  
 更新日：2026-07-02（v3.2.0 — Retry Queue Integration層を追記。`RetryManager`が`RetryQueueManager`をDependency Injectionで保持し、`enqueue_retry()` / `dequeue_retry()`という薄い委譲メソッドで再実行対象をQueueへ登録・取得できるようにした設計判断、`retry_engine → retry_queue`の新規一方向依存、`src/retry_queue/`が本Releaseでも無改修であることを明記）  
 更新日：2026-07-02（v3.1.0 — Retry Queue層を追記。再実行待ちの`run_id`を保持・出し入れするだけの新規パッケージ`src/retry_queue/`の設計判断、他のどの`src/*`パッケージもimportしない独立した葉パッケージであること、Retry Engineとの実配線は本Releaseでは未実施であることを明記）  
@@ -806,7 +807,7 @@ Retry Queue（v3.1.0）の状態（待機中の項目一覧・件数）を、Sch
 ```
 Scheduler          （判断、v2.6.0、無改修）
    │
-   │  ※本Releaseでは未接続
+   │  ※本Releaseでは未接続（この接続はv3.4.0 Retry Scheduler Wiring層で実装された。次節参照）
    ▼
 RetrySchedulerSource / NullRetrySchedulerSource（Adapter、v3.3.0） ★本Release
    │
@@ -861,16 +862,84 @@ retry_engine ──→ （本Releaseでは一切関与しない）
 
 ### 消費者不在の先行実装（Foundation First）
 
-本Release時点では、`RetrySchedulerSource` / `NullRetrySchedulerSource`をどのパッケージからも
-呼び出さない。`WorkflowMonitorManager`（v2.9.0）・`RetryQueue`（v3.1.0）が実呼び出し元を持た
-ないまま先行リリースされた前例と同型のパターンである。
+本Release（v3.3.0）時点では、`RetrySchedulerSource` / `NullRetrySchedulerSource`をどの
+パッケージからも呼び出さない。`WorkflowMonitorManager`（v2.9.0）・`RetryQueue`（v3.1.0）が
+実呼び出し元を持たないまま先行リリースされた前例と同型のパターンである。
+
+**この状態はv3.4.0（Retry Scheduler Wiring）で解消された。** `SchedulerEngine`が本層を
+Constructor Injectionで保持できるようになり、初めて呼び出し元を持った。詳細は次節
+「Retry Scheduler Wiring層」を参照。
 
 ### 本Releaseの対象外
 
 Scheduler本体（`SchedulerEngine.evaluate()` / `run_due()`）との実配線・Queueから取り出した
 項目の自動再実行（自動Retry実行）・`dequeue()` / `remove()`の使用・Queueの永続化・優先度付け
 アルゴリズムの高度化・CLIエントリスクリプトは、いずれもv3.3.0の対象外であり、将来Releaseで
-検討する。
+検討する（実配線はv3.4.0で実装された。次節参照。それ以外は引き続き対象外）。
 
 詳細は`docs/design/retry_scheduler_integration_charter.md`（Project Charter）・
 `docs/design/retry_scheduler_integration.md`（Architecture Design）を参照。
+
+---
+
+## Retry Scheduler Wiring層（`src/scheduler/`、v3.4.0 追加）
+
+v3.3.0で新設した`RetrySchedulerSource` / `NullRetrySchedulerSource`（Adapter）を、
+`SchedulerEngine`へ実際に接続するWiring。Schedulerの判定サイクルがRetry Queueの状態を
+**読み取れる**状態を作るところまでを範囲とし、読み取った結果を使って何かを実行する処理は
+一切追加しない。
+
+```
+Scheduler（判断、v2.6.0）
+   │
+   │  SchedulerEngine.__init__(clock, retry_source)  ★v3.4.0で新設
+   ▼
+RetrySchedulerSource / NullRetrySchedulerSource（Adapter、v3.3.0、無改修）
+   │
+   └── Retry Queue（Queue管理、v3.1.0、無改修）
+```
+
+### Constructor Injection と Backward Compatibility
+
+`SchedulerEngine.__init__`に`retry_source`引数（デフォルト`None`）を追加した。省略時は
+`NullRetrySchedulerSource()`にフォールバックする。これはv3.2.0の`RetryManager`が
+`RetryQueueManager`を同じ形でDIで受け取る設計と同一パターンであり、既存の
+`SchedulerEngine()` / `SchedulerEngine(clock=...)`呼び出しは本Release前とまったく同じ
+挙動になる。
+
+### 判定サイクルとは独立した読み取り専用メソッド
+
+`count_pending_retries()` / `list_pending_retries(limit=None)`を新設した。いずれも
+`RetrySchedulerSource`（またはNull版）への1行委譲のみで、加工・分岐・例外処理を持たない。
+`evaluate()` / `run_due()`（時刻ベースの判定・`SchedulerEvent`生成）は**1行も変更しておらず**、
+新設2メソッドを呼び出しても判定結果には一切影響しない。
+
+### RetryQueueManagerを直接保持しない境界
+
+`SchedulerEngine`は`RetryQueueManager`を直接保持しない。Retry Queueへは
+`RetrySchedulerSource`経由でのみ間接的に到達する（v3.3.0のAdapter境界を維持）。
+`dequeue()` / `remove()`に相当するメソッドは`RetrySchedulerSource` /
+`NullRetrySchedulerSource`のいずれにも存在しないため、`SchedulerEngine`からは構造的に
+呼び出せない（E2Eテストでスパイオブジェクトにより確認済み）。
+
+### 依存関係
+
+```
+scheduler              ──→ retry_scheduler_source（公開APIのみ：
+                            RetrySchedulerSource / NullRetrySchedulerSource）
+retry_scheduler_source ──→ retry_queue（v3.3.0のまま、無改修）
+```
+
+`scheduler`は`retry_queue` / `retry_engine`のいずれも直接importしない。`SchedulerManager` /
+`SchedulerRepository` / `SchedulerJob` / `SchedulerEvent` / `SchedulerConfig`はいずれも
+無改修。新規Feature Gate・Configクラス・Managerパターン（`from_config()`等）はいずれも
+追加しない。
+
+### 本Releaseの対象外
+
+実運用のComposition Root（例：`scripts/run_scheduler.py`）・pending retryの参照結果を
+使った判断（`SchedulerEvent`への反映等）・自動Retry実行・`dequeue()` / `remove()`の使用・
+Queueの永続化は、いずれもv3.4.0の対象外であり、将来Releaseで検討する。
+
+詳細は`docs/design/retry_scheduler_wiring_charter.md`（Project Charter）・
+`docs/design/retry_scheduler_wiring.md`（Architecture Design）を参照。

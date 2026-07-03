@@ -37,6 +37,47 @@
 - **対応状況**：対応しない。v3.2.0のProject Charter / Architecture Design / Architecture Reviewで`retry_manager.py`の変更は正式に承認済みである。本質的な制約である「`src/retry_queue/`配下の無改修」は、v3.1.0テストの残り151件（`retry_queue`パッケージ自体・その公開APIの挙動）と、v3.2.0の新規テスト（`test_e2e_v3_2_0_retry_queue_integration.py`のテスト14）の両方で別途確認済み。ユーザー確認の結果、v3.1.0テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした
 - **今後の対応**：不要（本エントリで説明を確定）。将来Releaseで`retry_engine`側に変更が入るたびに同様のFAILが起こりうるが、その都度Charter/Design側で「どのファイルが変更対象として承認されているか」を確認すればよく、個別のFAILは許容する
 
+### [KI-4] v3.4.0でのScheduler Wiringにより、v2.7.0〜v3.3.0の一部Architecture GuardがFAILする（設計上の既知差分）
+
+- **発見日**：2026-07-03（v3.4.0 Retry Scheduler Wiring Test工程実施時）
+- **対象**：
+  - `tests/test_e2e_v2_7_0_workflow_engine_foundation.py`〜`tests/test_e2e_v3_2_0_retry_queue_integration.py`（計6ファイル）：それぞれ1件ずつ、`src/scheduler/scheduler_engine.py`に変更がないことを確認する`git diff`チェック
+  - `tests/test_e2e_v3_3_0_retry_scheduler_integration.py`：3件（`src/scheduler/scheduler_engine.py` / `src/scheduler/__init__.py`に変更がないことを確認する`git diff`チェック2件、および`retry_scheduler_source`を参照する既存ファイルが存在しないことを確認するチェック1件）
+- **症状**：上記7ファイル・計9件のテストがFAILする（他はすべてPASS。v2.7.0は162/163、v2.8.0は181/182、v2.9.0は102/103、v3.0.0は129/130、v3.1.0は151/152、v3.2.0は101/102、v3.3.0は69/72）
+- **原因**：v3.4.0（Retry Scheduler Wiring）で`SchedulerEngine`が`RetrySchedulerSource` / `NullRetrySchedulerSource`をConstructor Injectionで保持できるようにし、`count_pending_retries()` / `list_pending_retries()`を追加した（`docs/design/retry_scheduler_wiring.md`）。これに伴い`src/scheduler/scheduler_engine.py`・`src/scheduler/__init__.py`（docstringのみ）が変更され、`retry_scheduler_source`が初めて`scheduler`パッケージから参照されるようになった。v2.7.0〜v3.3.0の各テストは「その時点でschedulerが無改修だった／retry_scheduler_sourceが誰からも参照されていなかった」という当時の事実をArchitecture Guardとして固定していたものであり、`[KI-3]`と同種の既知差分である
+- **対応状況**：対応しない。v3.4.0のProject Charter / Architecture Design / Architecture Reviewで`scheduler_engine.py`の変更（Constructor Injection追加・読み取り専用2メソッド追加）は正式に承認済みである。本質的な制約（`evaluate()` / `run_due()`の判定ロジック無変更、`retry_scheduler_source` / `retry_queue` / `retry_engine`のゼロ改修、dequeue/remove/Retry Engine起動が混入しないこと）は、v3.4.0の新規テスト（`tests/test_e2e_v3_4_0_retry_scheduler_wiring.py`、94件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`と同じ扱い）
+- **今後の対応**：不要（本エントリで説明を確定）。なお、これらの`git diff`チェックはコミット時点の差分を見る性質上、本Releaseをcommitすれば大部分は自然に解消する（`[KI-3]`が`retry_manager.py`のcommit後に非再現となったのと同じ挙動）。将来Releaseで`scheduler`側に変更が入るたびに同様のFAILが起こりうるが、その都度Charter/Design側で「どのファイルが変更対象として承認されているか」を確認すればよく、個別のFAILは許容する
+
+---
+
+## [v3.4.0] - 2026-07-03 ★ Retry Scheduler Wiring
+
+### Added
+
+- `src/scheduler/scheduler_engine.py`（変更）：`SchedulerEngine`が`RetrySchedulerSource` / `NullRetrySchedulerSource`（v3.3.0）をConstructor Injectionで保持できるようにし、以下2メソッドを追加した
+  - `count_pending_retries() -> int`：`RetrySchedulerSource.count_pending_retries()`への薄い委譲のみ
+  - `list_pending_retries(limit: int | None = None) -> list`：`RetrySchedulerSource.list_pending_retries()`への薄い委譲のみ
+- `SchedulerEngine.__init__`に`retry_source`引数（デフォルト`None`）を追加。省略時は`NullRetrySchedulerSource()`にフォールバックし、既存の`SchedulerEngine()` / `SchedulerEngine(clock=...)`呼び出しは無変更で動作する（後方互換性維持）
+- `src/scheduler/__init__.py`（変更）：モジュールdocstringにv3.4.0の変更点を追記のみ。`__all__`は無変更
+- `tests/test_e2e_v3_4_0_retry_scheduler_wiring.py`新規作成（94件）
+- `docs/design/retry_scheduler_wiring_charter.md`新規作成（Project Charter、承認済み）
+- `docs/design/retry_scheduler_wiring.md`新規作成（Architecture Design。Architecture Review完了・**Approve with Minor Recommendations**、指摘事項3点を記録）
+
+### Note
+
+- **`evaluate()` / `run_due()` / `_match*()`はいずれも無変更。** 判定サイクル（時刻ベースの判定・`SchedulerEvent`生成）には一切手を加えず、`count_pending_retries()` / `list_pending_retries()`という完全に独立した新規メソッドを追加する方式を採用した
+- **`SchedulerEngine`は`RetryQueueManager`を直接保持しない。** Retry Queueへは`RetrySchedulerSource`経由でのみ間接的に到達する（v3.3.0のAdapter境界を維持）。`dequeue()` / `remove()`に相当するメソッドは`RetrySchedulerSource` / `NullRetrySchedulerSource`のいずれにも存在しないため、`SchedulerEngine`からは構造的に呼び出せない
+- **`SchedulerManager`・新規Wrapperクラスは追加しない。** Constructor Injectionの受け口は`SchedulerEngine`に一本化した（Job CRUD責務の`SchedulerManager`とは責務が異なるため）
+- **新規Feature Gate・Configクラス・Managerパターンはいずれも追加しない。** 有効/無効は呼び出し元が`RetrySchedulerSource`（実体）と`NullRetrySchedulerSource`のどちらを構築するかによって決まる、v3.3.0から一貫した設計を踏襲する
+- **Retry Engineの起動・`dequeue()`・Retry Queueの更新・自動Retry実行・永続化はいずれも対象外。** 本Releaseは「Schedulerの判定サイクルがRetry Queueの状態を読み取れる」状態を作る接続（Wiring）のみを範囲とする（詳細は`docs/design/retry_scheduler_wiring_charter.md` 4章・8章）
+
+### Tested
+
+- `tests/test_e2e_v3_4_0_retry_scheduler_wiring.py`: 94/94 PASS
+- 既存回帰確認：`v2.0.0`（118/118）・`v2.2.0`（120/120）・`v2.3.0`（110/110）・`v2.4.0`（120/120）・`v2.5.0`（118/118）・`v2.6.0`（118/118）・`v1.20.0`（170/170）全PASS
+- `v2.7.0`（162/163）・`v2.8.0`（181/182）・`v2.9.0`（102/103）・`v3.0.0`（129/130）・`v3.1.0`（151/152）・`v3.2.0`（101/102）・`v3.3.0`（69/72）：各1〜3件のFAILは`[KI-4]`（本Releaseによる意図的な変更）を参照
+- `v1.10.0`（Analytics Foundation）は`[KI-1]`（既知の問題、本Releaseと無関係）のため今回は実行対象外
+
 ---
 
 ## [v3.3.0] - 2026-07-03 ★ Retry Scheduler Integration

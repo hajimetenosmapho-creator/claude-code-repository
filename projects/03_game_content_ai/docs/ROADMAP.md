@@ -409,6 +409,23 @@
 
 ---
 
+## v3.4.0 — Retry Scheduler Wiring（2026-07-03 完了）★ Release 2.0 続き
+
+- [x] Project Charter作成：`docs/design/retry_scheduler_wiring_charter.md`（承認済み）
+- [x] Architecture Design確定：`docs/design/retry_scheduler_wiring.md`（Architecture Review完了・Approve with Minor Recommendations、指摘事項3点を記録）
+- [x] `src/scheduler/scheduler_engine.py`変更：`SchedulerEngine`が`RetrySchedulerSource` / `NullRetrySchedulerSource`（v3.3.0）をConstructor Injectionで保持できるようにし、`count_pending_retries()` / `list_pending_retries()`を追加（いずれも`RetrySchedulerSource`への薄い委譲のみ。判定・加工は行わない）
+- [x] `SchedulerEngine.__init__`に`retry_source`引数（デフォルト`None`）を追加。省略時は`NullRetrySchedulerSource()`にフォールバックし、既存の`SchedulerEngine()` / `SchedulerEngine(clock=...)`呼び出しは無変更で動作する（後方互換性維持）
+- [x] `evaluate()` / `run_due()` / `_match*()`はいずれも無変更。判定サイクルとpending retryの参照は完全に独立したメソッドとして共存する
+- [x] `SchedulerEngine`は`RetryQueueManager`を直接保持しない。Retry Queueへは`RetrySchedulerSource`経由でのみ間接的に到達する（v3.3.0のAdapter境界を維持）
+- [x] `SchedulerManager`・新規Wrapperクラスは追加しない。Constructor Injectionの受け口は`SchedulerEngine`に一本化
+- [x] 新規Feature Gate・Configクラス・Managerパターンはいずれも追加しない。`src/scheduler/`は本Releaseでも新規ファイル追加なし（`scheduler_engine.py` / `__init__.py`の変更のみ）
+- [x] `src/retry_scheduler_source/` / `src/retry_queue/` / `src/retry_engine/`は本Releaseでも無改修
+- [x] `tests/test_e2e_v3_4_0_retry_scheduler_wiring.py`新規作成（94件）
+- [x] E2Eテスト94/94 PASS、既存回帰（`v2.0.0` 118/118・`v2.2.0` 120/120・`v2.3.0` 110/110・`v2.4.0` 120/120・`v2.5.0` 118/118・`v2.6.0` 118/118・`v1.20.0` 170/170）PASS。`v2.7.0`〜`v3.3.0`は`docs/CHANGELOG.md` `[KI-4]`（本Releaseによる意図的な変更）を参照
+- [ ] 実運用のComposition Root（例：`scripts/run_scheduler.py`）・pending retryの参照結果を使った判断・自動Retry実行・`dequeue()` / `remove()`の使用：対象外（→ 将来Release候補。次の節参照）
+
+---
+
 ## v3.x 以降の候補（未着手）
 
 - [ ] Windows タスクスケジューラ等の外部スケジューラから `scripts/run_workflow_engine.py` を定時起動する実運用連携（Scheduler Engine自体の内部実装はv2.6.0で完了。OS側との実連携は未着手）
@@ -422,8 +439,10 @@
 - [x] Retry Queue：v3.1.0で実装済み（Queue管理のみ。`enqueue` / `dequeue` / `remove` / `list` / `exists` / `count`）
 - [x] Retry QueueとRetry Engineの実配線：v3.2.0で実装済み（`RetryManager`が`RetryQueueManager`をDIで保持し、`enqueue_retry()` / `dequeue_retry()`で委譲。ただし`dequeue()`した項目を自動的に`RetryManager.retry()`へ渡す自動実行は引き続き対象外）
 - [x] Retry QueueとSchedulerの間のAdapter：v3.3.0で実装済み（`RetrySchedulerSource` / `NullRetrySchedulerSource`。`list()` / `count()`への薄い委譲のみで、Scheduler本体からはまだ呼ばれていない「消費者不在の先行実装」）
-- [ ] Scheduler本体（`SchedulerEngine.evaluate()` / `run_due()`）との実配線：`RetrySchedulerSource` / `NullRetrySchedulerSource`（v3.3.0）をSchedulerの判定サイクルへ実際に組み込む統合。「どちらのクラスを構築するか」（`RETRY_QUEUE_ENABLED`をどう参照するか等）の判定ロジックの置き場所を含めて次Release以降で検討する（詳細は`docs/design/retry_scheduler_integration.md` 11章 Future Extension）
-- [ ] 自動Retry実行：Scheduler本体との実配線を前提に、`RetrySchedulerSource.list_pending_retries()` / `count_pending_retries()`で検知した再実行待ち項目を、`RetryQueueManager.dequeue()`で取り出し`RetryManager.retry()`へ渡す一連の自動化。`dequeue()` / `remove()`の使用もこの段階で初めて解禁される想定（Retry Scheduler Integration v3.3.0では意図的に対象外）
+- [x] Scheduler本体（`SchedulerEngine.evaluate()` / `run_due()`）とのWiring：v3.4.0で実装済み（`SchedulerEngine`が`RetrySchedulerSource` / `NullRetrySchedulerSource`をConstructor Injectionで保持し、`count_pending_retries()` / `list_pending_retries()`で読み取れる。ただし`evaluate()` / `run_due()`の判定ロジック自体には組み込んでおらず、読み取れる状態を作っただけの「接続のみ」のRelease）
+- [ ] 実運用のComposition Root：`RetryQueueConfig.is_ready()`（`RETRY_QUEUE_ENABLED`）を参照して`RetrySchedulerSource` / `NullRetrySchedulerSource`を組み立て、`SchedulerEngine`へ渡す実際の起動スクリプト（例：`scripts/run_scheduler.py`）。v3.4.0ではテストコードでの組み立て例のみ（詳細は`docs/design/retry_scheduler_wiring.md` 11章 Future Extension）
+- [ ] pending retryの参照結果を使った判断：`count_pending_retries()` / `list_pending_retries()`の戻り値を使って`SchedulerEvent`を生成する等の統合（v3.4.0では意図的に対象外）
+- [ ] 自動Retry実行：`RetrySchedulerSource.list_pending_retries()` / `count_pending_retries()`で検知した再実行待ち項目を、`RetryQueueManager.dequeue()`で取り出し`RetryManager.retry()`へ渡す一連の自動化。`dequeue()` / `remove()`の使用もこの段階で初めて解禁される想定（Retry Scheduler Integration v3.3.0・Retry Scheduler Wiring v3.4.0ではいずれも意図的に対象外）
 - [ ] Queueから取り出した項目の自動再実行・Scheduler連携（定期的な`dequeue()`処理）・Retry Queueの永続化（SQLite/Redis）・`COMPLETED`/`FAILED`への到達（結果フィードバックAPI）・Priority Queueの効率化（heapqベース）・Dead Letter Queue（Retry Queue Integration v3.2.0・Retry Scheduler Integration v3.3.0でも対象外。詳細は`docs/design/retry_queue_integration.md` / `docs/design/retry_scheduler_integration.md`）
 - [ ] Retry History（再試行回数の永続化）・RetryDecision（Retry可否判定の専用コンポーネント化）・RetryReason Enum・Exponential Backoff・Adaptive Retry・Failure Classification・AI Retry Decision・Parallel/Distributed Retry・Circuit Breaker・Manual Retry UI・Notification（Retry Engine v3.0.0ではいずれも対象外。詳細は`docs/design/retry_engine_foundation.md` 11章 Future Extensions）
 
