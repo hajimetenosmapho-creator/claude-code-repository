@@ -39,6 +39,34 @@
 
 ---
 
+## [v3.3.0] - 2026-07-03 ★ Retry Scheduler Integration
+
+### Added
+
+- `src/retry_scheduler_source/`（新規パッケージ）：Retry Queue（v3.1.0）の状態（待機中の項目一覧・件数）を、Scheduler側の語彙で読み取るための最小Adapter
+  - `retry_scheduler_source.py`: `RetrySchedulerSource`（`RetryQueueManager`をConstructor Injectionで保持し、`list_pending_retries(limit)` / `count_pending_retries()`への薄い委譲のみを行う）、`NullRetrySchedulerSource`（`retry_queue`への参照を一切保持せず、常に`[]` / `0`を返すダミー実装。継承関係を持たないDuck Typingペア）
+  - `__init__.py`: `RetrySchedulerSource` / `NullRetrySchedulerSource`をexport
+- `tests/test_e2e_v3_3_0_retry_scheduler_integration.py`新規作成（72件）
+- `docs/design/retry_scheduler_integration_charter.md`新規作成（Project Charter、承認済み）
+- `docs/design/retry_scheduler_integration.md`新規作成（Architecture Design。Architecture Review完了・**Approve with Minor Recommendations**、指摘事項3点を反映済み）
+
+### Note
+
+- **Feature Gate・Configクラス・Managerパターン（`from_config()` / `from_env()`等の起動口）はいずれも追加しない。** プロジェクト全体で一貫しているNull Object Pattern（`RetryManager`/`NullRetryManager`、`RetryQueueManager`/`NullRetryQueueManager`等と同じ、継承なしのDuck Typingペア）を踏襲し、有効/無効は呼び出し元が`RetrySchedulerSource`（実体）と`NullRetrySchedulerSource`のどちらを構築するかによって決まる
+- **Constructor Injectionのみを採用。** `RetrySchedulerSource.__init__`は`RetryQueueManager`（実体）のみを受け取り、セッターインジェクション・Configからの再構築・ファクトリメソッドは持たない
+- **`list()` / `count()`（非破壊の読み取り専用API）のみを使用。** `RetryQueueManager.dequeue()` / `remove()`は一切呼び出さない（構造的にテストで確認済み）
+- **`src/scheduler/` / `src/retry_queue/` / `src/retry_engine/`はいずれも本Releaseでも無改修。** 新規の依存方向は`retry_scheduler_source → retry_queue`の一方向のみ（`NullRetrySchedulerSource`は`retry_queue`を一切importしない）
+- **本Releaseでは`RetrySchedulerSource` / `NullRetrySchedulerSource`をどこからも呼び出さない。** `src/scheduler/`（`SchedulerEngine` / `SchedulerManager` / `SchedulerJob` / `SchedulerEvent`）からの実配線は行わない。`v2.9.0`のWorkflowMonitorManager・`v3.1.0`のRetryQueueと同じ「消費者不在のまま先行実装するFoundation」パターンを踏襲する
+- 対象外：Scheduler本体（`SchedulerEngine.evaluate()` / `run_due()`）との実配線・Queueから取り出した項目の自動再実行（自動Retry実行）・`dequeue()` / `remove()`の使用・Queueの永続化・優先度付けアルゴリズムの高度化・CLIエントリスクリプト（いずれも将来Release候補。詳細は`docs/design/retry_scheduler_integration_charter.md` 4章・8章）
+
+### Tested
+
+- `tests/test_e2e_v3_3_0_retry_scheduler_integration.py`: 72/72 PASS
+- 既存回帰確認：`v2.0.0`（118/118）・`v2.2.0`（120/120）・`v2.3.0`（110/110）・`v2.4.0`（120/120）・`v2.5.0`（118/118）・`v2.6.0`（118/118）・`v2.7.0`（163/163）・`v2.8.0`（182/182）・`v2.9.0`（103/103）・`v3.0.0`（130/130）・`v3.1.0`（152/152）・`v3.2.0`（102/102）全PASS
+- `v1.10.0`（Analytics Foundation）は`[KI-1]`（既知の問題、本Releaseと無関係）のため今回は実行対象外
+
+---
+
 ## [v3.2.0] - 2026-07-02 ★ Retry Queue Integration
 
 ### Added

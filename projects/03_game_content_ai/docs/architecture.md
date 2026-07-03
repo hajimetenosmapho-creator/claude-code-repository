@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-03（v3.3.0 — Retry Scheduler Integration層を追記。Retry Queueの状態をScheduler側の語彙で読み取る新規Adapterパッケージ`src/retry_scheduler_source/`の設計判断、`retry_scheduler_source → retry_queue`の新規一方向依存、`src/scheduler/` / `src/retry_queue/` / `src/retry_engine/`が本Releaseでも無改修であること、Feature Gate/Config/Managerパターンを追加せずNull Object Pattern（`RetrySchedulerSource` / `NullRetrySchedulerSource`）で有効/無効を表現する設計、本Releaseでは誰からも呼び出されない「消費者不在の先行実装」であることを明記）  
 更新日：2026-07-02（v3.2.0 — Retry Queue Integration層を追記。`RetryManager`が`RetryQueueManager`をDependency Injectionで保持し、`enqueue_retry()` / `dequeue_retry()`という薄い委譲メソッドで再実行対象をQueueへ登録・取得できるようにした設計判断、`retry_engine → retry_queue`の新規一方向依存、`src/retry_queue/`が本Releaseでも無改修であることを明記）  
 更新日：2026-07-02（v3.1.0 — Retry Queue層を追記。再実行待ちの`run_id`を保持・出し入れするだけの新規パッケージ`src/retry_queue/`の設計判断、他のどの`src/*`パッケージもimportしない独立した葉パッケージであること、Retry Engineとの実配線は本Releaseでは未実施であることを明記）  
 更新日：2026-07-02（v3.0.0 — Retry Engine層を追記。Workflow Monitorの公開APIのみを読み取り、Workflow Engineの公開APIのみを通じて再実行を依頼する新規パッケージ`src/retry_engine/`の設計判断、`retry_engine → workflow_engine` / `retry_engine → workflow_monitor`の一方向依存を明記）  
@@ -793,3 +794,83 @@ v3.2.0の対象外であり、将来Releaseで検討する。
 
 詳細は`docs/design/retry_queue_integration_charter.md`（Project Charter）・
 `docs/design/retry_queue_integration.md`（Architecture Design）を参照。
+
+---
+
+## Retry Scheduler Integration層（`src/retry_scheduler_source/`、v3.3.0 追加）
+
+Retry Queue（v3.1.0）の状態（待機中の項目一覧・件数）を、Scheduler側の語彙で読み取るための
+最小Adapter。Schedulerが将来この層を通じて「再実行待ちの項目がある」ことを把握できるように
+するための土台であり、自動実行・実配線は行わない。
+
+```
+Scheduler          （判断、v2.6.0、無改修）
+   │
+   │  ※本Releaseでは未接続
+   ▼
+RetrySchedulerSource / NullRetrySchedulerSource（Adapter、v3.3.0） ★本Release
+   │
+   └── Retry Queue （Queue管理、v3.1.0、無改修）
+```
+
+### Adapter / Bridge パターン
+
+`RetrySchedulerSource`はSchedulerとRetry Queueの間に立つ変換層であり、Scheduler側（将来の
+呼び出し元）は`RetryQueueManager`の存在・内部データ構造・メソッド名を一切知る必要がない。
+`list_pending_retries(limit)` / `count_pending_retries()`という2メソッドのみを公開し、
+内部では`RetryQueueManager.list()` / `count()`への薄い委譲のみを行う（判定・加工は一切
+行わない）。将来`retry_queue`側のAPIが変化しても、影響は`RetrySchedulerSource`の内部実装に
+閉じる。
+
+### Null Object Pattern（Feature Gate / Config / Managerパターンは採用しない）
+
+本層はプロジェクト全体で一貫しているNull Object Pattern（`RetryManager`/`NullRetryManager`、
+`RetryQueueManager`/`NullRetryQueueManager`等、継承なしのDuck Typingペア）に合わせ、
+`RetrySchedulerSource`（実装クラス）／`NullRetrySchedulerSource`（ダミー実装）の2クラス
+構成とする。ただし他パッケージと異なり、`enabled`フラグ・Configクラス・`from_config()` /
+`from_env()`のような起動口は**持たない**。
+
+- `RetrySchedulerSource`は`RetryQueueManager`（実体）のみをConstructor Injectionで受け取る
+- 無効化したい場合、呼び出し元は`RetrySchedulerSource`を構築せず`NullRetrySchedulerSource()`
+  を選択する。`NullRetrySchedulerSource`は`retry_queue`パッケージへの参照を一切保持せず、
+  `list_pending_retries()`は常に`[]`、`count_pending_retries()`は常に`0`を返す
+- 「どちらのクラスを構築するか」の判定ロジック（Feature Gate相当の判断）は本パッケージの
+  責務ではなく、呼び出し元の責務とする（次節「本Releaseの対象外」参照）
+
+### Read Only（`dequeue()` / `remove()`は使用しない）
+
+`RetrySchedulerSource`は非破壊の読み取り専用API（`list()` / `count()`）のみを使用し、Queueの
+状態を変更する`dequeue()` / `remove()`は一切呼び出さない（E2Eテストでスパイオブジェクトに
+より構造的に確認済み）。
+
+### 依存関係
+
+```
+retry_scheduler_source ──→ retry_queue（公開APIのみ：RetryQueueManager / RetryQueueItem /
+                            list() / count()）
+    ※ NullRetrySchedulerSource は retry_queue を一切importしない
+
+retry_queue  ──→ （なし。標準ライブラリのみ、無改修）
+scheduler    ──→ （本Releaseでは retry_scheduler_source を含め、何も追加しない）
+retry_engine ──→ （本Releaseでは一切関与しない）
+```
+
+`src/scheduler/`（`SchedulerEngine` / `SchedulerManager` / `SchedulerJob` / `SchedulerEvent` /
+`SchedulerRepository` / `SchedulerConfig`）・`src/retry_queue/`・`src/retry_engine/`はいずれも
+本Releaseでも無改修である。循環importは発生しない。
+
+### 消費者不在の先行実装（Foundation First）
+
+本Release時点では、`RetrySchedulerSource` / `NullRetrySchedulerSource`をどのパッケージからも
+呼び出さない。`WorkflowMonitorManager`（v2.9.0）・`RetryQueue`（v3.1.0）が実呼び出し元を持た
+ないまま先行リリースされた前例と同型のパターンである。
+
+### 本Releaseの対象外
+
+Scheduler本体（`SchedulerEngine.evaluate()` / `run_due()`）との実配線・Queueから取り出した
+項目の自動再実行（自動Retry実行）・`dequeue()` / `remove()`の使用・Queueの永続化・優先度付け
+アルゴリズムの高度化・CLIエントリスクリプトは、いずれもv3.3.0の対象外であり、将来Releaseで
+検討する。
+
+詳細は`docs/design/retry_scheduler_integration_charter.md`（Project Charter）・
+`docs/design/retry_scheduler_integration.md`（Architecture Design）を参照。
