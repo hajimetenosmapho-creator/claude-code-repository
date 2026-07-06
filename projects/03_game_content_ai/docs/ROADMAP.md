@@ -525,6 +525,23 @@
 
 ---
 
+## v4.1.0 — Retry Queue Update Foundation（2026-07-06 完了）★ Release 2.0 続き
+
+- [x] Project Charter作成：`docs/design/retry_queue_update_foundation_charter.md`（承認済み）
+- [x] Architecture Design確定：`docs/design/retry_queue_update_foundation.md`（Architecture Review完了・Approve with Recommendations、指摘事項2点を記録）
+- [x] `src/retry_engine/retry_queue_update_decider.py`新規作成：`RetryManager.execute_dispatchable_retries()`（v4.0.0）が集約した`RetryExecutionResult`のリストを受け取り、各要素について対応するRetry Queue項目の更新先状態を判定する最小コンポーネント。`RetryQueueUpdateOutcome`（`COMPLETE` / `FAIL` / `NOOP`の3値Enum）・`RetryQueueUpdateDecision`（`execution_result` / `outcome` / `target_status` / `reason`の4フィールドを持つ`frozen dataclass`）・`RetryQueueUpdateDecider`（`decide()` / `decide_all()`の2メソッドのみを持つStatelessなコンポーネント）を追加
+- [x] **判定基準を「再実行が実際に実行されたか」（`RetryResult.outcome == RETRIED`）の1点に限定した。** `RETRIED`かつ`overall_success=True`は`COMPLETE`（→`RetryQueueStatus.COMPLETED`）、`RETRIED`かつ`overall_success=False`は`FAIL`（→`RetryQueueStatus.FAILED`）、`SKIPPED` / `NOT_FOUND` / `DISABLED`はいずれも`NOOP`（更新なし）に統一する安全側の設計を採用した
+- [x] `src/retry_engine/retry_manager.py`変更：`RetryManager`が`RetryQueueUpdateDecider`をConstructor Injectionで保持できるようにし、`decide_retry_queue_updates(events, dry_run=False) -> list[RetryQueueUpdateDecision]`を追加（`execute_dispatchable_retries()`への委譲→`RetryQueueUpdateDecider.decide_all()`への委譲、の2段階のみで完結する薄い委譲）。`queue_update_decider`引数省略時は自動フォールバックする（後方互換性維持）
+- [x] `NullRetryManager`にも同名`decide_retry_queue_updates(events, dry_run=False)`を追加。`RetryQueueUpdateDecider`を一切構築・参照せず、常に空リスト`[]`を返す（「受け取れるが何もしない」）
+- [x] `retry_queue`パッケージへの変更は一切不要だった。`RetryQueueStatus.COMPLETED` / `FAILED`はv3.1.0で既に予約値として定義済みであり、新しい状態値の追加すら不要。「更新しない」は`retry_engine`側の新規Enum（`NOOP`）と`target_status=None`の組み合わせで表現した
+- [x] `scheduler` / `retry_scheduler_decision` / `retry_scheduler_source` / `retry_queue` / `retry_event_consumer.py` / `retry_event_dispatcher.py` / `retry_execution_selector.py` / `retry_execution_coordinator.py`はいずれも本Releaseでも無改修
+- [x] `RetryQueueManager.remove()` / `dequeue()`の呼び出し・Queue永続化・判定結果をQueue内部ストアへ実際に反映する処理・Retry Policy・Retry Metricsはいずれも行わない（構造的にAST・Spyで確認済み）
+- [x] `tests/test_e2e_v4_1_0_retry_queue_update_foundation.py`新規作成（87件）。Minor Recommendation 1（`SKIPPED` / `NOT_FOUND` / `DISABLED`それぞれの独立した単体テスト）・Recommendation 2（SKIPPEDによるQueue滞留リスクのドキュメント化確認）を反映
+- [x] E2Eテスト87/87 PASS、既存回帰（`v1.9.0`〜`v2.9.0`）全PASS。`v3.0.0`（158/160）・`v3.1.0`（151/152）・`v3.2.0`（99/102）・`v3.3.0`（69/72）・`v3.4.0`（92/94）・`v3.5.0`（69/72）・`v3.6.0`（100/104）・`v3.7.0`（72/74）・`v3.8.0`（67/70）・`v3.9.0`（70/73）・`v4.0.0`（83/88）はいずれも`docs/CHANGELOG.md` `[KI-10]`（本Releaseによる意図的な変更）を含む
+- [ ] `RetryQueueManager.remove()`の解禁・`dequeue()`の本格実装・Queue永続化・Retry Policy・Retry Metrics・実運用のComposition Root・Scheduler側の変更：対象外（→ 将来Release候補。次の節参照）
+
+---
+
 ## v3.x 以降の候補（未着手）
 
 - [ ] Windows タスクスケジューラ等の外部スケジューラから `scripts/run_workflow_engine.py` を定時起動する実運用連携（Scheduler Engine自体の内部実装はv2.6.0で完了。OS側との実連携は未着手）
@@ -548,8 +565,8 @@
 - [x] **Retry Engine Event Dispatch**：`recognize_retry_events()`（v3.8.0）が返した`RetryCandidateEvent`をDispatch対象として整理する仕組み：v3.9.0で実装済み。`retry_engine`パッケージに`RetryEventDispatcher`を新設し、`RetryManager.dispatch_retry_events()`経由で`RetryDispatchEvent`（`candidate_event` / `dispatchable`）として整理できるようにした。`dispatchable`は`run_id`の非空判定のみに限定し、優先度・件数上限に基づく選別ロジックはあえて導入していない（次段階Retry Executionの検討事項として持ち越し）。整理のみで、実行・Queue操作はいずれも意図的に対象外のまま
 - [x] **Retry Execution Foundation**：Dispatchされた`RetryDispatchEvent`（`dispatchable=True`のもの）を対象に`RetryManager.retry()`を呼び出せる基盤：v4.0.0で実装済み。`retry_engine`パッケージに`RetryExecutionSelector`（判定：`dispatchable=True`の選別）・`RetryExecutionCoordinator`（実行：`retry_fn`呼び出しと結果集約）を新設し、`RetryManager.execute_dispatchable_retries()`経由で`RetryManager.retry()`を呼び出せるようになった。ただしQueueの読み取り（`dequeue()`によるRetry Queueからの取り出し）は行わず、`execute_dispatchable_retries()`に渡された`SchedulerEvent`（Dispatch対象）のみを入力とする「Foundation」に留まる
 - [ ] **自動Retry実行の実運用化（Composition Root）**：Scheduler（`SchedulerEngine.run_due()`）が生成した`SchedulerEvent`を、定期的に`RetryManager.execute_dispatchable_retries()`（v4.0.0）へ渡し続ける実際の起動スクリプト。v4.0.0時点ではテストコードでの呼び出し例のみ（`RetrySchedulerDecision.select_next_candidate()` / `select_candidates()`で選ばれた候補がv3.7.0で`SchedulerEvent`として観測可能・v3.8.0で`retry_engine`側から認識可能・v3.9.0でDispatch対象として整理可能・v4.0.0で`RetryManager.retry()`の呼び出しまで到達したが、これを継続的に回す実運用の起動導線は引き続き未着手）
-- [ ] **Retry Queue Update**：Retry実行の結果（成功・失敗）をRetry Queueへフィードバックする仕組み（`RetryQueueStatus.COMPLETED` / `FAILED`への到達。v3.1.0で予約値として定義済みだが、判定ロジックからは到達しない）。v4.0.0の`RetryExecutionResult`が`dispatch_event`（＝どのRetry候補由来か）を保持したまま返す設計にしているのは、本項目実装時に追加の突き合わせなしに対応するQueue項目を特定できるようにするためである（`docs/design/retry_execution_foundation.md` 12章 Future Extension）
-- [ ] **Retry Queue Removal**：`RetryQueueManager.dequeue()` / `remove()`の使用を解禁し、Retry Queueから実際に候補を取り出す・完了済み項目を除去する仕組み。v3.1.0〜v4.0.0では`dequeue()` / `remove()`いずれも呼び出されないことが構造的に確認されており（Spy・静的検査）、本項目で初めて解禁される想定
+- [x] **Retry Queue Update**：Retry実行の結果（成功・失敗）を、対応するRetry Queue項目がどの状態（`RetryQueueStatus.COMPLETED` / `FAILED`）へ更新されるべきか判定する仕組み：v4.1.0で実装済み（判定のみ。Queueへの実際の反映は次項「Retry Queue Removal」へ）。`retry_engine`パッケージに`RetryQueueUpdateDecider`を新設し、`RetryManager.decide_retry_queue_updates()`経由で`RetryExecutionResult`から`RetryQueueUpdateDecision`（`COMPLETE` / `FAIL` / `NOOP`）を判定できるようになった
+- [ ] **Retry Queue Removal**：`RetryQueueUpdateDecider`（v4.1.0）が判定した`RetryQueueUpdateDecision`を使って、実際に`RetryQueueManager.remove()`を呼び出し、Queueから該当項目を除去する仕組み。v3.1.0〜v4.1.0では`dequeue()` / `remove()`いずれも呼び出されないことが構造的に確認されており（Spy・静的検査）、本項目で初めて解禁される想定。あわせて、`NOOP`と判定された項目（特に`SKIPPED`＝`max_attempts`到達）が本Foundationでは除去する手段を持たず恒久的にQueueへ滞留し得るリスクへの対応（除去する／Dead Letter Queueへ回す等）を、本項目の最初の検討事項として扱う（`docs/design/retry_queue_update_foundation.md` 12章 Future Extension・16.3節 Recommendation 2）
 - [ ] **Retry Queue Persistence**：Retry Queueの永続化（SQLite/Redis等）。現状は完全にin-memoryで、プロセス終了とともにQueueの内容が失われる（v3.1.0 Retry Queue Foundationから継続する対象外項目）
 - [ ] **Retry Policy（選別基準の拡張）**：`RetryExecutionSelector`（v4.0.0）が行う`dispatchable=True`の選別に、優先度・件数上限に基づくロジックを追加する。v3.9.0・v4.0.0ではいずれも意図的に導入しておらず、`RetryExecutionSelector.select()`のみを拡張・置換すればよい設計としている（`RetryExecutionCoordinator` / `RetryManager`は無改修のまま拡張可能。`docs/design/retry_execution_foundation.md` 2章・12章）
 - [ ] **Retry Metrics / Monitoring**：Retry実行の成功率・試行回数分布・Queue滞留時間等を集計・可視化する仕組み。一般的な「Metrics Foundation・Dashboard Foundation」（本ファイル該当セクション参照）のRetry Engine向け具体化として、`RetryExecutionResult`（v4.0.0）・`RetryResult`（v3.0.0）・`RetryQueueItem`（v3.1.0）を消費する側に位置づける

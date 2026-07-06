@@ -53,6 +53,18 @@ Workflow Monitor（v2.9.0）が FAILED / TIMEOUT と判定したWorkflowを、Wo
       src/retry_scheduler_source/ / src/retry_queue/ / retry_event_consumer.py /
       retry_event_dispatcher.py はいずれも本Releaseでも無改修
       （詳細は docs/design/retry_execution_foundation.md）
+
+    - （v4.1.0）RetryManager が RetryQueueUpdateDecider（retry_queue_update_decider、
+      新設）を Constructor Injection で保持できるようになった（Retry Queue Update
+      Foundation）。decide_retry_queue_updates() を通じて、execute_dispatchable_retries()
+      （v4.0.0）が集約したRetryExecutionResultのそれぞれについて、対応するRetry Queue
+      項目の更新先状態（RetryQueueStatus.COMPLETED / FAILED、あるいは更新なし）を
+      判定できるが、判定のみで実際にQueueへ反映する処理（RetryQueueManager.remove()の
+      呼び出し等）には一切関与しない。src/scheduler/ / src/retry_scheduler_decision/ /
+      src/retry_scheduler_source/ / src/retry_queue/ / retry_event_consumer.py /
+      retry_event_dispatcher.py / retry_execution_selector.py /
+      retry_execution_coordinator.py はいずれも本Releaseでも無改修
+      （詳細は docs/design/retry_queue_update_foundation.md）
 """
 from .retry_config import RetryConfig
 from .retry_policy import DEFAULT_TARGET_STATUSES, RetryPolicy
@@ -63,6 +75,11 @@ from .retry_event_consumer import RetryCandidateEvent, RetryEventConsumer
 from .retry_event_dispatcher import RetryDispatchEvent, RetryEventDispatcher
 from .retry_execution_selector import RetryExecutionSelector
 from .retry_execution_coordinator import RetryExecutionCoordinator, RetryExecutionResult
+from .retry_queue_update_decider import (
+    RetryQueueUpdateDecider,
+    RetryQueueUpdateDecision,
+    RetryQueueUpdateOutcome,
+)
 from .retry_manager import NullRetryManager, RetryManager
 
 __all__ = [
@@ -80,6 +97,9 @@ __all__ = [
     "RetryExecutionSelector",
     "RetryExecutionCoordinator",
     "RetryExecutionResult",
+    "RetryQueueUpdateOutcome",
+    "RetryQueueUpdateDecision",
+    "RetryQueueUpdateDecider",
     "RetryManager",
     "NullRetryManager",
 ]

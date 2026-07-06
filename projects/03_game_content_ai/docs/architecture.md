@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-06（v4.1.0 — Retry Queue Update Foundation層を追記。`RetryManager.execute_dispatchable_retries()`（v4.0.0）が集約した`RetryExecutionResult`を対象に、対応するRetry Queue項目が`RetryQueueStatus.COMPLETED` / `FAILED`のどちらへ更新されるべきか（あるいは更新しないか）を判定する新規コンポーネント`RetryQueueUpdateDecider`を追加した設計判断。「再実行が実際に実行されたか」（`RetryResult.outcome == RETRIED`）を唯一の分岐点とし、`SKIPPED` / `NOT_FOUND` / `DISABLED`はいずれも`NOOP`（更新なし）に統一する判定方針、`RetryQueueManager.remove()`等への呼び出し経路を一切持たない境界、`retry_queue`パッケージへの変更が一切不要だった設計上の理由を明記）  
 更新日：2026-07-06（v4.0.0 — Retry Execution Foundation層を追記。`RetryEventDispatcher`（v3.9.0）が整理した`RetryDispatchEvent`のうち`dispatchable=True`のものだけを対象に、初めて`RetryManager.retry()`を呼び出せる基盤を追加した設計判断。判定（`RetryExecutionSelector`）と実行・結果集約（`RetryExecutionCoordinator`）を責務分離したコンポーネント構成、`dispatchable=true`を唯一の実行入口として1箇所に集約する設計、新規コンポーネントがRetry Queueへ一切依存しない境界、`retry_attempt`を`getattr`による緩いダックタイピング＋フォールバックで取得する暫定実装であることを明記。あわせて、v3.7.0〜v3.9.0（Retry Scheduler Event Integration・Retry Engine Event Consumption・Retry Engine Event Dispatch）の個別セクションが本ドキュメントに未追記のままだった既知のギャップを踏まえ、Retry Queueから`RetryManager.retry()`に至る現在の全体パイプラインを新セクションに一括して整理した）  
 更新日：2026-07-03（v3.6.0 — Retry Scheduler Decision Wiring層を追記。`SchedulerEngine`が`RetrySchedulerDecision`（v3.5.0）をConstructor Injectionで保持し、`select_candidates()` / `select_next_candidate()`という判定サイクルとは独立した読み取り専用2メソッドを追加した設計判断、`SchedulerEngine`自身は`RetrySchedulerDecision`を生成しないというユーザー承認済み方針、`retry_decision=None`時にガード節で`[]` / `None`を直接返す（Null Object Patternに依らない）フォールバック方式、`evaluate()` / `run_due()`の判定ロジックが無変更であることを明記）  
 更新日：2026-07-03（v3.5.0 — Retry Scheduler Decision層を追記。`RetrySchedulerSource`が返す既存順序（priority昇順・enqueue_time昇順）から「次に処理すべき候補」を選ぶだけの新規独立コンポーネント`RetrySchedulerDecision`の設計判断、`retry_scheduler_decision → retry_scheduler_source`の新規一方向依存、`SchedulerEngine`を含む既存パッケージが本Releaseでも無改修であること、プロジェクト内で初めてNull Object Patternを採用しない意図的な判断を明記）  
@@ -1277,3 +1278,87 @@ Releaseで検討する（`docs/ROADMAP.md`「v3.x 以降の候補」参照）。
 
 詳細は`docs/design/retry_execution_foundation_charter.md`（Project Charter）・
 `docs/design/retry_execution_foundation.md`（Architecture Design）を参照。
+
+---
+
+## Retry Queue Update Foundation層（`src/retry_engine/`、v4.1.0 追加）
+
+`RetryExecutionSelector`（v4.0.0）・`RetryExecutionCoordinator`（v4.0.0）が
+集約した`RetryExecutionResult`を対象に、対応するRetry Queue項目が
+`RetryQueueStatus.COMPLETED` / `FAILED`（v3.1.0で予約値として定義済み）の
+どちらへ更新されるべきかを判定する新規コンポーネント`RetryQueueUpdateDecider`
+を追加した。
+
+```
+RetryManager
+   │
+   ├── decide_retry_queue_updates(events, dry_run=False)  ★新設
+   │      1. self.execute_dispatchable_retries(events, dry_run=dry_run)（v4.0.0、無変更）
+   │      2. self._queue_update_decider.decide_all(execution_results)
+   │
+   └── RetryQueueUpdateDecider（判定）
+          + decide(execution_result) -> RetryQueueUpdateDecision
+          + decide_all(execution_results) -> list[RetryQueueUpdateDecision]
+          RetryQueueManager等への参照を一切持たない、コンストラクタ引数ゼロの
+          完全に無状態なコンポーネント
+
+RetryQueueUpdateDecision
+   + execution_result: RetryExecutionResult（v4.0.0、分解しない）
+   + outcome: RetryQueueUpdateOutcome（COMPLETE / FAIL / NOOP、★新設）
+   + target_status: RetryQueueStatus | None（v3.1.0、分解しない）
+   + reason: str
+```
+
+### 判定方針
+
+「再実行が実際に実行されたか」（`RetryResult.outcome == RETRIED`）を唯一の
+分岐点とする。
+
+| `RetryResult`の状態 | 判定結果 | `target_status` |
+|---|---|---|
+| `RETRIED` かつ `overall_success=True` | `COMPLETE` | `RetryQueueStatus.COMPLETED` |
+| `RETRIED` かつ `overall_success=False` | `FAIL` | `RetryQueueStatus.FAILED` |
+| `SKIPPED` | `NOOP` | `None`（更新しない） |
+| `NOT_FOUND` | `NOOP` | `None`（更新しない） |
+| `DISABLED` | `NOOP` | `None`（更新しない） |
+
+`SKIPPED` / `NOT_FOUND` / `DISABLED`はいずれも「再実行が行われていない」
+という共通の性質を持つため、`NOOP`という単一の安全側の結果に統一する。
+特に`SKIPPED`（`RetryPolicy`が再試行上限到達等で対象外と判定したケース）は、
+`NOOP`のまま次Release（Retry Queue Removal、v4.2予定）まで Queue に
+滞留し続ける可能性があり、この滞留の扱いは本Foundationの意図的な対象外
+としたうえで次Releaseへ申し送っている
+（`src/retry_engine/retry_queue_update_decider.py`のコード内コメント・
+`docs/design/retry_queue_update_foundation.md` 12章 Future Extension・
+16.3節 Recommendation 2）。
+
+### `retry_queue`パッケージへの変更が一切不要だった理由
+
+`RetryQueueStatus.COMPLETED` / `FAILED`はv3.1.0の時点で既に予約値として
+定義済みであり、本Releaseは新しい状態値を追加する必要がなかった。「更新
+しない」（`NOOP`）状態も`RetryQueueStatus`に新しい値を追加するのではなく、
+`retry_engine`側の新規Enum（`RetryQueueUpdateOutcome.NOOP`）と
+`target_status=None`の組み合わせで表現した。これにより`retry_queue`
+パッケージは本Releaseでもゼロ改修を維持している。
+
+### Queueへの実際の反映は行わない（Foundation First）
+
+`RetryQueueUpdateDecider`は判定結果（`RetryQueueUpdateDecision`）を返す
+のみで、`RetryQueueManager.remove()`の呼び出し・Queue内部ストアの書き換え
+はいずれも行わない。`RetryQueueUpdateDecision`が`execution_result`
+（→`dispatch_event`→`candidate_event`→`run_id` / `candidate`）を分解せず
+保持するため、次Release（Retry Queue Removal）が`remove(run_id)`を呼び出す
+際に追加の突き合わせを必要としない設計になっている。
+
+### 本Releaseの対象外
+
+`RetryQueueManager.remove()`の呼び出し・`RetryQueueManager.dequeue()`の
+本格実装（Queueから実際に取り出して回す自動化）・Queue永続化・判定結果を
+Queue内部ストアへ実際に反映する処理・Retry Policy（選別基準の拡張）・
+Retry Metrics / Monitoring・実運用のComposition Rootは、いずれもv4.1.0の
+対象外であり、将来Releaseで検討する（`docs/ROADMAP.md`「v3.x 以降の候補」
+参照）。
+
+詳細は`docs/design/retry_queue_update_foundation_charter.md`（Project
+Charter）・`docs/design/retry_queue_update_foundation.md`（Architecture
+Design・Architecture Review含む）を参照。

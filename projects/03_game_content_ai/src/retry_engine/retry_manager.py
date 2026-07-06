@@ -76,6 +76,16 @@ NullRetryManager: RETRY_ENGINE_ENABLED=false（デフォルト）、または下
       結果を集約）の3段階のみで完結する。enqueue_retry() / dequeue_retry()（Queue操作）とは
       呼び出しグラフ上で完全に独立しており、Retry Queueの更新は一切行わない
       （同設計書9章・10章）。
+
+    - （v4.1.0）RetryManager は RetryQueueUpdateDecider（retry_queue_update_decider、新設）を
+      Constructor Injection で保持できる（省略時は RetryQueueUpdateDecider() に自動
+      フォールバックする。docs/design/retry_queue_update_foundation.md 3章 Design Policy 4）。
+    - （v4.1.0）decide_retry_queue_updates() を新設し、execute_dispatchable_retries()
+      （v4.0.0）への委譲、RetryQueueUpdateDecider.decide_all()（各RetryExecutionResultから
+      更新先のRetryQueueStatusを判定）の2段階のみで完結する。判定結果を実際に
+      RetryQueueManager.remove() 等でQueueへ反映する処理はここには一切なく（Foundation
+      First）、enqueue_retry() / dequeue_retry()（Queue操作）とは呼び出しグラフ上で
+      完全に独立している（同設計書9章・11章）。
 """
 from __future__ import annotations
 
@@ -93,6 +103,7 @@ from .retry_execution_coordinator import RetryExecutionCoordinator, RetryExecuti
 from .retry_execution_selector import RetryExecutionSelector
 from .retry_executor import RetryExecutor
 from .retry_policy import RetryPolicy
+from .retry_queue_update_decider import RetryQueueUpdateDecider, RetryQueueUpdateDecision
 from .retry_request import RetryRequest
 from .retry_result import RetryOutcome, RetryResult
 
@@ -115,6 +126,7 @@ class RetryManager:
         event_dispatcher: RetryEventDispatcher | None = None,
         execution_selector: RetryExecutionSelector | None = None,
         execution_coordinator: RetryExecutionCoordinator | None = None,
+        queue_update_decider: RetryQueueUpdateDecider | None = None,
     ):
         self._policy = policy
         self._executor = executor
@@ -127,6 +139,9 @@ class RetryManager:
         )
         self._execution_coordinator = (
             execution_coordinator if execution_coordinator is not None else RetryExecutionCoordinator()
+        )
+        self._queue_update_decider = (
+            queue_update_decider if queue_update_decider is not None else RetryQueueUpdateDecider()
         )
 
     @classmethod
@@ -141,6 +156,7 @@ class RetryManager:
         event_dispatcher: RetryEventDispatcher | None = None,
         execution_selector: RetryExecutionSelector | None = None,
         execution_coordinator: RetryExecutionCoordinator | None = None,
+        queue_update_decider: RetryQueueUpdateDecider | None = None,
     ) -> "RetryManager | NullRetryManager":
         """
         呼び出し元が構築済みの WorkflowEngineManager / WorkflowMonitorManager を
@@ -165,6 +181,10 @@ class RetryManager:
         省略した場合は RetryManager.__init__ 内でそれぞれ RetryExecutionSelector() /
         RetryExecutionCoordinator() にフォールバックするため、本引数を渡さない既存の
         呼び出しはすべて本Release前と同じ挙動になる（v4.0.0）。
+
+        queue_update_decider も省略可能（デフォルト None）。省略した場合は
+        RetryManager.__init__ 内で RetryQueueUpdateDecider() にフォールバックするため、
+        本引数を渡さない既存の呼び出しはすべて本Release前と同じ挙動になる（v4.1.0）。
         """
         if not retry_config.is_ready():
             return NullRetryManager()
@@ -181,6 +201,7 @@ class RetryManager:
             event_dispatcher=event_dispatcher,
             execution_selector=execution_selector,
             execution_coordinator=execution_coordinator,
+            queue_update_decider=queue_update_decider,
         )
 
     def retry(self, run_id: str, attempt: int = 1, dry_run: bool = False) -> RetryResult:
@@ -279,6 +300,25 @@ class RetryManager:
         selected = self._execution_selector.select(dispatch_events)
         return self._execution_coordinator.execute(selected, retry_fn=self.retry, dry_run=dry_run)
 
+    def decide_retry_queue_updates(
+        self, events: list[SchedulerEvent], dry_run: bool = False
+    ) -> list[RetryQueueUpdateDecision]:
+        """
+        SchedulerEventのリストから、dispatchable=Trueの候補についてretry()を実行し
+        （execute_dispatchable_retries()、v4.0.0、無変更）、各RetryExecutionResultに
+        ついて対応するRetry Queue項目の更新先状態（COMPLETED / FAILED / 更新なし）を
+        判定する。
+
+        2段階の委譲のみで完結する：
+            1. self.execute_dispatchable_retries(events, dry_run=dry_run)（v4.0.0、無変更）
+            2. self._queue_update_decider.decide_all(execution_results)（新規、判定）
+
+        判定結果を使ってRetryQueueManager.remove()を呼び出す処理、判定結果をQueueへ
+        実際に反映する処理は本Releaseには一切存在しない（Foundation First）。
+        """
+        execution_results = self.execute_dispatchable_retries(events, dry_run=dry_run)
+        return self._queue_update_decider.decide_all(execution_results)
+
     def _skip_reason(self, monitor_status: WorkflowMonitorStatus, attempt: int) -> str:
         if monitor_status not in self._policy.target_statuses:
             return (
@@ -347,5 +387,15 @@ class NullRetryManager:
         RETRY_ENGINE_ENABLED=false（デフォルト）、または下位ゲートが閉じている場合、
         実行自体を一切行わず常に空リストを返す（「受け取れるが何もしない」）。
         RetryExecutionSelector / RetryExecutionCoordinatorへの参照は保持しない。
+        """
+        return []
+
+    def decide_retry_queue_updates(
+        self, events: list[SchedulerEvent], dry_run: bool = False
+    ) -> list[RetryQueueUpdateDecision]:
+        """
+        RETRY_ENGINE_ENABLED=false（デフォルト）、または下位ゲートが閉じている場合、
+        判定自体を一切行わず常に空リストを返す（「受け取れるが何もしない」）。
+        RetryQueueUpdateDeciderへの参照は保持しない。
         """
         return []
