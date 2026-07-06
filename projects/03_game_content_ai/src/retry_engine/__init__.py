@@ -31,6 +31,15 @@ Workflow Monitor（v2.9.0）が FAILED / TIMEOUT と判定したWorkflowを、Wo
       src/retry_scheduler_decision/ / src/retry_scheduler_source/ /
       src/retry_queue/ はいずれも本Releaseでも無改修
       （詳細は docs/design/retry_engine_event_consumption.md）
+
+    - （v3.9.0）RetryManager が RetryEventDispatcher（retry_event_dispatcher、新設）を
+      Constructor Injection で保持できるようになった（Retry Engine Event
+      Dispatch）。dispatch_retry_events() を通じて、recognize_retry_events()
+      （v3.8.0）が認識したRetryCandidateEventをDispatch対象として整理できるが、
+      整理のみで実行判断・Queue操作には一切関与しない。src/scheduler/ /
+      src/retry_scheduler_decision/ / src/retry_scheduler_source/ /
+      src/retry_queue/ / retry_event_consumer.py はいずれも本Releaseでも無改修
+      （詳細は docs/design/retry_engine_event_dispatch.md）
 """
 from .retry_config import RetryConfig
 from .retry_policy import DEFAULT_TARGET_STATUSES, RetryPolicy
@@ -38,6 +47,7 @@ from .retry_request import RetryRequest
 from .retry_result import RetryOutcome, RetryResult
 from .retry_executor import RetryExecutor
 from .retry_event_consumer import RetryCandidateEvent, RetryEventConsumer
+from .retry_event_dispatcher import RetryDispatchEvent, RetryEventDispatcher
 from .retry_manager import NullRetryManager, RetryManager
 
 __all__ = [
@@ -50,6 +60,8 @@ __all__ = [
     "RetryExecutor",
     "RetryCandidateEvent",
     "RetryEventConsumer",
+    "RetryDispatchEvent",
+    "RetryEventDispatcher",
     "RetryManager",
     "NullRetryManager",
 ]

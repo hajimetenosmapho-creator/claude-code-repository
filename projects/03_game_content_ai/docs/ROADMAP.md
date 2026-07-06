@@ -490,6 +490,23 @@
 
 ---
 
+## v3.9.0 — Retry Engine Event Dispatch（2026-07-06 完了）★ Release 2.0 続き
+
+- [x] Project Charter作成：`docs/design/retry_engine_event_dispatch_charter.md`（承認済み）
+- [x] Architecture Design確定：`docs/design/retry_engine_event_dispatch.md`（Architecture Review完了・Approve with Minor Recommendations、指摘事項1点を記録）
+- [x] `src/retry_engine/retry_event_dispatcher.py`新規作成：`RetryEventConsumer`（v3.8.0）が認識した`RetryCandidateEvent`を、Retry Engine側がDispatch対象として整理するための最小コンポーネント。`RetryDispatchEvent`（`candidate_event` / `dispatchable`の2フィールドのみを持つ軽量な`frozen dataclass`）・`RetryEventDispatcher`（`dispatch_one(candidate_event)` / `dispatch(candidate_events)`の2メソッドのみを持つStatelessなコンポーネント）を追加
+- [x] **Retry Engineが認識済みのRetryCandidateEventをDispatch対象として扱えるようになった。** `dispatchable`は`candidate_event.run_id`が空でないかという構造的妥当性のみで判定し、優先度・件数上限に基づく選別ロジックはあえて導入しない。`dispatchable=False`と判定されたイベントもリストから除外せず、そのまま返す（判定結果を可視化する）
+- [x] 通常イベントとRetryイベントの振り分けは二段階構成とした：第1段階（`recognize_retry_events()`、v3.8.0、無改修）がJob由来の`SchedulerEvent`を除外し、第2段階（本Release、`dispatch_retry_events()`）はRetry候補由来の`RetryCandidateEvent`のみを入力とする。`RetryEventDispatcher`は生の`SchedulerEvent`を一切扱わない
+- [x] `src/retry_engine/retry_manager.py`変更：`RetryManager`が`RetryEventDispatcher`をConstructor Injectionで保持できるようにし、`dispatch_retry_events(events) -> list[RetryDispatchEvent]`を追加（`recognize_retry_events()`への委譲→`RetryEventDispatcher.dispatch()`への委譲、の2段階のみで完結する薄い委譲）。`event_dispatcher`引数省略時は`RetryEventDispatcher()`に自動フォールバックする（後方互換性維持）
+- [x] `NullRetryManager`にも同名`dispatch_retry_events(events)`を追加。`RetryEventDispatcher`を一切構築・参照せず、常に空リスト`[]`を返す（「受け取れるが何もしない」）
+- [x] `retry_event_dispatcher.py`は`scheduler` / `retry_queue`いずれも新規importしない（`.retry_event_consumer`（`retry_engine`パッケージ内）と標準ライブラリのみに依存）。`scheduler` / `retry_scheduler_decision` / `retry_scheduler_source` / `retry_queue` / `retry_event_consumer.py`はいずれも本Releaseでも無改修
+- [x] Retry Queueの更新・`RetryQueueManager.dequeue()` / `remove()`の呼び出し・Retry実行の開始・Queue永続化・既存Job判定ループの変更はいずれも行わない（構造的にAST・Spyで確認済み）
+- [x] `tests/test_e2e_v3_9_0_retry_engine_event_dispatch.py`新規作成（73件）
+- [x] E2Eテスト73/73 PASS、既存回帰（`v1.20.0` 170/170・`v2.0.0` 118/118・`v2.6.0` 118/118・`v2.7.0` 163/163・`v2.8.0` 182/182・`v2.9.0` 103/103）PASS。`v3.0.0`（140/142）・`v3.1.0`（151/152）・`v3.2.0`（99/102）・`v3.3.0`（69/72）・`v3.4.0`（92/94）・`v3.5.0`（69/72）・`v3.6.0`（100/104）・`v3.7.0`（72/74）・`v3.8.0`（67/70）はいずれも`docs/CHANGELOG.md` `[KI-8]`（本Releaseによる意図的な変更）を含む
+- [ ] Dispatch結果（`RetryDispatchEvent`）を使った自動Retry実行（Retry Execution）・優先度・件数上限に基づく選別ロジック・実運用のComposition Root・`job_id`プレフィックス衝突の構造的な防止：対象外（→ 将来Release候補。次の節参照）
+
+---
+
 ## v3.x 以降の候補（未着手）
 
 - [ ] Windows タスクスケジューラ等の外部スケジューラから `scripts/run_workflow_engine.py` を定時起動する実運用連携（Scheduler Engine自体の内部実装はv2.6.0で完了。OS側との実連携は未着手）
@@ -510,8 +527,8 @@
 - [x] 選択結果を`evaluate()` / `run_due()`の判定ロジックへ組み込む統合：v3.7.0で実装済み（Retry Scheduler Event Integration。`RetrySchedulerDecision`の選択結果を使ってRetry候補由来の`SchedulerEvent`をAdditive方式で生成する。既存Job判定ループは無変更、`retry_decision=None`時は既存動作と完全互換）
 - [ ] 自動Retry実行：`RetrySchedulerDecision.select_next_candidate()` / `select_candidates()`で選ばれた候補（v3.7.0では`SchedulerEvent`として観測可能になった）を、`RetryQueueManager.dequeue()`で取り出し`RetryManager.retry()`へ渡す一連の自動化。`dequeue()` / `remove()`の使用もこの段階で初めて解禁される想定（Retry Scheduler Integration v3.3.0・Retry Scheduler Wiring v3.4.0・Retry Scheduler Decision v3.5.0・Retry Scheduler Event Integration v3.7.0ではいずれも意図的に対象外）
 - [x] Retry候補由来の`SchedulerEvent`（v3.7.0）を**認識する**仕組み：v3.8.0で実装済み（Retry Engine Event Consumption。`retry_engine`パッケージに`RetryEventConsumer`を新設し、`RetryManager.recognize_retry_events()`経由で`job_id`が`"retry:"`で始まる`SchedulerEvent`だけを識別・認識できるようにした。認識のみで、実行・Queue操作はいずれも意図的に対象外のまま）
-- [ ] **Retry Engine Event Dispatch**：`recognize_retry_events()`（v3.8.0）が返した`RetryCandidateEvent`を、実際に処理すべき対象として振り分ける仕組み（例：優先度・件数上限に基づく選別、複数候補からの実行対象決定）。認識（v3.8.0）と実行（下記）の間に位置する統合ステップとして次Release候補に追加
-- [ ] **Retry Execution**：認識・Dispatchされた`RetryCandidateEvent`を実際に`RetryManager.retry()`へ渡して再実行する自動化（自動Retry実行）。`RetrySchedulerDecision.select_next_candidate()` / `select_candidates()`で選ばれた候補（v3.7.0で`SchedulerEvent`として観測可能・v3.8.0で`retry_engine`側から認識可能になった）を実際に処理する最終段階（Retry Scheduler Integration v3.3.0・Retry Scheduler Wiring v3.4.0・Retry Scheduler Decision v3.5.0・Retry Scheduler Event Integration v3.7.0・Retry Engine Event Consumption v3.8.0ではいずれも意図的に対象外）
+- [x] **Retry Engine Event Dispatch**：`recognize_retry_events()`（v3.8.0）が返した`RetryCandidateEvent`をDispatch対象として整理する仕組み：v3.9.0で実装済み。`retry_engine`パッケージに`RetryEventDispatcher`を新設し、`RetryManager.dispatch_retry_events()`経由で`RetryDispatchEvent`（`candidate_event` / `dispatchable`）として整理できるようにした。`dispatchable`は`run_id`の非空判定のみに限定し、優先度・件数上限に基づく選別ロジックはあえて導入していない（次段階Retry Executionの検討事項として持ち越し）。整理のみで、実行・Queue操作はいずれも意図的に対象外のまま
+- [ ] **Retry Execution**：Dispatchされた`RetryDispatchEvent`（`dispatchable=True`のもの）を実際に`RetryManager.retry()`へ渡して再実行する自動化（自動Retry実行）。優先度・件数上限に基づく選別ロジックの導入もこの段階で検討する想定（v3.9.0では意図的に対象外）。`RetrySchedulerDecision.select_next_candidate()` / `select_candidates()`で選ばれた候補（v3.7.0で`SchedulerEvent`として観測可能・v3.8.0で`retry_engine`側から認識可能・v3.9.0でDispatch対象として整理可能になった）を実際に処理する最終段階（Retry Scheduler Integration v3.3.0・Retry Scheduler Wiring v3.4.0・Retry Scheduler Decision v3.5.0・Retry Scheduler Event Integration v3.7.0・Retry Engine Event Consumption v3.8.0・Retry Engine Event Dispatch v3.9.0ではいずれも意図的に対象外）
 - [ ] **Retry Queue Update**：Retry実行の結果（成功・失敗）をRetry Queueへフィードバックする仕組み（`RetryQueueStatus.COMPLETED` / `FAILED`への到達。v3.1.0で予約値として定義済みだが、判定ロジックからは到達しない）。`RetryQueueManager.dequeue()` / `remove()`の使用もこの段階で初めて解禁される想定
 - [ ] **Retry Queue Persistence**：Retry Queueの永続化（SQLite/Redis等）。現状は完全にin-memoryで、プロセス終了とともにQueueの内容が失われる（v3.1.0 Retry Queue Foundationから継続する対象外項目）
 - [ ] `job_id`予約プレフィックス（`"retry:"`）の構造的な衝突防止：`SchedulerJob.job_id`が偶然同じプレフィックスを持つ場合の検証・防止（v3.7.0では慣習のみで構造的な強制なし。v3.8.0では`retry_engine`側も同じ慣習を踏襲するのみで解消していない。詳細は`docs/design/retry_scheduler_event_integration.md` 11章・13章 Design Decision #2、`docs/design/retry_engine_event_consumption.md` 11章）
