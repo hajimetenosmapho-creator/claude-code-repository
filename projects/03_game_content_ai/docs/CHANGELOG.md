@@ -101,6 +101,68 @@
 - **対応状況**：対応しない。v3.9.0のProject Charter / Architecture Design / Architecture Reviewで`retry_event_dispatcher.py`の新規追加・`retry_manager.py`の変更（`event_dispatcher`引数・`dispatch_retry_events()`追加）・`__init__.py`の`__all__`更新はいずれも正式に承認済みである。本質的な制約（`scheduler` / `retry_scheduler_decision` / `retry_scheduler_source` / `retry_queue` / `retry_event_consumer.py`のゼロ改修、`dequeue()` / `remove()` / Retry実行に到達しないこと、`retry_event_dispatcher.py`が`scheduler` / `retry_queue`いずれも新規importしないこと、`RetryManager` / `NullRetryManager`の既存メソッドの後方互換性）は、v3.9.0の新規テスト（`tests/test_e2e_v3_9_0_retry_engine_event_dispatch.py`、73件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`・`[KI-4]`・`[KI-7]`と同じ扱い）
 - **今後の対応**：不要（本エントリで説明を確定）。`git diff --quiet`ベースのチェックは本Releaseをcommitすれば自然に解消する。一方、v3.0.0テスト21・v3.2.0テスト16-17・v3.8.0テスト24-25は`git diff`を使わない恒久的な静的検査であり、コミットの有無に関わらず本Release以降も成立しなくなる。将来Release（Retry Execution）で`retry_engine`側にさらに変更が入るたびに同様のFAILが起こりうるが、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
 
+### [KI-9] v4.0.0でのRetry Execution Foundationにより、v3.1.0〜v3.9.0の一部Architecture GuardがFAILする（設計上の意図的な差分）
+
+- **発見日**：2026-07-06（v4.0.0 Retry Execution Foundation Test工程実施時）
+- **検証方法**：`git stash`で本Release（`retry_manager.py` / `__init__.py`の変更）を一時退避したベースラインと、本Release適用後を比較し、差分の原因が本Releaseの変更であることを構造的に確認した
+- **対象と症状（ベースライン → 本Release適用後）**：
+  - `tests/test_e2e_v3_0_0_retry_engine_foundation.py`：152/154 PASS → 152/154 PASS（変化なし。テスト21の2件FAILは`[KI-7]`から継続する既存差分で本Releaseとは無関係）
+  - `tests/test_e2e_v3_1_0_retry_queue_foundation.py`：152/152 PASS → 151/152 PASS（新規1件FAIL：テスト24「`retry_manager.py`に変更がない（`git diff`）」）
+  - `tests/test_e2e_v3_2_0_retry_queue_integration.py`：100/102 PASS → 99/102 PASS（新規1件FAIL：テスト14「`__init__.py`に変更がない（`git diff`）」。テスト16-17は`[KI-7]`/`[KI-8]`から継続する既存差分）
+  - `tests/test_e2e_v3_3_0_retry_scheduler_integration.py`：71/72 PASS → 69/72 PASS（新規2件FAIL：テスト18「`retry_manager.py` / `__init__.py`に変更がない（`git diff`）」。テスト17は`[KI-4]`の既存差分で無関係）
+  - `tests/test_e2e_v3_4_0_retry_scheduler_wiring.py`：94/94 PASS → 92/94 PASS（新規2件FAIL：テスト20「`retry_manager.py` / `__init__.py`に変更がない（`git diff`）」）
+  - `tests/test_e2e_v3_5_0_retry_scheduler_decision.py`：71/72 PASS → 69/72 PASS（新規2件FAIL：テスト19「`retry_manager.py` / `__init__.py`に変更がない（`git diff`）」。テスト18は`[KI-4]`の既存差分で無関係）
+  - `tests/test_e2e_v3_6_0_retry_scheduler_decision_wiring.py`：102/104 PASS → 100/104 PASS（新規2件FAIL：テスト24「`retry_manager.py` / `__init__.py`に変更がない（`git diff`）」。テスト16-17は`[KI-6]`の既存差分で無関係）
+  - `tests/test_e2e_v3_7_0_retry_scheduler_event_integration.py`：74/74 PASS → 72/74 PASS（新規2件FAIL：テスト21「`retry_manager.py` / `__init__.py`に変更がない（`git diff`）」）
+  - `tests/test_e2e_v3_8_0_retry_engine_event_consumption.py`：67/70 PASS → 67/70 PASS（変化なし。テスト24「`__all__`が既存＋新規2シンボルの構成」・テスト25「最終引数が`event_consumer`」の3件FAILは`[KI-8]`から継続する既存差分で本Releaseとは無関係）
+  - `tests/test_e2e_v3_9_0_retry_engine_event_dispatch.py`：73/73 PASS → 70/73 PASS（新規3件FAIL：テスト20「`__all__`が既存＋新規2シンボルの構成」・テスト21「`__init__` / `from_config()`の最終引数が`event_dispatcher`」×2）
+- **原因**：v4.0.0（Retry Execution Foundation）で`src/retry_engine/`に`retry_execution_selector.py` / `retry_execution_coordinator.py`を新規追加し、`retry_manager.py`（`execution_selector` / `execution_coordinator`引数・`execute_dispatchable_retries()`追加）・`__init__.py`（新規シンボルexport）を変更した（`docs/design/retry_execution_foundation.md`）。v3.1.0〜v3.7.0の`git diff --quiet`ベースの検査は「本Releaseがcommitされる前の一時的な検知」であり、v3.9.0の`__all__` / 最終引数検査は「その時点で`event_dispatcher`が最終引数だった」という当時の事実をArchitecture Guardとして固定していたものである。いずれも`[KI-3]`・`[KI-4]`・`[KI-6]`・`[KI-7]`・`[KI-8]`と同種の既知差分である
+- **対応状況**：対応しない。v4.0.0のProject Charter / Architecture Design / Architecture Reviewで`retry_execution_selector.py` / `retry_execution_coordinator.py`の新規追加・`retry_manager.py`の変更（`execution_selector` / `execution_coordinator`引数・`execute_dispatchable_retries()`追加）・`__init__.py`の`__all__`更新はいずれも正式に承認済みである。本質的な制約（`scheduler` / `retry_scheduler_decision` / `retry_scheduler_source` / `retry_queue` / `retry_event_consumer.py` / `retry_event_dispatcher.py`のゼロ改修、`enqueue_retry()` / `dequeue_retry()` / `RetryQueueManager.dequeue()` / `remove()`に到達しないこと、`dispatchable=True`が唯一の実行入口であること、`RetryManager` / `NullRetryManager`の既存メソッドの後方互換性）は、v4.0.0の新規テスト（`tests/test_e2e_v4_0_0_retry_execution_foundation.py`、88件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-8]`と同じ扱い）
+- **今後の対応**：不要（本エントリで説明を確定）。`git diff --quiet`ベースのチェック（v3.1.0〜v3.7.0）は本Releaseをcommitすれば自然に解消する。一方、v3.9.0テスト20-21は`git diff`を使わない恒久的な静的検査であり、コミットの有無に関わらず本Release以降も成立しなくなる。将来Release（Retry Queue Update等）で`retry_engine`側にさらに変更が入るたびに同様のFAILが起こりうるが、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
+
+---
+
+## [v4.0.0] - 2026-07-06 ★ Retry Execution Foundation
+
+### Added
+
+- `src/retry_engine/retry_execution_selector.py`（新規）：`RetryEventDispatcher`（v3.9.0）が整理した`RetryDispatchEvent`のうち、`dispatchable=True`のものだけを実行対象として選別する最小コンポーネント
+  - `RetryExecutionSelector`：`select(dispatch_events) -> list[RetryDispatchEvent]`の1メソッドのみを持つStatelessなコンポーネント。`dispatchable`を参照する箇所をこの1メソッドのみに集約し、「`dispatchable=true`を唯一の実行入口とする」判定基準を1箇所に閉じ込める
+- `src/retry_engine/retry_execution_coordinator.py`（新規）：選別済みの`RetryDispatchEvent`について、初めて`RetryManager.retry()`を呼び出し結果を集約する最小コンポーネント
+  - `RetryExecutionResult`（`frozen=True`の`dataclass`）：`dispatch_event`（元の`RetryDispatchEvent`をそのまま保持）・`retry_result`（`RetryManager.retry()`が返した既存の`RetryResult`をそのまま保持）の2フィールドのみを持つ軽量ラッパー。既存の`RetryResult`（v3.0.0）自体は一切変更しない
+  - `RetryExecutionCoordinator`：`execute(dispatch_events, retry_fn, dry_run=False) -> list[RetryExecutionResult]`の1メソッドのみを持つStatelessなコンポーネント。`retry_fn`は呼び出しごとに引数として受け取り、コンストラクタでは保持しない（`RetryManager`への逆参照を持たず循環参照を避ける）。`retry_attempt`は`candidate_event.candidate`から`getattr(candidate, "retry_attempt", 1)`で取得する（**v4.0ではQueue非依存を優先した暫定実装**であり、`retry_queue`パッケージへの型依存を避けるための緩いダックタイピング＋フォールバックである旨をコード内コメントに明記）
+- `src/retry_engine/retry_manager.py`（変更）：`RetryManager`が`RetryExecutionSelector` / `RetryExecutionCoordinator`をConstructor Injectionで保持できるようにし、以下を追加した
+  - `RetryManager.__init__` / `from_config()`に`execution_selector` / `execution_coordinator`引数（デフォルト`None`）を追加。省略時はそれぞれ`RetryExecutionSelector()` / `RetryExecutionCoordinator()`に自動フォールバックする
+  - `execute_dispatchable_retries(events, dry_run=False) -> list[RetryExecutionResult]`：`dispatch_retry_events()`（v3.9.0）への委譲・`RetryExecutionSelector.select()`（判定を1箇所に集約）・`RetryExecutionCoordinator.execute()`（`retry_fn=self.retry`を渡し、実行と結果集約を委譲）の3段階のみで完結する。これにより`RetryManager.retry()`が、Dispatch結果（`dispatchable=True`のもの）を起点に初めて呼び出せるようになった
+  - `NullRetryManager`にも同名`execute_dispatchable_retries(events, dry_run=False)`を追加。`RetryExecutionSelector` / `RetryExecutionCoordinator`を一切構築・参照せず、常に空リスト`[]`を返す（「受け取れるが何もしない」）
+- `src/retry_engine/__init__.py`（変更）：`RetryExecutionSelector` / `RetryExecutionCoordinator` / `RetryExecutionResult`を新規export。既存の13シンボルは維持
+- `tests/test_e2e_v4_0_0_retry_execution_foundation.py`新規作成（88件）
+- `docs/design/retry_execution_foundation_charter.md`新規作成（Project Charter、承認済み）
+- `docs/design/retry_execution_foundation.md`新規作成（Architecture Design。Architecture Review完了・**Approve with Recommendations**、指摘事項2点を記録）
+
+### Note
+
+- **RetryManagerの責務は委譲のみに維持した。** `execute_dispatchable_retries()`は「dispatch → select → execute」の3行の委譲のみで完結し、判定ロジック（`dispatchable`の解釈）・実行ループ・結果集約のいずれも`RetryManager`自身には書かない。判定（`RetryExecutionSelector`）と実行・集約（`RetryExecutionCoordinator`）を別コンポーネントに分離する設計を、「メソッド追加のみ」「単一の統合コンポーネント」との比較検討のうえで採用した（`docs/design/retry_execution_foundation.md` 2章）
+- **`dispatchable=true`を唯一の実行入口とし、判定を1箇所に集約した。** `dispatchable`フィールドを参照するのは`RetryExecutionSelector.select()`のみであり、`RetryExecutionCoordinator`・`RetryManager`のいずれも`dispatchable`を再解釈しない。`execute()`に渡された時点で全件が実行対象であることは、呼び出しグラフの構造によって保証される
+- **Queueには一切依存しない。** `RetryExecutionSelector` / `RetryExecutionCoordinator`のいずれも`RetryQueueManager` / `NullRetryQueueManager`への参照を持たず（コンストラクタ引数にも存在しない）、`retry_queue`パッケージへのimportも発生しない（AST解析で確認済み）。入力は`RetryDispatchEvent`（Dispatcherが返した情報）のみであり、Queueへの読み書きは一切行わない
+- **実行結果は専用の軽量ラッパー型（`RetryExecutionResult`）で返す。** 既存の`RetryResult`は変更せず、`dispatch_event`と`retry_result`を対にして保持することで、将来のRetry Queue Update（どのQueue項目由来かの突き合わせ）に備えた拡張点を残した
+- **`retry_attempt`はQueue非依存を優先した暫定実装。** `candidate_event.candidate`（実態は`RetryQueueItem`）への型importを避け、`getattr(candidate, "retry_attempt", 1)`という緩いダックタイピング＋フォールバックで取得する。この設計判断はコード内コメントに明記し、将来`RetryCandidateEvent` / `RetryDispatchEvent`への正式なフィールド追加を検討する余地として`docs/design/retry_execution_foundation.md` 12章 Future Extensionに記録した
+- **Backward Compatibility を維持。** `RetryManager.__init__` / `from_config()`への`execution_selector` / `execution_coordinator`引数追加は末尾のデフォルト値付き引数のみであり、既存の呼び出し（新規引数を渡さない場合）は本Release後もまったく同じ結果になる。`retry()` / `enqueue_retry()` / `dequeue_retry()` / `recognize_retry_events()` / `dispatch_retry_events()`（`RetryManager` / `NullRetryManager`とも）は1行も変更していない
+- **`scheduler` / `retry_scheduler_decision` / `retry_scheduler_source` / `retry_queue` / `retry_event_consumer.py` / `retry_event_dispatcher.py`はいずれも本Releaseでも無改修。** 変更は`retry_engine`配下3ファイル（新規2・変更1）と`__init__.py`のみ
+- 対象外（今回も未実装）：Retry Queueの更新・`enqueue_retry()` / `dequeue_retry()`の自動呼び出し・`RetryQueueManager.dequeue()` / `remove()`の呼び出し・Queue永続化・Retry Policy（優先度・件数上限に基づく選別ロジックの導入）・Scheduler側の変更（いずれも将来Release候補。詳細は`docs/design/retry_execution_foundation_charter.md` 4章・10章、`docs/design/retry_execution_foundation.md` 12章）
+
+### Architecture Review Recommendations（今後の課題として維持）
+
+- **`retry_attempt`のダックタイピング依存**：`candidate.retry_attempt`への`getattr`アクセスは、`retry_queue`パッケージへの型結合を避けるための意図的な選択だが、`candidate`の由来が将来変化した場合に静かに`attempt=1`へフォールバックするリスクを残す。実装時、単体テストでこの挙動を明示的に固定化済み（テスト6・7）。将来`RetryCandidateEvent`への正式なフィールド追加を検討する際の判断材料として記録する
+- **`RetryExecutionCoordinator.execute()`のfail-fast方針**：現時点では該当する例外シナリオが存在しないため妥当な判断だが、将来複数件のバッチ実行が実運用で使われる段階（Composition Root導入時）で、1件の失敗が残り全件の実行を止めてしまう影響範囲を再評価することを推奨する
+
+### Tested
+
+- `tests/test_e2e_v4_0_0_retry_execution_foundation.py`: 88/88 PASS
+- 既存回帰確認：`v1.9.0`〜`v2.9.0`（Analytics Foundation `[KI-1]`除く）全PASS
+- `v3.0.0`（152/154）・`v3.1.0`（151/152）・`v3.2.0`（99/102）・`v3.3.0`（69/72）・`v3.4.0`（92/94）・`v3.5.0`（69/72）・`v3.6.0`（100/104）・`v3.7.0`（72/74）・`v3.8.0`（67/70）・`v3.9.0`（70/73）：いずれも`[KI-9]`（本Releaseによる意図的な変更）を含む。うち`v3.0.0`テスト21・`v3.8.0`テスト24-25（`[KI-7]`/`[KI-8]`）・`v3.3.0`テスト17（`[KI-4]`）・`v3.5.0`テスト18（`[KI-4]`）・`v3.6.0`テスト16-17（`[KI-6]`）は本Releaseと無関係な既存差分。`git stash`によるベースライン比較で、本Release固有の新規差分を特定済み（`[KI-9]`参照）
+- `v1.10.0`（Analytics Foundation）は`[KI-1]`（既知の問題、本Releaseと無関係）のため今回は実行対象外
+
 ---
 
 ## [v3.9.0] - 2026-07-06 ★ Retry Engine Event Dispatch

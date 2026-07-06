@@ -507,6 +507,24 @@
 
 ---
 
+## v4.0.0 — Retry Execution Foundation（2026-07-06 完了）★ Release 2.0 続き
+
+- [x] Project Charter作成：`docs/design/retry_execution_foundation_charter.md`（承認済み）
+- [x] Architecture Design確定：`docs/design/retry_execution_foundation.md`（Architecture Review完了・Approve with Recommendations、指摘事項2点を記録）
+- [x] `src/retry_engine/retry_execution_selector.py`新規作成：`RetryEventDispatcher`（v3.9.0）が整理した`RetryDispatchEvent`のうち、`dispatchable=True`のものだけを実行対象として選別する最小コンポーネント。`RetryExecutionSelector`（`select(dispatch_events)`の1メソッドのみを持つStatelessなコンポーネント）を追加
+- [x] `src/retry_engine/retry_execution_coordinator.py`新規作成：選別済みの`RetryDispatchEvent`について初めて`RetryManager.retry()`を呼び出し、結果を集約する最小コンポーネント。`RetryExecutionResult`（`dispatch_event` / `retry_result`の2フィールドのみを持つ軽量な`frozen dataclass`。既存の`RetryResult`は無変更）・`RetryExecutionCoordinator`（`execute(dispatch_events, retry_fn, dry_run=False)`の1メソッドのみを持つStatelessなコンポーネント）を追加
+- [x] **`RetryManager.retry()`が、Dispatch結果（`dispatchable=True`のもの）を起点に初めて呼び出せるようになった。** `dispatchable`を参照する箇所を`RetryExecutionSelector.select()`の1箇所に集約し、「`dispatchable=true`を唯一の実行入口とする」設計を採用した。`RetryExecutionCoordinator`は選別済みのイベントのみを受け取り、実行・結果集約のみを担当する（判定ロジックを複製しない）
+- [x] `src/retry_engine/retry_manager.py`変更：`RetryManager`が`RetryExecutionSelector` / `RetryExecutionCoordinator`をConstructor Injectionで保持できるようにし、`execute_dispatchable_retries(events, dry_run=False) -> list[RetryExecutionResult]`を追加（`dispatch_retry_events()`への委譲→`RetryExecutionSelector.select()`への委譲→`RetryExecutionCoordinator.execute()`への委譲、の3段階のみで完結する薄い委譲。判定ロジックは`RetryManager`自身には一切書かない）。`execution_selector` / `execution_coordinator`引数省略時はそれぞれ自動フォールバックする（後方互換性維持）
+- [x] `NullRetryManager`にも同名`execute_dispatchable_retries(events, dry_run=False)`を追加。`RetryExecutionSelector` / `RetryExecutionCoordinator`を一切構築・参照せず、常に空リスト`[]`を返す（「受け取れるが何もしない」）
+- [x] Queueには一切依存しない設計とした。`RetryExecutionSelector` / `RetryExecutionCoordinator`のいずれも`RetryQueueManager`への参照・importを持たない。`retry_attempt`は`candidate_event.candidate`から`getattr(..., 1)`で取得する（Queue非依存を優先した暫定実装。将来`RetryCandidateEvent`への正式なフィールド追加を検討する余地を残す）
+- [x] `scheduler` / `retry_scheduler_decision` / `retry_scheduler_source` / `retry_queue` / `retry_event_consumer.py` / `retry_event_dispatcher.py`はいずれも本Releaseでも無改修
+- [x] Retry Queueの更新・`enqueue_retry()` / `dequeue_retry()`の呼び出し・`RetryQueueManager.dequeue()` / `remove()`の呼び出し・Queue永続化・Retry Policy（優先度・件数上限に基づく選別ロジック）の導入はいずれも行わない（構造的にAST・Spyで確認済み）
+- [x] `tests/test_e2e_v4_0_0_retry_execution_foundation.py`新規作成（88件）
+- [x] E2Eテスト88/88 PASS、既存回帰（`v1.9.0`〜`v2.9.0`）全PASS。`v3.0.0`（152/154）・`v3.1.0`（151/152）・`v3.2.0`（99/102）・`v3.3.0`（69/72）・`v3.4.0`（92/94）・`v3.5.0`（69/72）・`v3.6.0`（100/104）・`v3.7.0`（72/74）・`v3.8.0`（67/70）・`v3.9.0`（70/73）はいずれも`docs/CHANGELOG.md` `[KI-9]`（本Releaseによる意図的な変更）を含む
+- [ ] Retry Queueの更新（`enqueue_retry()` / `dequeue_retry()`の自動呼び出し）・`RetryQueueManager.dequeue()` / `remove()`の呼び出し・Queue永続化・Retry Policy・実運用のComposition Root・Scheduler側の変更：対象外（→ 将来Release候補。次の節参照）
+
+---
+
 ## v3.x 以降の候補（未着手）
 
 - [ ] Windows タスクスケジューラ等の外部スケジューラから `scripts/run_workflow_engine.py` を定時起動する実運用連携（Scheduler Engine自体の内部実装はv2.6.0で完了。OS側との実連携は未着手）
@@ -528,9 +546,13 @@
 - [ ] 自動Retry実行：`RetrySchedulerDecision.select_next_candidate()` / `select_candidates()`で選ばれた候補（v3.7.0では`SchedulerEvent`として観測可能になった）を、`RetryQueueManager.dequeue()`で取り出し`RetryManager.retry()`へ渡す一連の自動化。`dequeue()` / `remove()`の使用もこの段階で初めて解禁される想定（Retry Scheduler Integration v3.3.0・Retry Scheduler Wiring v3.4.0・Retry Scheduler Decision v3.5.0・Retry Scheduler Event Integration v3.7.0ではいずれも意図的に対象外）
 - [x] Retry候補由来の`SchedulerEvent`（v3.7.0）を**認識する**仕組み：v3.8.0で実装済み（Retry Engine Event Consumption。`retry_engine`パッケージに`RetryEventConsumer`を新設し、`RetryManager.recognize_retry_events()`経由で`job_id`が`"retry:"`で始まる`SchedulerEvent`だけを識別・認識できるようにした。認識のみで、実行・Queue操作はいずれも意図的に対象外のまま）
 - [x] **Retry Engine Event Dispatch**：`recognize_retry_events()`（v3.8.0）が返した`RetryCandidateEvent`をDispatch対象として整理する仕組み：v3.9.0で実装済み。`retry_engine`パッケージに`RetryEventDispatcher`を新設し、`RetryManager.dispatch_retry_events()`経由で`RetryDispatchEvent`（`candidate_event` / `dispatchable`）として整理できるようにした。`dispatchable`は`run_id`の非空判定のみに限定し、優先度・件数上限に基づく選別ロジックはあえて導入していない（次段階Retry Executionの検討事項として持ち越し）。整理のみで、実行・Queue操作はいずれも意図的に対象外のまま
-- [ ] **Retry Execution**：Dispatchされた`RetryDispatchEvent`（`dispatchable=True`のもの）を実際に`RetryManager.retry()`へ渡して再実行する自動化（自動Retry実行）。優先度・件数上限に基づく選別ロジックの導入もこの段階で検討する想定（v3.9.0では意図的に対象外）。`RetrySchedulerDecision.select_next_candidate()` / `select_candidates()`で選ばれた候補（v3.7.0で`SchedulerEvent`として観測可能・v3.8.0で`retry_engine`側から認識可能・v3.9.0でDispatch対象として整理可能になった）を実際に処理する最終段階（Retry Scheduler Integration v3.3.0・Retry Scheduler Wiring v3.4.0・Retry Scheduler Decision v3.5.0・Retry Scheduler Event Integration v3.7.0・Retry Engine Event Consumption v3.8.0・Retry Engine Event Dispatch v3.9.0ではいずれも意図的に対象外）
-- [ ] **Retry Queue Update**：Retry実行の結果（成功・失敗）をRetry Queueへフィードバックする仕組み（`RetryQueueStatus.COMPLETED` / `FAILED`への到達。v3.1.0で予約値として定義済みだが、判定ロジックからは到達しない）。`RetryQueueManager.dequeue()` / `remove()`の使用もこの段階で初めて解禁される想定
+- [x] **Retry Execution Foundation**：Dispatchされた`RetryDispatchEvent`（`dispatchable=True`のもの）を対象に`RetryManager.retry()`を呼び出せる基盤：v4.0.0で実装済み。`retry_engine`パッケージに`RetryExecutionSelector`（判定：`dispatchable=True`の選別）・`RetryExecutionCoordinator`（実行：`retry_fn`呼び出しと結果集約）を新設し、`RetryManager.execute_dispatchable_retries()`経由で`RetryManager.retry()`を呼び出せるようになった。ただしQueueの読み取り（`dequeue()`によるRetry Queueからの取り出し）は行わず、`execute_dispatchable_retries()`に渡された`SchedulerEvent`（Dispatch対象）のみを入力とする「Foundation」に留まる
+- [ ] **自動Retry実行の実運用化（Composition Root）**：Scheduler（`SchedulerEngine.run_due()`）が生成した`SchedulerEvent`を、定期的に`RetryManager.execute_dispatchable_retries()`（v4.0.0）へ渡し続ける実際の起動スクリプト。v4.0.0時点ではテストコードでの呼び出し例のみ（`RetrySchedulerDecision.select_next_candidate()` / `select_candidates()`で選ばれた候補がv3.7.0で`SchedulerEvent`として観測可能・v3.8.0で`retry_engine`側から認識可能・v3.9.0でDispatch対象として整理可能・v4.0.0で`RetryManager.retry()`の呼び出しまで到達したが、これを継続的に回す実運用の起動導線は引き続き未着手）
+- [ ] **Retry Queue Update**：Retry実行の結果（成功・失敗）をRetry Queueへフィードバックする仕組み（`RetryQueueStatus.COMPLETED` / `FAILED`への到達。v3.1.0で予約値として定義済みだが、判定ロジックからは到達しない）。v4.0.0の`RetryExecutionResult`が`dispatch_event`（＝どのRetry候補由来か）を保持したまま返す設計にしているのは、本項目実装時に追加の突き合わせなしに対応するQueue項目を特定できるようにするためである（`docs/design/retry_execution_foundation.md` 12章 Future Extension）
+- [ ] **Retry Queue Removal**：`RetryQueueManager.dequeue()` / `remove()`の使用を解禁し、Retry Queueから実際に候補を取り出す・完了済み項目を除去する仕組み。v3.1.0〜v4.0.0では`dequeue()` / `remove()`いずれも呼び出されないことが構造的に確認されており（Spy・静的検査）、本項目で初めて解禁される想定
 - [ ] **Retry Queue Persistence**：Retry Queueの永続化（SQLite/Redis等）。現状は完全にin-memoryで、プロセス終了とともにQueueの内容が失われる（v3.1.0 Retry Queue Foundationから継続する対象外項目）
+- [ ] **Retry Policy（選別基準の拡張）**：`RetryExecutionSelector`（v4.0.0）が行う`dispatchable=True`の選別に、優先度・件数上限に基づくロジックを追加する。v3.9.0・v4.0.0ではいずれも意図的に導入しておらず、`RetryExecutionSelector.select()`のみを拡張・置換すればよい設計としている（`RetryExecutionCoordinator` / `RetryManager`は無改修のまま拡張可能。`docs/design/retry_execution_foundation.md` 2章・12章）
+- [ ] **Retry Metrics / Monitoring**：Retry実行の成功率・試行回数分布・Queue滞留時間等を集計・可視化する仕組み。一般的な「Metrics Foundation・Dashboard Foundation」（本ファイル該当セクション参照）のRetry Engine向け具体化として、`RetryExecutionResult`（v4.0.0）・`RetryResult`（v3.0.0）・`RetryQueueItem`（v3.1.0）を消費する側に位置づける
 - [ ] `job_id`予約プレフィックス（`"retry:"`）の構造的な衝突防止：`SchedulerJob.job_id`が偶然同じプレフィックスを持つ場合の検証・防止（v3.7.0では慣習のみで構造的な強制なし。v3.8.0では`retry_engine`側も同じ慣習を踏襲するのみで解消していない。詳細は`docs/design/retry_scheduler_event_integration.md` 11章・13章 Design Decision #2、`docs/design/retry_engine_event_consumption.md` 11章）
 - [ ] `"retry:"`プレフィックス定数の重複解消：`scheduler_engine.py`（文字列リテラル）と`retry_event_consumer.py`（`RETRY_JOB_ID_PREFIX`定数、v3.8.0）の2箇所に同じ値が独立に存在する。将来`scheduler`パッケージがこの文字列を公開定数としてexportした場合、`retry_engine`側はそれを参照する形に置き換えられる（Architecture Review Minor Recommendation、詳細は`docs/design/retry_engine_event_consumption.md` 13章 Design Decision #3・15.3節）
 - [ ] `metadata["retry_candidate"]` / `RetryCandidateEvent.candidate`の型安全な公開・永続化・JSON serialization対応：v3.7.0・v3.8.0ではいずれもin-memoryの観測用途に限定（詳細は`docs/design/retry_scheduler_event_integration.md` 13章 Design Decision #3・11章、`docs/design/retry_engine_event_consumption.md` 13章 Design Decision #2・15.3節）
