@@ -86,6 +86,18 @@ NullRetryManager: RETRY_ENGINE_ENABLED=false（デフォルト）、または下
       RetryQueueManager.remove() 等でQueueへ反映する処理はここには一切なく（Foundation
       First）、enqueue_retry() / dequeue_retry()（Queue操作）とは呼び出しグラフ上で
       完全に独立している（同設計書9章・11章）。
+
+    - （v4.2.0）RetryManager は RetryQueueRemovalExecutor（retry_queue_removal_executor、
+      新設）を Constructor Injection で保持できる（省略時は RetryQueueRemovalExecutor() に
+      自動フォールバックする。docs/design/retry_queue_removal_foundation.md 3章 Design
+      Policy 4）。
+    - （v4.2.0）apply_retry_queue_removals() を新設し、decide_retry_queue_updates()
+      （v4.1.0）への委譲、RetryQueueRemovalExecutor.apply_all()（各RetryQueueUpdateDecision
+      についてoutcomeがCOMPLETE/FAILの項目のみRetryQueueManager.remove()を呼び出す）の
+      2段階のみで完結する。remove_fnにはself._queue.remove（v3.2.0で既に保持している
+      Queueのバウンドメソッド）を渡すのみであり、retry_manager.py自体に新規の
+      RetryQueueManager型への依存は発生しない。NOOP（SKIPPED / NOT_FOUND / DISABLED
+      由来）の項目はremove_fnを一切呼び出さない（同設計書4章・11章）。
 """
 from __future__ import annotations
 
@@ -103,6 +115,7 @@ from .retry_execution_coordinator import RetryExecutionCoordinator, RetryExecuti
 from .retry_execution_selector import RetryExecutionSelector
 from .retry_executor import RetryExecutor
 from .retry_policy import RetryPolicy
+from .retry_queue_removal_executor import RetryQueueRemovalExecutor, RetryQueueRemovalResult
 from .retry_queue_update_decider import RetryQueueUpdateDecider, RetryQueueUpdateDecision
 from .retry_request import RetryRequest
 from .retry_result import RetryOutcome, RetryResult
@@ -127,6 +140,7 @@ class RetryManager:
         execution_selector: RetryExecutionSelector | None = None,
         execution_coordinator: RetryExecutionCoordinator | None = None,
         queue_update_decider: RetryQueueUpdateDecider | None = None,
+        queue_removal_executor: RetryQueueRemovalExecutor | None = None,
     ):
         self._policy = policy
         self._executor = executor
@@ -143,6 +157,9 @@ class RetryManager:
         self._queue_update_decider = (
             queue_update_decider if queue_update_decider is not None else RetryQueueUpdateDecider()
         )
+        self._queue_removal_executor = (
+            queue_removal_executor if queue_removal_executor is not None else RetryQueueRemovalExecutor()
+        )
 
     @classmethod
     def from_config(
@@ -157,6 +174,7 @@ class RetryManager:
         execution_selector: RetryExecutionSelector | None = None,
         execution_coordinator: RetryExecutionCoordinator | None = None,
         queue_update_decider: RetryQueueUpdateDecider | None = None,
+        queue_removal_executor: RetryQueueRemovalExecutor | None = None,
     ) -> "RetryManager | NullRetryManager":
         """
         呼び出し元が構築済みの WorkflowEngineManager / WorkflowMonitorManager を
@@ -185,6 +203,10 @@ class RetryManager:
         queue_update_decider も省略可能（デフォルト None）。省略した場合は
         RetryManager.__init__ 内で RetryQueueUpdateDecider() にフォールバックするため、
         本引数を渡さない既存の呼び出しはすべて本Release前と同じ挙動になる（v4.1.0）。
+
+        queue_removal_executor も省略可能（デフォルト None）。省略した場合は
+        RetryManager.__init__ 内で RetryQueueRemovalExecutor() にフォールバックするため、
+        本引数を渡さない既存の呼び出しはすべて本Release前と同じ挙動になる（v4.2.0）。
         """
         if not retry_config.is_ready():
             return NullRetryManager()
@@ -202,6 +224,7 @@ class RetryManager:
             execution_selector=execution_selector,
             execution_coordinator=execution_coordinator,
             queue_update_decider=queue_update_decider,
+            queue_removal_executor=queue_removal_executor,
         )
 
     def retry(self, run_id: str, attempt: int = 1, dry_run: bool = False) -> RetryResult:
@@ -319,6 +342,26 @@ class RetryManager:
         execution_results = self.execute_dispatchable_retries(events, dry_run=dry_run)
         return self._queue_update_decider.decide_all(execution_results)
 
+    def apply_retry_queue_removals(
+        self, events: list[SchedulerEvent], dry_run: bool = False
+    ) -> list[RetryQueueRemovalResult]:
+        """
+        SchedulerEventのリストから、各RetryQueueUpdateDecisionについてoutcomeが
+        COMPLETE / FAILの項目のみRetryQueueManager.remove()を呼び出し、Queueから
+        該当項目を除去する。
+
+        2段階の委譲のみで完結する：
+            1. self.decide_retry_queue_updates(events, dry_run=dry_run)（v4.1.0、無変更）
+            2. self._queue_removal_executor.apply_all(decisions, remove_fn=self._queue.remove)
+               （新規、除去）
+
+        outcomeがNOOP（SKIPPED / NOT_FOUND / DISABLED由来）の項目はremove_fnを
+        一切呼び出さない（Foundation First。SKIPPEDのQueue滞留対応は本Releaseの
+        対象外）。
+        """
+        decisions = self.decide_retry_queue_updates(events, dry_run=dry_run)
+        return self._queue_removal_executor.apply_all(decisions, remove_fn=self._queue.remove)
+
     def _skip_reason(self, monitor_status: WorkflowMonitorStatus, attempt: int) -> str:
         if monitor_status not in self._policy.target_statuses:
             return (
@@ -397,5 +440,15 @@ class NullRetryManager:
         RETRY_ENGINE_ENABLED=false（デフォルト）、または下位ゲートが閉じている場合、
         判定自体を一切行わず常に空リストを返す（「受け取れるが何もしない」）。
         RetryQueueUpdateDeciderへの参照は保持しない。
+        """
+        return []
+
+    def apply_retry_queue_removals(
+        self, events: list[SchedulerEvent], dry_run: bool = False
+    ) -> list[RetryQueueRemovalResult]:
+        """
+        RETRY_ENGINE_ENABLED=false（デフォルト）、または下位ゲートが閉じている場合、
+        除去処理自体を一切行わず常に空リストを返す（「受け取れるが何もしない」）。
+        RetryQueueRemovalExecutorへの参照は保持しない。
         """
         return []

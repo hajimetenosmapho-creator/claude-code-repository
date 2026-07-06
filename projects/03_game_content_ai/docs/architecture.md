@@ -1362,3 +1362,83 @@ Retry Metrics / Monitoring・実運用のComposition Rootは、いずれもv4.1.
 詳細は`docs/design/retry_queue_update_foundation_charter.md`（Project
 Charter）・`docs/design/retry_queue_update_foundation.md`（Architecture
 Design・Architecture Review含む）を参照。
+
+---
+
+## Retry Queue Removal Foundation層（`src/retry_engine/`、v4.2.0 追加）
+
+`RetryQueueUpdateDecider`（v4.1.0）が判定した`RetryQueueUpdateDecision`
+（`COMPLETE` / `FAIL` / `NOOP`）を対象に、`outcome`が`COMPLETE`または
+`FAIL`の項目についてのみ`RetryQueueManager.remove()`を呼び出し、Queueから
+該当項目を除去する新規コンポーネント`RetryQueueRemovalExecutor`を追加した。
+`RetryQueueManager.remove()`が本Releaseで初めて構造的に呼び出し可能になる。
+
+```
+RetryManager
+   │
+   ├── apply_retry_queue_removals(events, dry_run=False)  ★新設
+   │      1. self.decide_retry_queue_updates(events, dry_run=dry_run)（v4.1.0、無変更）
+   │      2. self._queue_removal_executor.apply_all(decisions, remove_fn=self._queue.remove)
+   │
+   └── RetryQueueRemovalExecutor（除去）
+          + apply(decision, remove_fn) -> RetryQueueRemovalResult
+          + apply_all(decisions, remove_fn) -> list[RetryQueueRemovalResult]
+          RetryQueueManager型を一切importしない、コンストラクタ引数ゼロの
+          完全に無状態なコンポーネント。remove操作はremove_fn:
+          Callable[[str], RetryQueueResult]としてメソッド引数で受け取る
+          （v4.0.0 RetryExecutionCoordinatorのretry_fnと同じパターン）
+
+RetryQueueRemovalResult
+   + decision: RetryQueueUpdateDecision（v4.1.0、分解しない）
+   + attempted: bool（remove呼び出しを試行したか、★新設）
+   + queue_result: RetryQueueResult | None（v3.1.0、分解しない）
+   + reason: str
+```
+
+### 除去方針
+
+`decision.outcome`が`COMPLETE` / `FAIL`のいずれでもない場合（＝`NOOP`）は
+`remove_fn`を一切呼び出さない。
+
+| `decision.outcome` | remove呼び出し | `attempted` |
+|---|---|---|
+| `COMPLETE` | 呼び出す | `True` |
+| `FAIL` | 呼び出す | `True` |
+| `NOOP`（`SKIPPED` / `NOT_FOUND` / `DISABLED`由来） | 呼び出さない | `False` |
+
+`run_id`は`decision.execution_result.dispatch_event.candidate_event.run_id`
+（v3.8.0で定義済みの既存フィールド）から取得し、追加のQueue問い合わせ
+（`list()`等）は発生しない。`remove_fn`の戻り値が`NOT_FOUND` /
+`DISABLED`であってもエラーとして扱わない（`RetryQueueManager.remove()`の
+既存の正常な結果の範囲内）。
+
+`SKIPPED`（`RetryPolicy`が再試行上限到達等で対象外と判定したケース）は、
+本Releaseでも`NOOP`のままremove対象外であり、恒久的にQueueへ滞留し続ける
+可能性がある。この滞留への対応（除去する／Dead Letter Queueへ回す等）は、
+ユーザー指示により本Releaseでは意図的にスコープ外とし、次Release以降へ
+申し送っている（`docs/design/retry_queue_removal_foundation.md` 12章
+Future Extension）。
+
+### `RetryQueueManager`型への直接依存を持たない設計
+
+`RetryQueueRemovalExecutor`は`RetryQueueManager` / `NullRetryQueueManager`
+型を一切importせず、remove操作は`remove_fn`としてメソッド引数で受け取る。
+`RetryManager`が`self._queue.remove`（v3.2.0で既に保持しているバウンド
+メソッド）を渡すのみであり、`retry_engine`パッケージ内の実行系・判定系
+コンポーネントが具象Managerクラスに依存しないという既存方針
+（`RetryExecutionSelector` / `RetryExecutionCoordinator` /
+`RetryQueueUpdateDecider`と同じ）を、実際にQueueへ書き込みを行う本
+コンポーネントでも維持している。
+
+### 本Releaseの対象外
+
+`SKIPPED`（`max_attempts`到達）のQueue滞留対応（除去・Dead Letter
+Queue化）・Queue永続化・Retry Policy（選別基準の拡張）・Retry Metrics /
+Monitoring・Queue最適化（heapqベースのPriority Queue化等）・Scheduler
+改修・`RetryQueueManager.dequeue()`の本格実装・実運用のComposition Root
+は、いずれもv4.2.0の対象外であり、将来Releaseで検討する
+（`docs/ROADMAP.md`「v3.x 以降の候補」参照）。
+
+詳細は`docs/design/retry_queue_removal_foundation_charter.md`（Project
+Charter）・`docs/design/retry_queue_removal_foundation.md`（Architecture
+Design・Architecture Review含む）を参照。

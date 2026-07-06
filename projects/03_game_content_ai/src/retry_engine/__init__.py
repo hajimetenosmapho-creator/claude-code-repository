@@ -65,6 +65,20 @@ Workflow Monitor（v2.9.0）が FAILED / TIMEOUT と判定したWorkflowを、Wo
       retry_event_dispatcher.py / retry_execution_selector.py /
       retry_execution_coordinator.py はいずれも本Releaseでも無改修
       （詳細は docs/design/retry_queue_update_foundation.md）
+
+    - （v4.2.0）RetryManager が RetryQueueRemovalExecutor（retry_queue_removal_executor、
+      新設）を Constructor Injection で保持できるようになった（Retry Queue Removal
+      Foundation）。apply_retry_queue_removals() を通じて、decide_retry_queue_updates()
+      （v4.1.0）が判定したRetryQueueUpdateDecisionのうち、outcomeがCOMPLETE / FAILの
+      項目についてのみ RetryQueueManager.remove() を呼び出し、Queueから該当項目を
+      除去できるようになった。RetryQueueManager.remove() が本Releaseで初めて呼び出し
+      可能になる。NOOP（SKIPPED / NOT_FOUND / DISABLED由来）の項目はremoveを一切
+      呼び出さない。SKIPPED（max_attempts到達）のQueue滞留対応は本Releaseの対象外。
+      src/scheduler/ / src/retry_scheduler_decision/ / src/retry_scheduler_source/ /
+      src/retry_queue/ / retry_event_consumer.py / retry_event_dispatcher.py /
+      retry_execution_selector.py / retry_execution_coordinator.py /
+      retry_queue_update_decider.py はいずれも本Releaseでも無改修
+      （詳細は docs/design/retry_queue_removal_foundation.md）
 """
 from .retry_config import RetryConfig
 from .retry_policy import DEFAULT_TARGET_STATUSES, RetryPolicy
@@ -80,6 +94,7 @@ from .retry_queue_update_decider import (
     RetryQueueUpdateDecision,
     RetryQueueUpdateOutcome,
 )
+from .retry_queue_removal_executor import RetryQueueRemovalExecutor, RetryQueueRemovalResult
 from .retry_manager import NullRetryManager, RetryManager
 
 __all__ = [
@@ -100,6 +115,8 @@ __all__ = [
     "RetryQueueUpdateOutcome",
     "RetryQueueUpdateDecision",
     "RetryQueueUpdateDecider",
+    "RetryQueueRemovalResult",
+    "RetryQueueRemovalExecutor",
     "RetryManager",
     "NullRetryManager",
 ]
