@@ -95,6 +95,25 @@ Workflow Monitor（v2.9.0）が FAILED / TIMEOUT と判定したWorkflowを、Wo
       retry_execution_coordinator.py / retry_queue_update_decider.py /
       retry_queue_removal_executor.py はいずれも本Releaseでも無改修
       （詳細は docs/design/retry_queue_cleanup_foundation.md）
+
+    - （v4.4.0）RetryManager が RetryQueueTerminalCleanupDecider
+      （retry_queue_terminal_cleanup_decider、新設）・RetryQueueTerminalCleanupExecutor
+      （retry_queue_terminal_cleanup_executor、新設）を Constructor Injection で
+      保持できるようになった（NOT_FOUND / DISABLED Cleanup Foundation）。
+      decide_retry_queue_terminal_cleanup() / apply_retry_queue_terminal_cleanup() を
+      通じて、decide_retry_queue_updates()（v4.1.0）が判定したRetryQueueUpdateDecision
+      のうち、NOT_FOUND由来のNOOPの項目についてのみ RetryQueueManager.remove() を
+      呼び出せるようになった（retry_outcome_terminality.RETRY_OUTCOME_TERMINALITY
+      分類表でTERMINALと分類。新設）。DISABLED由来のNOOPはTRANSIENTと分類され対象外
+      （KEEP）のまま。COMPLETE / FAILED（v4.2.0で除去済み） / SKIPPED（v4.3.0で
+      除去済み）はいずれも対象外（KEEP）。新しいQueueステータス・Dead Letter・隔離Queue
+      は追加せず、既存のRetryQueueManager.remove()を再利用する。src/scheduler/ /
+      src/retry_scheduler_decision/ / src/retry_scheduler_source/ / src/retry_queue/ /
+      retry_event_consumer.py / retry_event_dispatcher.py / retry_execution_selector.py /
+      retry_execution_coordinator.py / retry_queue_update_decider.py /
+      retry_queue_removal_executor.py / retry_queue_cleanup_decider.py /
+      retry_queue_cleanup_executor.py はいずれも本Releaseでも無改修
+      （詳細は docs/design/retry_queue_notfound_disabled_cleanup_foundation.md）
 """
 from .retry_config import RetryConfig
 from .retry_policy import DEFAULT_TARGET_STATUSES, RetryPolicy
@@ -117,6 +136,21 @@ from .retry_queue_cleanup_decider import (
     RetryQueueCleanupOutcome,
 )
 from .retry_queue_cleanup_executor import RetryQueueCleanupExecutor, RetryQueueCleanupResult
+from .retry_outcome_terminality import (
+    RETRY_OUTCOME_TERMINALITY,
+    RetryCleanupReason,
+    RetryOutcomeTerminality,
+    classify_reason,
+    classify_terminality,
+)
+from .retry_queue_terminal_cleanup_decider import (
+    RetryQueueTerminalCleanupDecider,
+    RetryQueueTerminalCleanupDecision,
+)
+from .retry_queue_terminal_cleanup_executor import (
+    RetryQueueTerminalCleanupExecutor,
+    RetryQueueTerminalCleanupResult,
+)
 from .retry_manager import NullRetryManager, RetryManager
 
 __all__ = [
@@ -144,6 +178,15 @@ __all__ = [
     "RetryQueueCleanupDecider",
     "RetryQueueCleanupResult",
     "RetryQueueCleanupExecutor",
+    "RetryOutcomeTerminality",
+    "RetryCleanupReason",
+    "RETRY_OUTCOME_TERMINALITY",
+    "classify_reason",
+    "classify_terminality",
+    "RetryQueueTerminalCleanupDecision",
+    "RetryQueueTerminalCleanupDecider",
+    "RetryQueueTerminalCleanupResult",
+    "RetryQueueTerminalCleanupExecutor",
     "RetryManager",
     "NullRetryManager",
 ]

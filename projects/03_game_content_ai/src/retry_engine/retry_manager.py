@@ -114,6 +114,23 @@ NullRetryManager: RETRY_ENGINE_ENABLED=false（デフォルト）、または下
       Cleanup対象はSKIPPEDのみで、COMPLETE / FAILED（v4.2.0で除去済み） / NOT_FOUND /
       DISABLEDはいずれも対象外（KEEP）。新しいQueueステータス・Dead Letter・隔離Queueは
       追加せず、既存のRetryQueueManager.remove()を再利用する（同設計書4章・11章）。
+
+    - （v4.4.0）RetryManager は RetryQueueTerminalCleanupDecider
+      （retry_queue_terminal_cleanup_decider、新設）と RetryQueueTerminalCleanupExecutor
+      （retry_queue_terminal_cleanup_executor、新設）を Constructor Injection で
+      保持できる（省略時はそれぞれ RetryQueueTerminalCleanupDecider() /
+      RetryQueueTerminalCleanupExecutor() にフォールバックする。
+      docs/design/retry_queue_notfound_disabled_cleanup_foundation.md 5章）。
+    - （v4.4.0）decide_retry_queue_terminal_cleanup() / apply_retry_queue_terminal_cleanup()
+      を新設し、decide_retry_queue_updates()（v4.1.0、無変更）への委譲、
+      RetryQueueTerminalCleanupDecider.decide_all()（NOT_FOUND / DISABLED由来のNOOPのみ、
+      retry_outcome_terminality.RETRY_OUTCOME_TERMINALITY分類表を参照してCLEANUP/KEEPを
+      判定）、RetryQueueTerminalCleanupExecutor.apply_all()（CLEANUPの項目のみ
+      RetryQueueManager.remove()を呼び出す）の各段階のみで完結する。remove_fnには
+      apply_retry_queue_cleanup()と同じくself._queue.removeを渡すのみである。
+      COMPLETE / FAILED（v4.2.0で除去済み） / SKIPPED（v4.3.0で除去済み）は対象外
+      （KEEP）のまま構造的に除外する。新しいQueueステータス・Dead Letter・隔離Queueは
+      追加せず、既存のRetryQueueManager.remove()を再利用する（同設計書4章・11章）。
 """
 from __future__ import annotations
 
@@ -134,6 +151,14 @@ from .retry_policy import RetryPolicy
 from .retry_queue_cleanup_decider import RetryQueueCleanupDecider, RetryQueueCleanupDecision
 from .retry_queue_cleanup_executor import RetryQueueCleanupExecutor, RetryQueueCleanupResult
 from .retry_queue_removal_executor import RetryQueueRemovalExecutor, RetryQueueRemovalResult
+from .retry_queue_terminal_cleanup_decider import (
+    RetryQueueTerminalCleanupDecider,
+    RetryQueueTerminalCleanupDecision,
+)
+from .retry_queue_terminal_cleanup_executor import (
+    RetryQueueTerminalCleanupExecutor,
+    RetryQueueTerminalCleanupResult,
+)
 from .retry_queue_update_decider import RetryQueueUpdateDecider, RetryQueueUpdateDecision
 from .retry_request import RetryRequest
 from .retry_result import RetryOutcome, RetryResult
@@ -161,6 +186,8 @@ class RetryManager:
         queue_removal_executor: RetryQueueRemovalExecutor | None = None,
         queue_cleanup_decider: RetryQueueCleanupDecider | None = None,
         queue_cleanup_executor: RetryQueueCleanupExecutor | None = None,
+        terminal_cleanup_decider: RetryQueueTerminalCleanupDecider | None = None,
+        terminal_cleanup_executor: RetryQueueTerminalCleanupExecutor | None = None,
     ):
         self._policy = policy
         self._executor = executor
@@ -186,6 +213,12 @@ class RetryManager:
         self._queue_cleanup_executor = (
             queue_cleanup_executor if queue_cleanup_executor is not None else RetryQueueCleanupExecutor()
         )
+        self._terminal_cleanup_decider = (
+            terminal_cleanup_decider if terminal_cleanup_decider is not None else RetryQueueTerminalCleanupDecider()
+        )
+        self._terminal_cleanup_executor = (
+            terminal_cleanup_executor if terminal_cleanup_executor is not None else RetryQueueTerminalCleanupExecutor()
+        )
 
     @classmethod
     def from_config(
@@ -203,6 +236,8 @@ class RetryManager:
         queue_removal_executor: RetryQueueRemovalExecutor | None = None,
         queue_cleanup_decider: RetryQueueCleanupDecider | None = None,
         queue_cleanup_executor: RetryQueueCleanupExecutor | None = None,
+        terminal_cleanup_decider: RetryQueueTerminalCleanupDecider | None = None,
+        terminal_cleanup_executor: RetryQueueTerminalCleanupExecutor | None = None,
     ) -> "RetryManager | NullRetryManager":
         """
         呼び出し元が構築済みの WorkflowEngineManager / WorkflowMonitorManager を
@@ -240,6 +275,11 @@ class RetryManager:
         省略した場合は RetryManager.__init__ 内でそれぞれ RetryQueueCleanupDecider() /
         RetryQueueCleanupExecutor() にフォールバックするため、本引数を渡さない既存の
         呼び出しはすべて本Release前と同じ挙動になる（v4.3.0）。
+
+        terminal_cleanup_decider / terminal_cleanup_executor も省略可能（デフォルト None）。
+        省略した場合は RetryManager.__init__ 内でそれぞれ RetryQueueTerminalCleanupDecider() /
+        RetryQueueTerminalCleanupExecutor() にフォールバックするため、本引数を渡さない既存の
+        呼び出しはすべて本Release前と同じ挙動になる（v4.4.0）。
         """
         if not retry_config.is_ready():
             return NullRetryManager()
@@ -260,6 +300,8 @@ class RetryManager:
             queue_removal_executor=queue_removal_executor,
             queue_cleanup_decider=queue_cleanup_decider,
             queue_cleanup_executor=queue_cleanup_executor,
+            terminal_cleanup_decider=terminal_cleanup_decider,
+            terminal_cleanup_executor=terminal_cleanup_executor,
         )
 
     def retry(self, run_id: str, attempt: int = 1, dry_run: bool = False) -> RetryResult:
@@ -433,6 +475,43 @@ class RetryManager:
         decisions = self.decide_retry_queue_cleanup(events, dry_run=dry_run)
         return self._queue_cleanup_executor.apply_all(decisions, remove_fn=self._queue.remove)
 
+    def decide_retry_queue_terminal_cleanup(
+        self, events: list[SchedulerEvent], dry_run: bool = False
+    ) -> list[RetryQueueTerminalCleanupDecision]:
+        """
+        SchedulerEventのリストから、各RetryQueueUpdateDecisionについてNOT_FOUND /
+        DISABLED由来のNOOPのみを対象に、RetryOutcomeTerminality分類表を参照して
+        CLEANUP/KEEPを判定する。
+
+        2段階の委譲のみで完結する：
+            1. self.decide_retry_queue_updates(events, dry_run=dry_run)（v4.1.0、無変更）
+            2. self._terminal_cleanup_decider.decide_all(decisions)（新規、判定）
+
+        判定結果を使ってRetryQueueManager.remove()を呼び出す処理、判定結果をQueueへ
+        実際に反映する処理は本メソッドには一切存在しない（Foundation First）。
+        """
+        decisions = self.decide_retry_queue_updates(events, dry_run=dry_run)
+        return self._terminal_cleanup_decider.decide_all(decisions)
+
+    def apply_retry_queue_terminal_cleanup(
+        self, events: list[SchedulerEvent], dry_run: bool = False
+    ) -> list[RetryQueueTerminalCleanupResult]:
+        """
+        SchedulerEventのリストから、各RetryQueueTerminalCleanupDecisionについて
+        outcomeがCLEANUP（NOT_FOUND由来のNOOP。3.2節でTerminalと分類）の項目のみ
+        RetryQueueManager.remove()を呼び出し、Queueから該当項目を除去する。
+
+        2段階の委譲のみで完結する：
+            1. self.decide_retry_queue_terminal_cleanup(events, dry_run=dry_run)（新規、判定）
+            2. self._terminal_cleanup_executor.apply_all(decisions, remove_fn=self._queue.remove)
+               （新規、除去。apply_retry_queue_cleanup()と同じself._queue.removeを渡す）
+
+        outcomeがKEEP（COMPLETE / FAIL / SKIPPED由来、またはDISABLED由来。3.2節で
+        Transientと分類）の項目はremove_fnを一切呼び出さない。
+        """
+        decisions = self.decide_retry_queue_terminal_cleanup(events, dry_run=dry_run)
+        return self._terminal_cleanup_executor.apply_all(decisions, remove_fn=self._queue.remove)
+
     def _skip_reason(self, monitor_status: WorkflowMonitorStatus, attempt: int) -> str:
         if monitor_status not in self._policy.target_statuses:
             return (
@@ -541,5 +620,25 @@ class NullRetryManager:
         RETRY_ENGINE_ENABLED=false（デフォルト）、または下位ゲートが閉じている場合、
         除去処理自体を一切行わず常に空リストを返す（「受け取れるが何もしない」）。
         RetryQueueCleanupExecutorへの参照は保持しない。
+        """
+        return []
+
+    def decide_retry_queue_terminal_cleanup(
+        self, events: list[SchedulerEvent], dry_run: bool = False
+    ) -> list[RetryQueueTerminalCleanupDecision]:
+        """
+        RETRY_ENGINE_ENABLED=false（デフォルト）、または下位ゲートが閉じている場合、
+        判定自体を一切行わず常に空リストを返す（「受け取れるが何もしない」）。
+        RetryQueueTerminalCleanupDeciderへの参照は保持しない。
+        """
+        return []
+
+    def apply_retry_queue_terminal_cleanup(
+        self, events: list[SchedulerEvent], dry_run: bool = False
+    ) -> list[RetryQueueTerminalCleanupResult]:
+        """
+        RETRY_ENGINE_ENABLED=false（デフォルト）、または下位ゲートが閉じている場合、
+        除去処理自体を一切行わず常に空リストを返す（「受け取れるが何もしない」）。
+        RetryQueueTerminalCleanupExecutorへの参照は保持しない。
         """
         return []
