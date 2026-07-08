@@ -184,6 +184,58 @@
 - **対応状況**：対応しない。v4.4.0のProject Charter / Architecture Design / Architecture Reviewで`retry_outcome_terminality.py` / `retry_queue_terminal_cleanup_decider.py` / `retry_queue_terminal_cleanup_executor.py`の新規追加・`retry_manager.py`の変更・`__init__.py`の`__all__`更新はいずれも正式に承認済みである。本質的な制約（`scheduler` / `retry_scheduler_decision` / `retry_scheduler_source` / `retry_queue` / `retry_queue_update_decider.py` / `retry_queue_removal_executor.py` / `retry_queue_cleanup_decider.py` / `retry_queue_cleanup_executor.py`のゼロ改修、`outcome`が`KEEP`の項目は`remove()`を呼び出さないこと、`RetryQueueTerminalCleanupDecider` / `RetryQueueTerminalCleanupExecutor`が`RetryQueueManager` / `NullRetryQueueManager`型への直接依存を持たないこと、`RetryManager` / `NullRetryManager`の既存メソッドの後方互換性）は、v4.4.0の新規テスト（`tests/test_e2e_v4_4_0_retry_queue_notfound_disabled_cleanup_foundation.py`、123件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-12]`と同じ扱い）
 - **今後の対応**：不要（本エントリで説明を確定）。将来Release（Retry Policy Foundation・Queue永続化等）で`retry_engine`側にさらに変更が入るたびに同様のFAILが起こりうるが、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
 
+### [KI-14] v4.5.0でのRetry Policy Foundationにより、v4.4.0の一部Architecture GuardがFAILする（設計上の意図的な差分）
+
+- **発見日**：2026-07-08（v4.5.0 Retry Policy Foundation Test工程実施時）
+- **検証方法**：`git stash`で本Release（`retry_manager.py` / `__init__.py`の変更、`retry_policy_protocol.py`の新規追加）を一時退避したベースラインと、本Release適用後を比較し、差分の原因が本Releaseの変更であることを構造的に確認した
+- **対象と症状（ベースライン → 本Release適用後）**：
+  - `tests/test_e2e_v4_4_0_retry_queue_notfound_disabled_cleanup_foundation.py`：123/123 PASS → 122/123 PASS（新規1件FAIL：テスト38「`retry_engine.__all__`が既存シンボル＋新規シンボルの構成になっている」）
+- **原因**：v4.5.0（Retry Policy Foundation）で`src/retry_engine/`に`retry_policy_protocol.py`を新規追加し、`retry_manager.py`（`policy` / `retry_policy`引数の型注釈を`RetryPolicy`から`ExplainableRetryPolicy`へ変更）・`__init__.py`（新規シンボルexport）を変更した（`docs/design/retry_policy_foundation.md`）。v4.4.0の`__all__`検査は「その時点で`__all__`が36シンボルちょうどだった」という当時の事実をArchitecture Guardとして固定していたものであり、`[KI-3]`〜`[KI-13]`と同種の既知差分である
+- **対応状況**：対応しない。v4.5.0のProject Charter / Architecture Design / Architecture Reviewで`retry_policy_protocol.py`の新規追加・`retry_manager.py`の変更（型注釈のみ）・`__init__.py`の`__all__`更新はいずれも正式に承認済みである。本質的な制約（`retry_policy.py`自体が0 diffであること、`retry()` / `_skip_reason()`のロジック本体が1行も変更されていないこと、`RetryManager` / `NullRetryManager`の既存メソッドの後方互換性）は、v4.5.0の新規テスト（`tests/test_e2e_v4_5_0_retry_policy_foundation.py`、64件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-13]`と同じ扱い）
+- **今後の対応**：不要（本エントリで説明を確定）。将来Release（新しいRetry戦略の実装等）で`retry_engine`側にさらに変更が入るたびに同様のFAILが起こりうるが、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
+
+---
+
+## [v4.5.0] - 2026-07-08 ★ Retry Policy Foundation
+
+### Added
+
+- `src/retry_engine/retry_policy_protocol.py`（新規）：`RetryManager`が実際に依存している面（`retry()`が呼び出す`should_retry()`、`_skip_reason()`が参照する`target_statuses` / `max_attempts`）をProtocolとして明示化した新規モジュール
+  - `RetryDecisionPolicy`（`Protocol`、`@runtime_checkable`）：`should_retry(monitor_status, attempt) -> bool`のみを要求する最小契約
+  - `ExplainableRetryPolicy`（`Protocol`、`@runtime_checkable`。`RetryDecisionPolicy`を拡張）：`target_statuses` / `max_attempts`を追加した、スキップ理由の説明に必要な属性を公開する契約
+- `src/retry_engine/retry_manager.py`（変更）：`RetryManager.__init__` / `from_config()`の`policy` / `retry_policy`引数の型注釈を、具体クラス`RetryPolicy`から抽象契約`ExplainableRetryPolicy`へ変更した
+  - `retry()` / `_skip_reason()`のロジック本体は1行も変更していない
+  - 不要になった`from .retry_policy import RetryPolicy`のimportを削除した
+- `src/retry_engine/__init__.py`（変更）：`RetryDecisionPolicy` / `ExplainableRetryPolicy`を新規export。既存の36シンボルは維持
+- `tests/test_e2e_v4_5_0_retry_policy_foundation.py`新規作成（64件）
+- `docs/design/retry_policy_foundation_charter.md`新規作成（Project Charter、承認済み）
+- `docs/design/retry_policy_foundation.md`新規作成（Architecture Design。Architecture Review完了・**Approve with Recommendations**、指摘事項4点をすべて反映済み）
+
+### Note
+
+- **既存`RetryPolicy`（`retry_policy.py`）は本Releaseでも無改修（0 diff）。** Protocolの性質上、明示的な継承なしに構造的に`RetryDecisionPolicy` / `ExplainableRetryPolicy`の両方を満たす（テスト1-3で確認済み）
+- **契約を2段階に分離した（Architecture Design 4章 案C）。** `RetryDecisionPolicy`（`should_retry()`のみ）と`ExplainableRetryPolicy`（`RetryDecisionPolicy`を拡張し、`_skip_reason()`が実際に依存する`target_statuses` / `max_attempts`を追加）に分けることで、将来`target_statuses` / `max_attempts`という概念を持たない戦略（例：`ExponentialBackoffPolicy`）は`RetryDecisionPolicy`のみを満たせばよい構造にした（テスト5-6で確認済み）
+- **新しいRetry戦略（`FixedRetryPolicy` / `ExponentialBackoffPolicy` / `AdaptiveRetryPolicy`等）の実装は本Releaseの対象外（Non-Goal）。** 本Releaseは差し替え可能な構造の整備のみを行った（テスト14で確認済み）
+- **`RetryManager`の変更は型注釈のみ。** `retry()` / `_skip_reason()`の本体は1行も変更していない。Pythonは型注釈を実行時に強制しないため、既存の`RetryManager(policy=RetryPolicy(...), ...)`呼び出しは本Release前後でまったく同じ結果になる（テスト10で回帰的に確認済み）
+- **`@runtime_checkable`を付与し、`isinstance()`による構造適合確認を可能にした。** ただし`isinstance()`はメソッド・属性の存在のみを検証しシグネチャまでは検証しないため、`RetryManager(policy=fake, ...).retry(...)`を実際に呼び出す振る舞いテストを併用した（テスト7-9、Architecture Review 12.5節 Recommendation 3）
+- **`scheduler` / `retry_scheduler_decision` / `retry_scheduler_source` / `retry_queue` / `retry_engine`配下の既存ファイル（v4.4.0までに追加されたもの含む）はいずれも本Releaseでも無改修。** 変更は`retry_engine`配下2ファイル（新規1・変更1）のみ
+- 対象外（今回も未実装）：新しいRetry戦略の実装・複数戦略を切り替えるComposition Root・`_skip_reason()`の`target_statuses` / `max_attempts`依存の解消・Retry Queue / Cleanup系列への変更（いずれも将来Release候補。詳細は`docs/design/retry_policy_foundation_charter.md` 10章、`docs/design/retry_policy_foundation.md` 8章 Boundary・9章 Future Extension）
+
+### Architecture Review Recommendations（反映済み）
+
+- **Recommendation 1**：`retry_policy_protocol.py`のモジュールdocstringに、既存`RetryPolicy`（具体実装）との関係・混同注意を明記した
+- **Recommendation 2**：`retry_manager.py`実装時、型注釈変更に伴い不要になった`RetryPolicy`のimportを削除した
+- **Recommendation 3**：`isinstance()`は構造確認のみであり、振る舞いテストと併用することを設計書・テストの両方に明記した
+- **Recommendation 4**：`retry_manager.py` / `__init__.py`のモジュールdocstringにv4.5.0分の設計メモを追記した
+
+### Tested
+
+- `tests/test_e2e_v4_5_0_retry_policy_foundation.py`: 64/64 PASS
+- 既存回帰確認：`v1.9.0`〜`v2.9.0`（Analytics Foundation `[KI-1]`除く）全PASS
+- `v3.0.0`（200/202）・`v3.1.0`（151/152）・`v3.2.0`（99/102）・`v4.0.0`（83/88）・`v4.1.0`（84/87）・`v4.2.0`（91/94）・`v4.3.0`（105/108）：いずれも既存の`[KI-3]`〜`[KI-13]`による既知差分のみで、本Releaseで変化なし
+- `v4.4.0`（122/123、新規1件は`[KI-14]`参照）：`git stash`によるベースライン比較（`v4.4.0`は本Release適用前123/123 PASSであったことを確認済み）で、本Release固有の新規差分を特定済み
+- `v1.10.0`（Analytics Foundation）は`[KI-1]`（既知の問題、本Releaseと無関係）のため今回は実行対象外
+
 ---
 
 ## [v4.4.0] - 2026-07-08 ★ NOT_FOUND / DISABLED Cleanup Foundation

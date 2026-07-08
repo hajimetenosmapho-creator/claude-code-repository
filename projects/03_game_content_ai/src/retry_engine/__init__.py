@@ -114,9 +114,23 @@ Workflow Monitor（v2.9.0）が FAILED / TIMEOUT と判定したWorkflowを、Wo
       retry_queue_removal_executor.py / retry_queue_cleanup_decider.py /
       retry_queue_cleanup_executor.py はいずれも本Releaseでも無改修
       （詳細は docs/design/retry_queue_notfound_disabled_cleanup_foundation.md）
+
+    - （v4.5.0）RetryManagerが実際に依存している面（retry()が呼び出す
+      should_retry()、_skip_reason()が参照するtarget_statuses / max_attempts）を
+      Protocolとして明示化した RetryDecisionPolicy（最小契約）・
+      ExplainableRetryPolicy（RetryDecisionPolicyを拡張した説明可能契約）を
+      retry_policy_protocol（新設）に追加した（Retry Policy Foundation）。
+      RetryManager.__init__() / from_config() の policy / retry_policy引数の
+      型注釈をRetryPolicyからExplainableRetryPolicyへ変更したが、型注釈のみの
+      変更でありretry() / _skip_reason()のロジック本体・RetryPolicy
+      （retry_policy.py）自体はいずれも無改修。将来のRetry戦略
+      （FixedRetryPolicy / ExponentialBackoffPolicy / AdaptiveRetryPolicy等）の
+      実装は本Releaseの対象外（Non-Goal）
+      （詳細は docs/design/retry_policy_foundation.md）
 """
 from .retry_config import RetryConfig
 from .retry_policy import DEFAULT_TARGET_STATUSES, RetryPolicy
+from .retry_policy_protocol import ExplainableRetryPolicy, RetryDecisionPolicy
 from .retry_request import RetryRequest
 from .retry_result import RetryOutcome, RetryResult
 from .retry_executor import RetryExecutor
@@ -156,6 +170,8 @@ from .retry_manager import NullRetryManager, RetryManager
 __all__ = [
     "RetryPolicy",
     "DEFAULT_TARGET_STATUSES",
+    "RetryDecisionPolicy",
+    "ExplainableRetryPolicy",
     "RetryConfig",
     "RetryRequest",
     "RetryOutcome",

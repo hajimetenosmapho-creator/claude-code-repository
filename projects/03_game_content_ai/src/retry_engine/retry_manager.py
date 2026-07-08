@@ -131,6 +131,25 @@ NullRetryManager: RETRY_ENGINE_ENABLED=false（デフォルト）、または下
       COMPLETE / FAILED（v4.2.0で除去済み） / SKIPPED（v4.3.0で除去済み）は対象外
       （KEEP）のまま構造的に除外する。新しいQueueステータス・Dead Letter・隔離Queueは
       追加せず、既存のRetryQueueManager.remove()を再利用する（同設計書4章・11章）。
+
+    - （v4.5.0）RetryManager.__init__() / from_config() の policy / retry_policy
+      引数の型注釈を、具体クラスRetryPolicyから抽象契約ExplainableRetryPolicy
+      （retry_policy_protocol、新設）へ変更した（Retry Policy Foundation）。
+      RetryManagerが実際に依存している面（retry()が呼び出すshould_retry()、
+      _skip_reason()が参照するtarget_statuses / max_attempts）をProtocolとして
+      明示化したものであり、型注釈のみの変更である。retry() / _skip_reason()の
+      ロジック本体は1行も変更していない。RetryPolicy（retry_policy.py）自体も
+      無改修であり、Protocolの性質上、明示的な継承なしに構造的に
+      ExplainableRetryPolicyを満たす。将来のRetry戦略（ExponentialBackoffPolicy等）
+      の実装は本Releaseの対象外（Non-Goal）。src/scheduler/ /
+      src/retry_scheduler_decision/ / src/retry_scheduler_source/ / src/retry_queue/ /
+      retry_event_consumer.py / retry_event_dispatcher.py / retry_execution_selector.py /
+      retry_execution_coordinator.py / retry_queue_update_decider.py /
+      retry_queue_removal_executor.py / retry_queue_cleanup_decider.py /
+      retry_queue_cleanup_executor.py / retry_queue_terminal_cleanup_decider.py /
+      retry_queue_terminal_cleanup_executor.py / retry_outcome_terminality.py /
+      retry_policy.py はいずれも本Releaseでも無改修
+      （詳細は docs/design/retry_policy_foundation.md）
 """
 from __future__ import annotations
 
@@ -147,7 +166,7 @@ from .retry_event_dispatcher import RetryDispatchEvent, RetryEventDispatcher
 from .retry_execution_coordinator import RetryExecutionCoordinator, RetryExecutionResult
 from .retry_execution_selector import RetryExecutionSelector
 from .retry_executor import RetryExecutor
-from .retry_policy import RetryPolicy
+from .retry_policy_protocol import ExplainableRetryPolicy
 from .retry_queue_cleanup_decider import RetryQueueCleanupDecider, RetryQueueCleanupDecision
 from .retry_queue_cleanup_executor import RetryQueueCleanupExecutor, RetryQueueCleanupResult
 from .retry_queue_removal_executor import RetryQueueRemovalExecutor, RetryQueueRemovalResult
@@ -174,7 +193,7 @@ class RetryManager:
 
     def __init__(
         self,
-        policy: RetryPolicy,
+        policy: ExplainableRetryPolicy,
         executor: RetryExecutor,
         monitor: WorkflowMonitorManager,
         queue: "RetryQueueManager | NullRetryQueueManager | None" = None,
@@ -224,7 +243,7 @@ class RetryManager:
     def from_config(
         cls,
         retry_config: RetryConfig,
-        retry_policy: RetryPolicy,
+        retry_policy: ExplainableRetryPolicy,
         workflow_engine_manager: "WorkflowEngineManager | NullWorkflowEngineManager",
         workflow_monitor_manager: "WorkflowMonitorManager | NullWorkflowMonitorManager",
         retry_queue_manager: "RetryQueueManager | NullRetryQueueManager | None" = None,
