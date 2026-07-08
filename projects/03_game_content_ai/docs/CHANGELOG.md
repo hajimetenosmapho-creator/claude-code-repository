@@ -161,6 +161,62 @@
 - **対応状況**：対応しない。v4.2.0のProject Charter / Architecture Design / Architecture Reviewで`retry_queue_removal_executor.py`の新規追加・`retry_manager.py`の変更（`queue_removal_executor`引数・`apply_retry_queue_removals()`追加）・`__init__.py`の`__all__`更新はいずれも正式に承認済みである。本質的な制約（`scheduler` / `retry_scheduler_decision` / `retry_scheduler_source` / `retry_queue` / `retry_event_consumer.py` / `retry_event_dispatcher.py` / `retry_execution_selector.py` / `retry_execution_coordinator.py` / `retry_queue_update_decider.py`のゼロ改修、`outcome`が`NOOP`の項目は`remove()`を呼び出さないこと、`RetryQueueRemovalExecutor`が`RetryQueueManager` / `NullRetryQueueManager`型への直接依存を持たないこと、`RetryManager` / `NullRetryManager`の既存メソッドの後方互換性）は、v4.2.0の新規テスト（`tests/test_e2e_v4_2_0_retry_queue_removal_foundation.py`、94件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-10]`と同じ扱い）
 - **今後の対応**：不要（本エントリで説明を確定）。`git diff --quiet`ベースのチェック（v3.1.0〜v3.7.0）は本Releaseをcommitすれば自然に解消する。一方、v4.1.0テスト22-23は`git diff`を使わない恒久的な静的検査であり、コミットの有無に関わらず本Release以降も成立しなくなる。将来Release（`SKIPPED`のQueue滞留対応等）で`retry_engine`側にさらに変更が入るたびに同様のFAILが起こりうるが、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
 
+### [KI-12] v4.3.0でのRetry Queue Cleanup Foundationにより、v4.1.0〜v4.2.0の一部Architecture GuardがFAILする（設計上の意図的な差分）
+
+- **発見日**：2026-07-08（v4.3.0 Retry Queue Cleanup Foundation Test工程実施時）
+- **検証方法**：`git stash`で本Release（`retry_manager.py` / `__init__.py`の変更、`retry_queue_cleanup_decider.py` / `retry_queue_cleanup_executor.py`の新規追加）を一時退避したベースラインと、本Release適用後を比較し、差分の原因が本Releaseの変更であることを構造的に確認した
+- **対象と症状（ベースライン → 本Release適用後）**：
+  - `tests/test_e2e_v4_1_0_retry_queue_update_foundation.py`：84/87 PASS → 84/87 PASS（変化なし。テスト22「`__all__`が既存＋新規3シンボルの構成」・テスト23「最終引数が`queue_update_decider`」×2の3件FAILは`[KI-11]`から継続する既存差分で本Releaseとは無関係）
+  - `tests/test_e2e_v4_2_0_retry_queue_removal_foundation.py`：94/94 PASS → 91/94 PASS（新規3件FAIL：テスト24「`__all__`が既存＋新規2シンボルの構成」・テスト25「`__init__` / `from_config()`の最終引数が`queue_removal_executor`」×2）
+- **原因**：v4.3.0（Retry Queue Cleanup Foundation）で`src/retry_engine/`に`retry_queue_cleanup_decider.py` / `retry_queue_cleanup_executor.py`を新規追加し、`retry_manager.py`（`queue_cleanup_decider` / `queue_cleanup_executor`引数・`decide_retry_queue_cleanup()` / `apply_retry_queue_cleanup()`追加）・`__init__.py`（新規シンボルexport）を変更した（`docs/design/retry_queue_cleanup_foundation.md`）。v4.2.0の`__all__` / 最終引数検査は「その時点で`queue_removal_executor`が最終引数だった」という当時の事実をArchitecture Guardとして固定していたものであり、`[KI-3]`〜`[KI-11]`と同種の既知差分である
+- **対応状況**：対応しない。v4.3.0のProject Charter / Architecture Design / Architecture Reviewで`retry_queue_cleanup_decider.py` / `retry_queue_cleanup_executor.py`の新規追加・`retry_manager.py`の変更・`__init__.py`の`__all__`更新はいずれも正式に承認済みである。本質的な制約（`scheduler` / `retry_scheduler_decision` / `retry_scheduler_source` / `retry_queue` / `retry_queue_update_decider.py` / `retry_queue_removal_executor.py`等のゼロ改修、`outcome`が`KEEP`の項目は`remove()`を呼び出さないこと、`RetryQueueCleanupDecider` / `RetryQueueCleanupExecutor`が`RetryQueueManager` / `NullRetryQueueManager`型への直接依存を持たないこと、`RetryManager` / `NullRetryManager`の既存メソッドの後方互換性）は、v4.3.0の新規テスト（`tests/test_e2e_v4_3_0_retry_queue_cleanup_foundation.py`、108件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-11]`と同じ扱い）
+- **今後の対応**：不要（本エントリで説明を確定）。将来Release（`NOT_FOUND` / `DISABLED`由来のCleanup方針検討等）で`retry_engine`側にさらに変更が入るたびに同様のFAILが起こりうるが、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
+
+---
+
+## [v4.3.0] - 2026-07-08 ★ Retry Queue Cleanup Foundation
+
+### Added
+
+- `src/retry_engine/retry_queue_cleanup_decider.py`（新規）：`RetryQueueUpdateDecider`（v4.1.0）が判定した`RetryQueueUpdateDecision`のリストを受け取り、`outcome`が`NOOP`かつ対応する`retry_result.outcome`が`SKIPPED`の項目のみを`CLEANUP`、それ以外（`COMPLETE` / `FAIL`、および`NOOP`でも`NOT_FOUND` / `DISABLED`由来）を`KEEP`と判定する最小コンポーネント
+  - `RetryQueueCleanupOutcome`（`CLEANUP` / `KEEP`の2値Enum）
+  - `RetryQueueCleanupDecision`（`frozen=True`の`dataclass`）：`update_decision`（元の`RetryQueueUpdateDecision`をそのまま保持）・`outcome`・`reason`の3フィールド
+  - `RetryQueueCleanupDecider`：`decide(update_decision) -> RetryQueueCleanupDecision` / `decide_all(update_decisions) -> list[RetryQueueCleanupDecision]`の2メソッドのみを持つStatelessなコンポーネント。`RetryQueueManager` / `NullRetryQueueManager`型を一切importしない
+- `src/retry_engine/retry_queue_cleanup_executor.py`（新規）：`RetryQueueCleanupDecider`が判定した`RetryQueueCleanupDecision`のリストを受け取り、`outcome`が`CLEANUP`の項目についてのみ`RetryQueueManager.remove()`を呼び出し、Queueから該当項目を除去する最小コンポーネント
+  - `RetryQueueCleanupResult`（`frozen=True`の`dataclass`）：`decision`・`attempted`・`queue_result`・`reason`の4フィールド（v4.2.0`RetryQueueRemovalResult`と同型）
+  - `RetryQueueCleanupExecutor`：`apply(decision, remove_fn) -> RetryQueueCleanupResult` / `apply_all(decisions, remove_fn) -> list[RetryQueueCleanupResult]`の2メソッドのみを持つStatelessなコンポーネント。remove操作は`remove_fn: Callable[[str], RetryQueueResult]`としてメソッド引数で受け取る（v4.2.0`RetryQueueRemovalExecutor`と同じパターン）
+- `src/retry_engine/retry_manager.py`（変更）：`RetryManager`が`RetryQueueCleanupDecider` / `RetryQueueCleanupExecutor`をConstructor Injectionで保持できるようにし、以下を追加した
+  - `RetryManager.__init__` / `from_config()`に`queue_cleanup_decider` / `queue_cleanup_executor`引数（デフォルト`None`）を追加。省略時はそれぞれ自動フォールバックする
+  - `decide_retry_queue_cleanup(events, dry_run=False) -> list[RetryQueueCleanupDecision]`：`decide_retry_queue_updates()`（v4.1.0、無変更）への委譲・`RetryQueueCleanupDecider.decide_all()`への委譲の2段階のみで完結する
+  - `apply_retry_queue_cleanup(events, dry_run=False) -> list[RetryQueueCleanupResult]`：`decide_retry_queue_cleanup()`への委譲・`RetryQueueCleanupExecutor.apply_all(decisions, remove_fn=self._queue.remove)`への委譲の2段階のみで完結する。これにより、v4.2.0では対象外だった`SKIPPED`由来の`NOOP`項目についても、初めて`RetryQueueManager.remove()`が呼び出し可能になった
+  - `NullRetryManager`にも同名2メソッドを追加。専用コンポーネントを一切構築・参照せず、常に空リスト`[]`を返す
+- `src/retry_engine/__init__.py`（変更）：`RetryQueueCleanupOutcome` / `RetryQueueCleanupDecision` / `RetryQueueCleanupDecider` / `RetryQueueCleanupResult` / `RetryQueueCleanupExecutor`を新規export。既存の21シンボルは維持
+- `tests/test_e2e_v4_3_0_retry_queue_cleanup_foundation.py`新規作成（108件）
+- `docs/design/retry_queue_cleanup_foundation_charter.md`新規作成（Project Charter、承認済み）
+- `docs/design/retry_queue_cleanup_foundation.md`新規作成（Architecture Design。Architecture Review完了・**Approve with Recommendations**、指摘事項1点を記録）
+
+### Note
+
+- **v4.2.0のCharterで次Release以降の検討事項として持ち越されていた「`SKIPPED`のQueue滞留対応」に、本Releaseで着手した。** `SKIPPED`（`max_attempts`到達）由来の`NOOP`項目は、本Release後は`apply_retry_queue_cleanup()`経由でQueueから除去できる（テスト25で回帰的に確認済み）
+- **Cleanup対象は`SKIPPED`のみに意図的に限定した。** `COMPLETE` / `FAILED`（v4.2.0で既に除去済みのはず）、および`NOOP`でも`NOT_FOUND` / `DISABLED`由来の項目は、いずれも本Releaseでも`KEEP`のままQueueに残り続ける（テスト26-27で回帰的に確認済み）。ユーザー承認済みのProject Charterに基づくスコープ限定であり、見落としではない
+- **新しいQueueステータス（Dead Letter Queue・隔離Queue等）は追加しなかった。** 既存の`RetryQueueManager.remove()`（v3.1.0、`status=CANCELLED`に更新後削除）をそのまま再利用した
+- **`RetryQueueCleanupDecider` / `RetryQueueCleanupExecutor`はいずれも`RetryQueueManager`型への直接依存を一切持たない。** Decider側は`RetryQueueUpdateDecision`（既存データ）のみを入力とし、Executor側のremove操作は`remove_fn: Callable[[str], RetryQueueResult]`としてメソッド引数で受け取る。v4.0.0`RetryExecutionCoordinator`・v4.2.0`RetryQueueRemovalExecutor`と同じ設計言語を継承した
+- **`RetryManagerの変更は薄い委譲に留めた。** `decide_retry_queue_cleanup()` / `apply_retry_queue_cleanup()`はいずれも2行の委譲のみで完結し、判定・除去ロジック自体は`RetryManager`に書いていない
+- **Backward Compatibility を維持。** `RetryManager.__init__` / `from_config()`への引数追加は末尾のデフォルト値付き引数のみであり、既存の呼び出し（新規引数を渡さない場合）は本Release後もまったく同じ結果になる。`retry()` 〜 `apply_retry_queue_removals()`までの既存メソッド（`RetryManager` / `NullRetryManager`とも）は1行も変更していない
+- **`scheduler` / `retry_scheduler_decision` / `retry_scheduler_source` / `retry_queue` / `retry_queue_update_decider.py` / `retry_queue_removal_executor.py`はいずれも本Releaseでも無改修。** 変更は`retry_engine`配下3ファイル（新規2・変更1）と`__init__.py`のみ
+- 対象外（今回も未実装）：`NOT_FOUND` / `DISABLED`由来の`NOOP`のCleanup方針・Dead Letter Queue・Queue永続化・Retry Policy拡張・Retry Metrics・Queue最適化・Scheduler改修・実運用のComposition Root（いずれも将来Release候補。詳細は`docs/design/retry_queue_cleanup_foundation_charter.md` 9章、`docs/design/retry_queue_cleanup_foundation.md` 8章）
+
+### Architecture Review Recommendations（反映済み）
+
+- **`CLEANUP`パターンと`KEEP`パターン双方の独立した単体テスト**：`CLEANUP`（テスト1・10・25）、`KEEP`のうち`COMPLETE`（テスト4・11・26）・`FAIL`（テスト5）・`NOT_FOUND`由来（テスト2・27）・`DISABLED`由来（テスト3）をそれぞれ独立したテストとして固定化し、Spyオブジェクト（`FakeRetryQueueManager`）・実`RetryQueueManager`の両方で`remove_fn`の呼び出し有無を確認済み
+
+### Tested
+
+- `tests/test_e2e_v4_3_0_retry_queue_cleanup_foundation.py`: 108/108 PASS
+- 既存回帰確認：`v1.9.0`〜`v2.9.0`（Analytics Foundation `[KI-1]`除く）全PASS
+- `v4.1.0`（84/87、`[KI-11]`による既存差分のみ）・`v4.2.0`（91/94、新規3件は`[KI-12]`参照）：`git stash`によるベースライン比較（`v4.2.0`は本Release適用前94/94 PASSであったことを確認済み）で、本Release固有の新規差分を特定済み
+- `v1.10.0`（Analytics Foundation）は`[KI-1]`（既知の問題、本Releaseと無関係）のため今回は実行対象外
+
 ---
 
 ## [v4.2.0] - 2026-07-06 ★ Retry Queue Removal Foundation

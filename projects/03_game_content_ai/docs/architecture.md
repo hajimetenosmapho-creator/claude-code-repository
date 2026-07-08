@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-08（v4.3.0 — Retry Queue Cleanup Foundation層を追記。`RetryQueueUpdateDecider`（v4.1.0）が判定した`RetryQueueUpdateDecision`のうち、`outcome`が`NOOP`かつ`retry_result.outcome`が`SKIPPED`（`max_attempts`到達）の項目についてのみ`RetryQueueManager.remove()`を呼び出す新規コンポーネント`RetryQueueCleanupDecider`（判定）・`RetryQueueCleanupExecutor`（除去実行）を追加した設計判断。v4.2.0で対象外だった`SKIPPED`由来のQueue滞留に対応する一方、`COMPLETE` / `FAILED`（v4.2.0で除去済みのはず） / `NOT_FOUND` / `DISABLED`はいずれも対象外（KEEP）のまま構造的に維持したCleanup方針、Dead Letter Queue等の新しいQueueステータスを追加せず既存の`RetryQueueManager.remove()`を再利用した判断を明記）  
 更新日：2026-07-06（v4.1.0 — Retry Queue Update Foundation層を追記。`RetryManager.execute_dispatchable_retries()`（v4.0.0）が集約した`RetryExecutionResult`を対象に、対応するRetry Queue項目が`RetryQueueStatus.COMPLETED` / `FAILED`のどちらへ更新されるべきか（あるいは更新しないか）を判定する新規コンポーネント`RetryQueueUpdateDecider`を追加した設計判断。「再実行が実際に実行されたか」（`RetryResult.outcome == RETRIED`）を唯一の分岐点とし、`SKIPPED` / `NOT_FOUND` / `DISABLED`はいずれも`NOOP`（更新なし）に統一する判定方針、`RetryQueueManager.remove()`等への呼び出し経路を一切持たない境界、`retry_queue`パッケージへの変更が一切不要だった設計上の理由を明記）  
 更新日：2026-07-06（v4.0.0 — Retry Execution Foundation層を追記。`RetryEventDispatcher`（v3.9.0）が整理した`RetryDispatchEvent`のうち`dispatchable=True`のものだけを対象に、初めて`RetryManager.retry()`を呼び出せる基盤を追加した設計判断。判定（`RetryExecutionSelector`）と実行・結果集約（`RetryExecutionCoordinator`）を責務分離したコンポーネント構成、`dispatchable=true`を唯一の実行入口として1箇所に集約する設計、新規コンポーネントがRetry Queueへ一切依存しない境界、`retry_attempt`を`getattr`による緩いダックタイピング＋フォールバックで取得する暫定実装であることを明記。あわせて、v3.7.0〜v3.9.0（Retry Scheduler Event Integration・Retry Engine Event Consumption・Retry Engine Event Dispatch）の個別セクションが本ドキュメントに未追記のままだった既知のギャップを踏まえ、Retry Queueから`RetryManager.retry()`に至る現在の全体パイプラインを新セクションに一括して整理した）  
 更新日：2026-07-03（v3.6.0 — Retry Scheduler Decision Wiring層を追記。`SchedulerEngine`が`RetrySchedulerDecision`（v3.5.0）をConstructor Injectionで保持し、`select_candidates()` / `select_next_candidate()`という判定サイクルとは独立した読み取り専用2メソッドを追加した設計判断、`SchedulerEngine`自身は`RetrySchedulerDecision`を生成しないというユーザー承認済み方針、`retry_decision=None`時にガード節で`[]` / `None`を直接返す（Null Object Patternに依らない）フォールバック方式、`evaluate()` / `run_due()`の判定ロジックが無変更であることを明記）  
@@ -1441,4 +1442,88 @@ Monitoring・Queue最適化（heapqベースのPriority Queue化等）・Schedul
 
 詳細は`docs/design/retry_queue_removal_foundation_charter.md`（Project
 Charter）・`docs/design/retry_queue_removal_foundation.md`（Architecture
+Design・Architecture Review含む）を参照。
+
+---
+
+## Retry Queue Cleanup Foundation層（`src/retry_engine/`、v4.3.0 追加）
+
+`RetryQueueUpdateDecider`（v4.1.0）が判定した`RetryQueueUpdateDecision`の
+うち、`outcome`が`NOOP`かつ`retry_result.outcome`が`SKIPPED`
+（`max_attempts`到達）の項目についてのみ`RetryQueueManager.remove()`を
+呼び出し、Queueから該当項目を除去する新規コンポーネント
+`RetryQueueCleanupDecider`（判定）・`RetryQueueCleanupExecutor`（除去実行）
+を追加した。v4.2.0で対象外だった`SKIPPED`由来のQueue滞留に、本Releaseで
+初めて対応する。
+
+```
+RetryManager
+   │
+   ├── decide_retry_queue_cleanup(events, dry_run=False)  ★新設
+   │      1. self.decide_retry_queue_updates(events, dry_run=dry_run)（v4.1.0、無変更）
+   │      2. self._queue_cleanup_decider.decide_all(update_decisions)
+   │
+   ├── apply_retry_queue_cleanup(events, dry_run=False)  ★新設
+   │      1. self.decide_retry_queue_cleanup(events, dry_run=dry_run)
+   │      2. self._queue_cleanup_executor.apply_all(cleanup_decisions, remove_fn=self._queue.remove)
+   │
+   ├── RetryQueueCleanupDecider（判定）
+   │      + decide(update_decision) -> RetryQueueCleanupDecision
+   │      + decide_all(update_decisions) -> list[RetryQueueCleanupDecision]
+   │      RetryQueueManager型を一切importしない、コンストラクタ引数ゼロの
+   │      完全に無状態なコンポーネント
+   │
+   └── RetryQueueCleanupExecutor（除去実行）
+          + apply(decision, remove_fn) -> RetryQueueCleanupResult
+          + apply_all(decisions, remove_fn) -> list[RetryQueueCleanupResult]
+          remove操作はremove_fn: Callable[[str], RetryQueueResult]として
+          メソッド引数で受け取る（v4.2.0 RetryQueueRemovalExecutorと同じパターン）
+
+RetryQueueCleanupDecision
+   + update_decision: RetryQueueUpdateDecision（v4.1.0、分解しない）
+   + outcome: RetryQueueCleanupOutcome（CLEANUP / KEEP、★新設）
+   + reason: str
+
+RetryQueueCleanupResult
+   + decision: RetryQueueCleanupDecision（★新設、分解しない）
+   + attempted: bool（remove呼び出しを試行したか）
+   + queue_result: RetryQueueResult | None（v3.1.0、分解しない）
+   + reason: str
+```
+
+### Cleanup方針
+
+| `update_decision.outcome` | `retry_result.outcome` | 判定 | remove呼び出し |
+|---|---|---|---|
+| `COMPLETE` | `RETRIED`（成功） | `KEEP` | 呼び出さない（v4.2.0で既に除去済みのはず） |
+| `FAIL` | `RETRIED`（失敗） | `KEEP` | 呼び出さない（同上） |
+| `NOOP` | `SKIPPED` | `CLEANUP` | 呼び出す |
+| `NOOP` | `NOT_FOUND` | `KEEP` | 呼び出さない（本Releaseの対象外） |
+| `NOOP` | `DISABLED` | `KEEP` | 呼び出さない（本Releaseの対象外） |
+
+`update_decision.execution_result.dispatch_event.candidate_event.run_id`
+（v3.8.0で定義済みの既存フィールド）から`run_id`を取得し、追加のQueue
+問い合わせは発生しない。Dead Letter Queue・隔離Queueといった新しい
+Queueステータスは追加せず、既存の`RetryQueueManager.remove()`
+（v3.1.0、`status=CANCELLED`に更新後削除）をそのまま再利用する。
+
+### `RetryQueueManager`型への直接依存を持たない設計
+
+`RetryQueueCleanupDecider` / `RetryQueueCleanupExecutor`はいずれも
+`RetryQueueManager` / `NullRetryQueueManager`型を一切importしない。
+Decider側は既存の`RetryQueueUpdateDecision`のみを入力とし、Executor側の
+remove操作は`remove_fn`としてメソッド引数で受け取る。`RetryExecutionSelector` /
+`RetryExecutionCoordinator` / `RetryQueueUpdateDecider` /
+`RetryQueueRemovalExecutor`と同じ既存方針を維持している。
+
+### 本Releaseの対象外
+
+`NOT_FOUND` / `DISABLED`由来の`NOOP`のCleanup方針・Dead Letter Queue・
+Queue永続化・Retry Policy（選別基準の拡張）・Retry Metrics /
+Monitoring・Queue最適化・Scheduler改修・実運用のComposition Rootは、
+いずれもv4.3.0の対象外であり、将来Releaseで検討する
+（`docs/ROADMAP.md`「v3.x 以降の候補」参照）。
+
+詳細は`docs/design/retry_queue_cleanup_foundation_charter.md`（Project
+Charter）・`docs/design/retry_queue_cleanup_foundation.md`（Architecture
 Design・Architecture Review含む）を参照。
