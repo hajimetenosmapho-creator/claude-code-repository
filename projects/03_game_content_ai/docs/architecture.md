@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-09（v4.7.0 — Retry History Foundation層を追記。v4.6.0のKnown Issue（無限再投入リスク）が対策候補として挙げていた`metadata["retried_from"]`は、`WorkflowExecutionRecord`に`metadata`フィールドが存在せず実際には参照不可能であることが判明したため、情報源を`RetryResult`（`retry_engine`自身が生成するデータ）に限定した新規独立パッケージ`src/retry_history/`（`RetryHistoryManager` / `NullRetryHistoryManager`）と`retry_engine`側のStatelessコンポーネント`RetryHistoryRecordExecutor`を追加した設計判断。`RetryManager.record_retry_history()`は`execute_dispatchable_retries()`（v4.0.0、無変更）への委譲・`RetryHistoryRecordExecutor.record_all()`への委譲の2段階のみで完結する薄い委譲であること、`history`引数省略時は`RetryQueueManager`と同じ理由（stateful store）で`NullRetryHistoryManager()`にフォールバックすること、`retry_history`は`retry_engine`を一切importしないこと、記録のみに留め`RetryEnqueueTrigger`側の消費（無限再投入対策の完成）は次Release以降に送ったことを明記）  
 更新日：2026-07-09（v4.6.0 — Retry Enqueue Trigger Foundation層を追記。v3.0.0〜v4.5.0の16回のReleaseで完成した「Queueから取り出して実行する」下流パイプラインに対し、「実際にQueueへ投入する」上流が存在しなかったギャップを埋める新規独立パッケージ`src/retry_enqueue_trigger/`（`RetryEnqueueTrigger` / `NullRetryEnqueueTrigger`）を追加した設計判断。`WorkflowMonitorManager.list_status()`でFAILED/TIMEOUTを検知し`RetryQueueManager.exists()`で重複を確認したうえで`enqueue()`する薄いAdapterであること、`retry_engine`は経由せず`workflow_monitor` / `retry_queue`に直接依存する構成（`retry_scheduler_source`と同じ「下位パッケージへの直接依存」パターン）であること、Feature Gate・Configクラスは追加せずNull Object Patternのみで有効/無効を表現すること、Queueから除去された`run_id`の無限再投入リスクを意図的に対策せずKnown Issueとして明記したこと、新設Adapterを定期的に駆動する起動スクリプト（Composition Root）は対象外（Non-Goal）であることを明記）  
 更新日：2026-07-08（v4.5.0 — Retry Policy Foundation層を追記。`RetryManager`が実際に依存している面（`retry()`が呼び出す`should_retry(monitor_status, attempt) -> bool`、`_skip_reason()`が参照する`target_statuses` / `max_attempts`）をProtocolとして明示化した新規コンポーネント`RetryDecisionPolicy`（最小契約）・`ExplainableRetryPolicy`（`RetryDecisionPolicy`を拡張した説明可能契約）を追加した設計判断。既存`RetryPolicy`（v3.0.0）は本Releaseでも無改修（0 diff）のまま、Protocolの性質上明示的な継承なしに構造的に両契約を満たすこと、`RetryManager`の変更は`policy` / `retry_policy`引数の型注釈のみで`retry()` / `_skip_reason()`のロジック本体は無変更であること、新しいRetry戦略（`FixedRetryPolicy` / `ExponentialBackoffPolicy` / `AdaptiveRetryPolicy`等）の実装自体は本Releaseの対象外（Non-Goal）であることを明記）  
 更新日：2026-07-08（v4.3.0 — Retry Queue Cleanup Foundation層を追記。`RetryQueueUpdateDecider`（v4.1.0）が判定した`RetryQueueUpdateDecision`のうち、`outcome`が`NOOP`かつ`retry_result.outcome`が`SKIPPED`（`max_attempts`到達）の項目についてのみ`RetryQueueManager.remove()`を呼び出す新規コンポーネント`RetryQueueCleanupDecider`（判定）・`RetryQueueCleanupExecutor`（除去実行）を追加した設計判断。v4.2.0で対象外だった`SKIPPED`由来のQueue滞留に対応する一方、`COMPLETE` / `FAILED`（v4.2.0で除去済みのはず） / `NOT_FOUND` / `DISABLED`はいずれも対象外（KEEP）のまま構造的に維持したCleanup方針、Dead Letter Queue等の新しいQueueステータスを追加せず既存の`RetryQueueManager.remove()`を再利用した判断を明記）  
@@ -1662,9 +1663,16 @@ Queue内の重複防止は`RetryQueueManager.exists()`のみで行う。`RetryEx
 `FAILED` / `TIMEOUT`のまま観測され続けると、`enqueue_pending_failures()`
 が呼ばれるたびに無限に再投入されうる。本Releaseではこの対策を意図的に
 実装しない（呼び出し元＝Composition Rootが存在しないため実害はない）。
-将来の対策候補（`metadata["retried_from"]`を手掛かりにした「Retry
-History」コンポーネントの新設等）は`docs/ROADMAP.md`「v3.x 以降の候補」に
-記録した。
+
+> **v4.7.0での追記**：ここで挙げていた「`metadata["retried_from"]`を
+> 手掛かりにする」対策案は、調査の結果**実際には機能しないことが判明した**
+> （`WorkflowExecutionRecord`に`metadata`フィールドが存在せず、
+> `WorkflowEngineExecutor`もExecution Historyへ渡していないため）。
+> v4.7.0（Retry History Foundation）は、情報源を`RetryResult`に
+> 限定した再試行履歴の記録基盤（`RetryHistoryManager`）を新設したが、
+> `RetryEnqueueTrigger`側からの参照・ガード判定（無限再投入対策の完成）は
+> 次Release（Retry Enqueue Guard）に送った。詳細は次項
+> 「Retry History Foundation層」を参照。
 
 ### 本Releaseの対象外（Non-Goal）
 
@@ -1675,4 +1683,78 @@ Root）・無限再投入対策（Retry History）・`dequeue()`の解禁・Retr
 
 詳細は`docs/design/retry_enqueue_trigger_foundation_charter.md`（Project
 Charter）・`docs/design/retry_enqueue_trigger_foundation.md`（Architecture
+Design・Architecture Review含む）を参照。
+
+---
+
+## Retry History Foundation層（`src/retry_history/`、v4.7.0 追加）
+
+`original_run_id`ごとの再試行履歴（試行回数・直近記録時刻）を記録するだけの
+最小基盤。前項のKnown Issue（無限再投入リスク）への対策として、v4.6.0が
+挙げていた「`metadata["retried_from"]`を手掛かりにする」案が実際には
+機能しないことが判明したため、情報源を`RetryResult`（`retry_engine`自身が
+生成するデータ）に限定した新しい記録基盤として設計された。
+
+```
+Retry Engine（再実行判断・依頼、v3.0.0〜v4.6.0）
+   │
+   └── RetryManager.execute_dispatchable_retries()（v4.0.0、無変更）
+          │  RetryExecutionResult（retry_result.outcomeを含む）
+          ▼
+   RetryHistoryRecordExecutor（retry_engine内、Stateless） ★本Release
+          │  outcome=RETRIEDの項目のみ抽出
+          ▼
+   RetryHistoryManager（retry_history、新規独立パッケージ） ★本Release
+          │  original_run_idごとにattempt_countを記録
+          ▼
+（次Release以降：RetryEnqueueTrigger等の消費側で無限再投入対策として利用）
+```
+
+### 情報源についての訂正：`metadata["retried_from"]`は参照不可能
+
+v4.6.0のKnown Issueは対策候補として`metadata["retried_from"]`
+（`RetryExecutor.execute()`がv3.0.0から`WorkflowEngineEvent.metadata`に
+記録している）を挙げていたが、調査の結果これは実際には機能しないことが
+判明した。`WorkflowEngineExecutor`はこの`metadata`を
+`ExecutionHistoryManager.start_run()`へ渡しておらず、
+`WorkflowExecutionRecord`（`execution_history/workflow_execution_record.py`）
+自体に`metadata`フィールドが存在しない。したがって`WorkflowMonitorRecord`
+（Workflow Monitorの公開データ）からも`retried_from`は一切参照できない。
+
+本Releaseはこの事実を踏まえ、情報源を`RetryResult`（`retry_engine`自身が
+`RetryManager.retry()`実行のたびに直接生成するデータ）に限定した。
+`execution_history`パッケージのスキーマ変更は一切必要とせず、
+`execution_history`は本Releaseでも無改修である。
+
+### 責務の境界（原則）
+
+- **記録のみを責務とする。** Retry可否判定・Retry実行・Queue操作・
+  Enqueueガード判定はいずれも行わない（それらは`RetryPolicy` /
+  `RetryManager` / 将来の消費側コンポーネントの責務のまま）
+- **`retry_history`は`retry_engine`を一切importしない、独立した葉
+  パッケージ。** `retry_queue`と同型（標準ライブラリのみに依存）
+- **`RetryHistoryRecordExecutor`はStateless。** `RetryHistoryManager` /
+  `NullRetryHistoryManager`型への直接依存を持たず、記録操作は
+  `record_fn`としてメソッド引数で受け取る（`RetryQueueRemovalExecutor`、
+  v4.2.0と同じ設計言語）
+
+### Feature Gateの扱い
+
+Configクラス・Feature Gateは追加しない。`history`引数省略時は
+`NullRetryHistoryManager()`にフォールバックする。`RetryHistoryManager`は
+`RetryQueueManager`と同じstateful storeであるため、Stateless系
+コンポーネント（`event_consumer`等、省略時は実体へフォールバック）とは
+異なり、`queue`引数と同じ「省略時はNullへフォールバックする」方式を
+採用した。
+
+### 本Releaseの対象外（Non-Goal）
+
+記録結果を使って`RetryEnqueueTrigger.enqueue_pending_failures()`側の
+再enqueueを止める判定（無限再投入対策の完成）・`RetryPolicy.max_attempts`
+との統合判定・Composition Root・永続化はいずれも**本Releaseの対象外**。
+`workflow_monitor` / `retry_queue` / `workflow_engine` / `scheduler` /
+`retry_enqueue_trigger`はいずれも無改修（ゼロ改修）。
+
+詳細は`docs/design/retry_history_foundation_charter.md`（Project
+Charter）・`docs/design/retry_history_foundation.md`（Architecture
 Design・Architecture Review含む）を参照。

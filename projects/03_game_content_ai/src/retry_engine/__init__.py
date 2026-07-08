@@ -127,6 +127,29 @@ Workflow Monitor（v2.9.0）が FAILED / TIMEOUT と判定したWorkflowを、Wo
       （FixedRetryPolicy / ExponentialBackoffPolicy / AdaptiveRetryPolicy等）の
       実装は本Releaseの対象外（Non-Goal）
       （詳細は docs/design/retry_policy_foundation.md）
+
+    - （v4.7.0）RetryManager が RetryHistoryManager / NullRetryHistoryManager
+      （retry_history、新規独立パッケージ）・RetryHistoryRecordExecutor
+      （retry_history_recorder、新設）を Constructor Injection で保持できる
+      ようになった（Retry History Foundation）。record_retry_history() を通じて、
+      execute_dispatchable_retries()（v4.0.0、無変更）が集約したRetryExecutionResult
+      のうち、outcomeがRETRIEDの項目についてのみRetryHistoryManager.record()を
+      呼び出し、original_run_idごとの再試行履歴（試行回数・直近記録時刻）を
+      記録できるようになった。retry_historyはstateful storeでありretry_queueと
+      同じ扱いのため、historyの省略時はNullRetryHistoryManager()にフォールバック
+      する。metadata["retried_from"]は現状ExecutionHistoryへ永続化されておらず
+      参照できないため、本Releaseの情報源はRetryManager自身が生成するRetryResult
+      のみとした。記録結果を使ってRetryEnqueueTrigger側の再enqueueガード判定に
+      反映する処理は本Releaseの対象外（Foundation First。次Release以降で検討）。
+      retry_history は retry_engine を一切importしない（循環なし）。src/scheduler/ /
+      src/retry_scheduler_decision/ / src/retry_scheduler_source/ / src/retry_queue/ /
+      retry_event_consumer.py / retry_event_dispatcher.py / retry_execution_selector.py /
+      retry_execution_coordinator.py / retry_queue_update_decider.py /
+      retry_queue_removal_executor.py / retry_queue_cleanup_decider.py /
+      retry_queue_cleanup_executor.py / retry_queue_terminal_cleanup_decider.py /
+      retry_queue_terminal_cleanup_executor.py / retry_outcome_terminality.py /
+      retry_policy.py / retry_policy_protocol.py はいずれも本Releaseでも無改修
+      （詳細は docs/design/retry_history_foundation.md）
 """
 from .retry_config import RetryConfig
 from .retry_policy import DEFAULT_TARGET_STATUSES, RetryPolicy
@@ -165,6 +188,7 @@ from .retry_queue_terminal_cleanup_executor import (
     RetryQueueTerminalCleanupExecutor,
     RetryQueueTerminalCleanupResult,
 )
+from .retry_history_recorder import RetryHistoryRecordExecutor, RetryHistoryRecordResult
 from .retry_manager import NullRetryManager, RetryManager
 
 __all__ = [
@@ -203,6 +227,8 @@ __all__ = [
     "RetryQueueTerminalCleanupDecider",
     "RetryQueueTerminalCleanupResult",
     "RetryQueueTerminalCleanupExecutor",
+    "RetryHistoryRecordResult",
+    "RetryHistoryRecordExecutor",
     "RetryManager",
     "NullRetryManager",
 ]

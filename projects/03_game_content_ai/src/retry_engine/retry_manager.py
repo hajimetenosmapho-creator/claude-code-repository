@@ -150,11 +150,42 @@ NullRetryManager: RETRY_ENGINE_ENABLED=false（デフォルト）、または下
       retry_queue_terminal_cleanup_executor.py / retry_outcome_terminality.py /
       retry_policy.py はいずれも本Releaseでも無改修
       （詳細は docs/design/retry_policy_foundation.md）
+
+    - （v4.7.0）RetryManager は RetryHistoryManager / NullRetryHistoryManager
+      （retry_history、新規独立パッケージ）を Constructor Injection で保持できる
+      （省略時は NullRetryQueueManager と同じ理由でNullRetryHistoryManager()に
+      フォールバックする。retry_historyはstateful storeであり、queueと同じ
+      分類として扱う。docs/design/retry_history_foundation.md 5章）。
+    - （v4.7.0）RetryManager は RetryHistoryRecordExecutor（retry_history_recorder、
+      新設）も Constructor Injection で保持できる（省略時は
+      RetryHistoryRecordExecutor() に自動フォールバックする。Stateless
+      コンポーネントであるため、他のExecutor/Decider群と同じ「省略時は安全な
+      実装へ自動フォールバックする」方式を採用する。同設計書6章）。
+    - （v4.7.0）record_retry_history() を新設し、execute_dispatchable_retries()
+      （v4.0.0、無変更）への委譲、RetryHistoryRecordExecutor.record_all()
+      （各RetryExecutionResultのうちoutcome=RETRIEDの項目のみ
+      RetryHistoryManager.record()を呼び出す）の2段階のみで完結する。
+      記録結果を使ってRetryEnqueueTrigger側の再enqueueガード判定に反映する処理は
+      ここには一切存在しない（無限再投入対策としての消費は次Release以降に送る。
+      Foundation First。同設計書2章・9章）。
+    - （v4.7.0）metadata["retried_from"]は現状ExecutionHistoryへ永続化されておらず
+      WorkflowMonitorRecordからも参照できないため、再試行履歴の情報源としては
+      使用しない。本Releaseの情報源はRetryManager自身が生成するRetryResultのみ
+      （同設計書3章 Design Decision）。
+    - （v4.7.0）src/scheduler/ / src/retry_scheduler_decision/ /
+      src/retry_scheduler_source/ / src/retry_queue/ / retry_event_consumer.py /
+      retry_event_dispatcher.py / retry_execution_selector.py /
+      retry_execution_coordinator.py / retry_queue_update_decider.py /
+      retry_queue_removal_executor.py / retry_queue_cleanup_decider.py /
+      retry_queue_cleanup_executor.py / retry_queue_terminal_cleanup_decider.py /
+      retry_queue_terminal_cleanup_executor.py / retry_outcome_terminality.py /
+      retry_policy.py / retry_policy_protocol.py はいずれも本Releaseでも無改修
 """
 from __future__ import annotations
 
 from datetime import datetime
 
+from retry_history import NullRetryHistoryManager, RetryHistoryManager
 from retry_queue import NullRetryQueueManager, RetryQueueManager, RetryQueueOutcome, RetryQueueResult
 from scheduler import SchedulerEvent
 from workflow_engine import NullWorkflowEngineManager, WorkflowEngineManager
@@ -166,6 +197,7 @@ from .retry_event_dispatcher import RetryDispatchEvent, RetryEventDispatcher
 from .retry_execution_coordinator import RetryExecutionCoordinator, RetryExecutionResult
 from .retry_execution_selector import RetryExecutionSelector
 from .retry_executor import RetryExecutor
+from .retry_history_recorder import RetryHistoryRecordExecutor, RetryHistoryRecordResult
 from .retry_policy_protocol import ExplainableRetryPolicy
 from .retry_queue_cleanup_decider import RetryQueueCleanupDecider, RetryQueueCleanupDecision
 from .retry_queue_cleanup_executor import RetryQueueCleanupExecutor, RetryQueueCleanupResult
@@ -207,6 +239,8 @@ class RetryManager:
         queue_cleanup_executor: RetryQueueCleanupExecutor | None = None,
         terminal_cleanup_decider: RetryQueueTerminalCleanupDecider | None = None,
         terminal_cleanup_executor: RetryQueueTerminalCleanupExecutor | None = None,
+        history: "RetryHistoryManager | NullRetryHistoryManager | None" = None,
+        history_recorder: RetryHistoryRecordExecutor | None = None,
     ):
         self._policy = policy
         self._executor = executor
@@ -238,6 +272,10 @@ class RetryManager:
         self._terminal_cleanup_executor = (
             terminal_cleanup_executor if terminal_cleanup_executor is not None else RetryQueueTerminalCleanupExecutor()
         )
+        self._history = history if history is not None else NullRetryHistoryManager()
+        self._history_recorder = (
+            history_recorder if history_recorder is not None else RetryHistoryRecordExecutor()
+        )
 
     @classmethod
     def from_config(
@@ -257,6 +295,8 @@ class RetryManager:
         queue_cleanup_executor: RetryQueueCleanupExecutor | None = None,
         terminal_cleanup_decider: RetryQueueTerminalCleanupDecider | None = None,
         terminal_cleanup_executor: RetryQueueTerminalCleanupExecutor | None = None,
+        retry_history_manager: "RetryHistoryManager | NullRetryHistoryManager | None" = None,
+        history_recorder: RetryHistoryRecordExecutor | None = None,
     ) -> "RetryManager | NullRetryManager":
         """
         呼び出し元が構築済みの WorkflowEngineManager / WorkflowMonitorManager を
@@ -299,6 +339,14 @@ class RetryManager:
         省略した場合は RetryManager.__init__ 内でそれぞれ RetryQueueTerminalCleanupDecider() /
         RetryQueueTerminalCleanupExecutor() にフォールバックするため、本引数を渡さない既存の
         呼び出しはすべて本Release前と同じ挙動になる（v4.4.0）。
+
+        retry_history_manager も省略可能（デフォルト None）。省略した場合は
+        RetryManager.__init__ 内で NullRetryHistoryManager() にフォールバックするため、
+        本引数を渡さない既存の呼び出しはすべて本Release前と同じ挙動になる（v4.7.0）。
+
+        history_recorder も省略可能（デフォルト None）。省略した場合は
+        RetryManager.__init__ 内で RetryHistoryRecordExecutor() にフォールバックするため、
+        本引数を渡さない既存の呼び出しはすべて本Release前と同じ挙動になる（v4.7.0）。
         """
         if not retry_config.is_ready():
             return NullRetryManager()
@@ -321,6 +369,8 @@ class RetryManager:
             queue_cleanup_executor=queue_cleanup_executor,
             terminal_cleanup_decider=terminal_cleanup_decider,
             terminal_cleanup_executor=terminal_cleanup_executor,
+            history=retry_history_manager,
+            history_recorder=history_recorder,
         )
 
     def retry(self, run_id: str, attempt: int = 1, dry_run: bool = False) -> RetryResult:
@@ -531,6 +581,27 @@ class RetryManager:
         decisions = self.decide_retry_queue_terminal_cleanup(events, dry_run=dry_run)
         return self._terminal_cleanup_executor.apply_all(decisions, remove_fn=self._queue.remove)
 
+    def record_retry_history(
+        self, events: list[SchedulerEvent], dry_run: bool = False
+    ) -> list[RetryHistoryRecordResult]:
+        """
+        SchedulerEventのリストから、dispatchable=Trueの候補についてretry()を実行し
+        （execute_dispatchable_retries()、v4.0.0、無変更）、各RetryExecutionResultのうち
+        outcomeがRETRIEDの項目についてのみRetryHistoryManager.record()を呼び出し、
+        再試行履歴（original_run_idごとの試行回数・直近記録時刻）を記録する。
+
+        2段階の委譲のみで完結する：
+            1. self.execute_dispatchable_retries(events, dry_run=dry_run)（v4.0.0、無変更）
+            2. self._history_recorder.record_all(execution_results, record_fn=self._history.record)
+               （新規、記録）
+
+        記録結果を使ってRetryEnqueueTrigger側の再enqueueガード判定に反映する処理・
+        RetryPolicy.max_attemptsとの比較判定はここには一切存在しない（Foundation First。
+        無限再投入対策としての消費は次Release以降に送る）。
+        """
+        execution_results = self.execute_dispatchable_retries(events, dry_run=dry_run)
+        return self._history_recorder.record_all(execution_results, record_fn=self._history.record)
+
     def _skip_reason(self, monitor_status: WorkflowMonitorStatus, attempt: int) -> str:
         if monitor_status not in self._policy.target_statuses:
             return (
@@ -659,5 +730,15 @@ class NullRetryManager:
         RETRY_ENGINE_ENABLED=false（デフォルト）、または下位ゲートが閉じている場合、
         除去処理自体を一切行わず常に空リストを返す（「受け取れるが何もしない」）。
         RetryQueueTerminalCleanupExecutorへの参照は保持しない。
+        """
+        return []
+
+    def record_retry_history(
+        self, events: list[SchedulerEvent], dry_run: bool = False
+    ) -> list[RetryHistoryRecordResult]:
+        """
+        RETRY_ENGINE_ENABLED=false（デフォルト）、または下位ゲートが閉じている場合、
+        記録処理自体を一切行わず常に空リストを返す（「受け取れるが何もしない」）。
+        RetryHistoryManager / RetryHistoryRecordExecutorへの参照は保持しない。
         """
         return []

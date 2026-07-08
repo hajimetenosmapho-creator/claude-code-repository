@@ -194,6 +194,64 @@
 - **対応状況**：対応しない。v4.5.0のProject Charter / Architecture Design / Architecture Reviewで`retry_policy_protocol.py`の新規追加・`retry_manager.py`の変更（型注釈のみ）・`__init__.py`の`__all__`更新はいずれも正式に承認済みである。本質的な制約（`retry_policy.py`自体が0 diffであること、`retry()` / `_skip_reason()`のロジック本体が1行も変更されていないこと、`RetryManager` / `NullRetryManager`の既存メソッドの後方互換性）は、v4.5.0の新規テスト（`tests/test_e2e_v4_5_0_retry_policy_foundation.py`、64件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-13]`と同じ扱い）
 - **今後の対応**：不要（本エントリで説明を確定）。将来Release（新しいRetry戦略の実装等）で`retry_engine`側にさらに変更が入るたびに同様のFAILが起こりうるが、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
 
+### [KI-15] v4.7.0でのRetry History Foundationにより、v4.4.0の一部Architecture GuardがFAILする（設計上の意図的な差分）
+
+- **発見日**：2026-07-09（v4.7.0 Retry History Foundation Test工程実施時）
+- **検証方法**：`git stash`で本Release（`retry_manager.py` / `__init__.py`の変更、`src/retry_history/`・`retry_history_recorder.py`の新規追加）を一時退避したv4.6.0ベースラインと、本Release適用後を比較し、差分の原因が本Releaseの変更であることを構造的に確認した
+- **対象と症状（ベースライン → 本Release適用後）**：
+  - `tests/test_e2e_v4_4_0_retry_queue_notfound_disabled_cleanup_foundation.py`：122/123 PASS → 120/123 PASS（新規2件FAIL：テスト39「`__init__`の最終2引数が`terminal_cleanup_decider`/`terminal_cleanup_executor`」・「`from_config()`の最終2引数が`terminal_cleanup_decider`/`terminal_cleanup_executor`」）
+  - `tests/test_e2e_v4_5_0_retry_policy_foundation.py`：64/64 PASS → 63/64 PASS（新規1件FAIL：テスト11「`retry_engine.__all__`が「既存36シンボル＋新規2シンボル」ちょうどで構成されている」）
+  - `tests/test_e2e_v3_1_0_retry_queue_foundation.py`〜`tests/test_e2e_v4_6_0_retry_enqueue_trigger_foundation.py`のうち`retry_manager.py` / `__init__.py`の無変更を`git diff --quiet`で確認する各テスト（`[KI-3]`〜`[KI-4]`等と同型）：本Release分の新規未コミット差分により一時的にFAILする
+- **原因**：v4.7.0（Retry History Foundation）で新規独立パッケージ`src/retry_history/`（`RetryHistoryRecord` / `RetryHistoryManager` / `NullRetryHistoryManager`）と`src/retry_engine/retry_history_recorder.py`（`RetryHistoryRecordExecutor`）を追加し、`retry_manager.py`（`history` / `history_recorder`引数・`record_retry_history()`追加）・`__init__.py`（新規シンボルexport）を変更した（`docs/design/retry_history_foundation.md`）。v4.4.0の「最終2引数」検査・v4.5.0の`__all__`件数検査は「その時点で`terminal_cleanup_decider`/`terminal_cleanup_executor`が最終引数だった」「`__all__`が38シンボルちょうどだった」という当時の事実をArchitecture Guardとして固定していたものであり、`[KI-3]`〜`[KI-14]`と同種の既知差分である
+- **対応状況**：対応しない。v4.7.0のProject Charter / Architecture Design / Architecture Reviewで`src/retry_history/`の新規追加・`retry_history_recorder.py`の新規追加・`retry_manager.py`の変更（`history` / `history_recorder`引数・`record_retry_history()`追加）・`__init__.py`の`__all__`更新はいずれも正式に承認済みである。本質的な制約（`scheduler` / `retry_scheduler_decision` / `retry_scheduler_source` / `retry_queue` / `retry_event_consumer.py` / `retry_event_dispatcher.py` / `retry_execution_selector.py` / `retry_execution_coordinator.py` / `retry_queue_update_decider.py` / `retry_queue_removal_executor.py` / `retry_queue_cleanup_decider.py` / `retry_queue_cleanup_executor.py` / `retry_queue_terminal_cleanup_decider.py` / `retry_queue_terminal_cleanup_executor.py` / `retry_outcome_terminality.py` / `retry_policy.py` / `retry_policy_protocol.py` / `retry_enqueue_trigger`のゼロ改修、`retry_history`が`retry_engine`を一切importしないこと、`RetryManager` / `NullRetryManager`の既存メソッドの後方互換性）は、v4.7.0の新規テスト（`tests/test_e2e_v4_7_0_retry_history_foundation.py`、178件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-14]`と同じ扱い）
+- **今後の対応**：不要（本エントリで説明を確定）。`git diff --quiet`ベースのチェックは本Releaseをcommitすれば自然に解消する。一方、v4.4.0の最終引数検査・v4.5.0の`__all__`件数検査は`git diff`を使わない恒久的な静的検査であり、コミットの有無に関わらず本Release以降も成立しなくなる。将来Release（Retry Enqueue Guard等）で`retry_engine`側にさらに変更が入るたびに同様のFAILが起こりうるが、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
+- **無限再投入対策との関係**：本Releaseは`[KI]`ではないが、`docs/design/retry_enqueue_trigger_foundation.md` 11章 Known Issue（Queueから除去された`run_id`の無限再投入リスク）は本Releaseでは未解消のままである。本Releaseは再試行履歴を記録する土台（`RetryHistoryManager`）のみを整備し、`RetryEnqueueTrigger`側からの参照・ガード判定は次Release（Retry Enqueue Guard）に送った
+
+---
+
+## [v4.7.0] - 2026-07-09 ★ Retry History Foundation
+
+### Added
+
+- `src/retry_history/`（新規独立パッケージ）：`original_run_id`ごとの再試行履歴（試行回数・直近記録時刻）を記録・参照するだけの最小基盤
+  - `RetryHistoryRecord`（`frozen=True`の`dataclass`）：`original_run_id` / `attempt_count` / `last_attempt` / `last_recorded_at`の4フィールドのみを持つ
+  - `RetryHistoryManager`：`original_run_id`ごとの再試行履歴をin-memory dictで保持し、`record(original_run_id, attempt, recorded_at)` / `get(original_run_id)` / `has_history(original_run_id)`の3操作のみを提供する
+  - `NullRetryHistoryManager`：Feature Gate・Configを持たず、Null Object Patternで無効状態を表現するダミー実装（`record()`は`None`を返す。`NullExecutionHistoryManager.start_run()`と同じ方針）
+  - `retry_queue`と同型の独立した葉パッケージ。他のどの`src/*`パッケージ（`retry_engine`を含む）も一切importしない
+- `src/retry_engine/retry_history_recorder.py`（新規）：`RetryExecutionResult`（v4.0.0）のリストを受け取り、`outcome`が`RETRIED`の項目についてのみ`record_fn`を呼び出し再試行履歴を記録する最小コンポーネント
+  - `RetryHistoryRecordResult`（`frozen=True`の`dataclass`）：`execution_result` / `recorded` / `history_record` / `reason`の4フィールド
+  - `RetryHistoryRecordExecutor`：`record(execution_result, record_fn)` / `record_all(execution_results, record_fn)`の2メソッドのみを持つStatelessなコンポーネント。`RetryHistoryManager` / `NullRetryHistoryManager`型を一切importせず、記録操作は`record_fn: Callable[[str, int, datetime], RetryHistoryRecord | None]`としてメソッド引数で受け取る（`RetryQueueRemovalExecutor`、v4.2.0と同じ設計言語）
+- `src/retry_engine/retry_manager.py`（変更）：`RetryManager`が`RetryHistoryManager` / `NullRetryHistoryManager`・`RetryHistoryRecordExecutor`をConstructor Injectionで保持できるようにし、以下を追加した
+  - `RetryManager.__init__` / `from_config()`に`history` / `history_recorder`（`from_config()`では`retry_history_manager` / `history_recorder`）引数（デフォルト`None`）を追加。省略時は`history`は`NullRetryHistoryManager()`（stateful storeのため`queue`と同じ理由でNullへフォールバック）、`history_recorder`は`RetryHistoryRecordExecutor()`にそれぞれ自動フォールバックする
+  - `record_retry_history(events, dry_run=False) -> list[RetryHistoryRecordResult]`：`execute_dispatchable_retries()`（v4.0.0、無変更）への委譲・`RetryHistoryRecordExecutor.record_all()`への委譲の2段階のみで完結する
+  - `NullRetryManager`にも同名`record_retry_history(events, dry_run=False)`を追加。専用コンポーネントを一切構築・参照せず、常に空リスト`[]`を返す
+- `src/retry_engine/__init__.py`（変更）：`RetryHistoryRecordResult` / `RetryHistoryRecordExecutor`を新規export。既存の38シンボルは維持
+- `tests/test_e2e_v4_7_0_retry_history_foundation.py`新規作成（178件）
+- `docs/design/retry_history_foundation_charter.md`新規作成（Project Charter、承認済み）
+- `docs/design/retry_history_foundation.md`新規作成（Architecture Design。Architecture Review完了・**Approve**）
+
+### Note
+
+- **`metadata["retried_from"]`は情報源として使用しない。** v4.6.0 Known Issue（`docs/design/retry_enqueue_trigger_foundation.md` 11章）が対策候補として挙げていた「`metadata["retried_from"]`を手掛かりにする」方式は、調査の結果**実際には機能しないことが判明した**。`RetryExecutor.execute()`（v3.0.0、無改修）は`WorkflowEngineEvent.metadata`に`retried_from` / `attempt`を積むが、`WorkflowEngineExecutor`はこの`metadata`を`ExecutionHistoryManager.start_run()`へ渡しておらず、`WorkflowExecutionRecord`（`execution_history/workflow_execution_record.py`）自体に`metadata`フィールドが存在しないため、`WorkflowMonitorRecord`からも参照できない。本Releaseはこの事実を踏まえ、情報源を`RetryResult`（`retry_engine`自身が生成するデータ）に限定し、`execution_history`パッケージには一切触れない設計とした
+- **記録基盤のみ。無限再投入対策は本Releaseでは未解消のまま。** `record_retry_history()`はどこからも呼ばれない（`RetryEnqueueTrigger`、v4.6.0は本Releaseでも無改修）。記録結果を使って`RetryEnqueueTrigger.enqueue_pending_failures()`側の再enqueueを止める判定（無限再投入対策の完成）は次Release（Retry Enqueue Guard）に送った（Foundation First、`docs/design/retry_history_foundation.md` 7.1節・10章）
+- **Feature Gate・Configクラスは追加しない。** `retry_history`パッケージにはそもそもFeature Gateという概念自体を持たせなかった。`history`引数省略時のフォールバック先（`NullRetryHistoryManager()`）は、`RetryHistoryManager`がstateful storeであることから`RetryQueueManager`（`queue`引数）と同じ扱いとした
+- **`retry_history`は`retry_engine`を一切importしない。** 循環importは発生しない
+- **`RetryManager`の変更は薄い委譲に留めた。** `record_retry_history()`は2行の委譲のみで完結し、記録ロジック自体は`RetryManager`に書いていない
+- **Backward Compatibility を維持。** `RetryManager.__init__` / `from_config()`への引数追加は末尾のデフォルト値付きのみであり、既存の呼び出し（新規引数を渡さない場合）は本Release後もまったく同じ結果になる。`retry()` 〜 `apply_retry_queue_terminal_cleanup()`までの既存メソッド（`RetryManager` / `NullRetryManager`とも）は1行も変更していない
+- **`scheduler` / `retry_scheduler_decision` / `retry_scheduler_source` / `retry_queue` / `retry_event_consumer.py` / `retry_event_dispatcher.py` / `retry_execution_selector.py` / `retry_execution_coordinator.py` / `retry_queue_update_decider.py` / `retry_queue_removal_executor.py` / `retry_queue_cleanup_decider.py` / `retry_queue_cleanup_executor.py` / `retry_queue_terminal_cleanup_decider.py` / `retry_queue_terminal_cleanup_executor.py` / `retry_outcome_terminality.py` / `retry_policy.py` / `retry_policy_protocol.py` / `retry_enqueue_trigger`はいずれも本Releaseでも無改修。** 変更は`retry_engine`配下2ファイル（新規1・変更1）と`__init__.py`、および新規独立パッケージ`src/retry_history/`（3ファイル）のみ
+- 対象外（今回も未実装）：`RetryEnqueueTrigger`側の消費（無限再投入ガード）・`RetryPolicy.max_attempts`との統合判定・Composition Root・永続化（いずれも将来Release候補。詳細は`docs/design/retry_history_foundation_charter.md` 10章、`docs/design/retry_history_foundation.md` 10章 Future Extension）
+
+### Tested
+
+- `tests/test_e2e_v4_7_0_retry_history_foundation.py`: 178/178 PASS
+- 既存回帰確認：`v1.9.0`〜`v2.9.0`（Analytics Foundation `[KI-1]`除く）全PASS
+- `git stash`によるベースライン比較（v4.6.0時点の状態と本Release適用後を比較し、本Release固有の新規差分のみを特定済み）：
+  - `v3.1.0`（151/152、新規1件は`git diff`ベースの一時差分）・`v3.2.0`（99/102、新規1件は同上）・`v3.3.0`（69/72、新規2件は同上）・`v3.4.0`（92/94、新規2件は同上）・`v3.5.0`（69/72、新規2件は同上）・`v3.6.0`（100/104、新規2件は同上）・`v3.7.0`（72/74、新規2件は同上）：いずれも`retry_manager.py` / `__init__.py`の未コミット差分による一時的なFAILのみで、commit後は自然解消する見込み
+  - `v3.0.0`（206/208）・`v3.8.0`（67/70）・`v3.9.0`（70/73）・`v4.0.0`（83/88）・`v4.1.0`（84/87）・`v4.2.0`（91/94）・`v4.3.0`（105/108）：本Releaseによる新規差分なし（既存の`[KI-3]`〜`[KI-14]`による既知差分のみ）
+  - `v4.4.0`（120/123、新規2件）・`v4.5.0`（63/64、新規1件）：`[KI-15]`参照（本Release固有の恒久差分）
+  - `v4.6.0`（87/89、新規2件は`git diff`ベースの一時差分）
+- `v1.10.0`（Analytics Foundation）は`[KI-1]`（既知の問題、本Releaseと無関係）のため今回は実行対象外
+
 ---
 
 ## [v4.6.0] - 2026-07-09 ★ Retry Enqueue Trigger Foundation
