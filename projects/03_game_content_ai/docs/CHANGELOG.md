@@ -196,6 +196,38 @@
 
 ---
 
+## [v4.6.0] - 2026-07-09 ★ Retry Enqueue Trigger Foundation
+
+### Added
+
+- `src/retry_enqueue_trigger/`（新規パッケージ）：`WorkflowMonitorManager`（v2.9.0、無改修）が判定した`FAILED` / `TIMEOUT`のWorkflowを検知し、まだ`RetryQueueManager`（v3.1.0、無改修）に存在しないものだけを`enqueue()`する最小Adapter
+  - `RetryEnqueueTriggerResult`（`frozen=True`の`dataclass`）：`scanned` / `enqueued` / `skipped_existing` / `skipped_status` / `failed`の5フィールドのみを持つ集計結果
+  - `RetryEnqueueTrigger`：`WorkflowMonitorManager` / `RetryQueueManager`をConstructor Injectionで保持し、`enqueue_pending_failures(limit=None) -> RetryEnqueueTriggerResult`の1メソッドのみを公開するStatelessなコンポーネント
+  - `NullRetryEnqueueTrigger`：Feature Gate・Configを持たず、Null Object Patternで無効状態を表現するダミー実装（`RetrySchedulerSource` / `NullRetrySchedulerSource`、v3.3.0と同じ設計言語）。`workflow_monitor` / `retry_queue`への参照を一切保持せず、常に全フィールド0の結果を返す
+  - `retry_engine`は経由せず、`workflow_monitor` / `retry_queue`の2パッケージに直接依存する新規構成（`retry_scheduler_source → retry_queue`と同じ「下位パッケージへの直接依存」パターン）
+- `tests/test_e2e_v4_6_0_retry_enqueue_trigger_foundation.py`新規作成（89件）
+- `docs/design/retry_enqueue_trigger_foundation_charter.md`新規作成（Project Charter、承認済み）
+- `docs/design/retry_enqueue_trigger_foundation.md`新規作成（Architecture Design。Architecture Review完了・**Approve**）
+
+### Note
+
+- **v3.0.0〜v4.5.0の16回のReleaseで構築されたRetry Queue〜Retry Engineの下流パイプラインは、`RetryQueueManager.enqueue()` / `RetryManager.enqueue_retry()`がコードベースのどこからも呼び出されておらず、実データを一度も受け取ったことがなかった。** 本Releaseはこの「Queueへ実際に投入する主体がいない」というギャップを埋める新規Adapterを追加した（`docs/design/retry_enqueue_trigger_foundation_charter.md` 1章）
+- **Feature Gate・Configクラスは追加しない。** `RetryEnqueueTrigger` / `NullRetryEnqueueTrigger`のどちらを構築するかを呼び出し元が選ぶ、既存の`RetrySchedulerSource`（v3.3.0）と同じNull Object Patternを踏襲した
+- **`retry_engine`を経由しない設計とした。** `RetryQueueManager.enqueue()`へ直接依存することで、`RETRY_ENGINE_ENABLED=false`（デフォルト）の状態でもQueueへの投入自体は可能な構造とした（Queueへの投入自体は外部副作用を伴わないメモリ操作であるため。実際にRetryを実行するかは引き続き下流の`RetryConfig.enabled`で止まる）
+- **Queue内の重複防止は`RetryQueueManager.exists()`のみ。** 一度Queueから除去された`run_id`が、Workflow Monitor上でなお`FAILED` / `TIMEOUT`のまま観測され続けるケースへの対策（無限再投入リスク）は、本Releaseでは意図的に実装しない（ユーザー確定方針）。原因（`RetryExecutor`が再実行のたびに新しい`run_id`を発行するため、元`run_id`のExecution History記録・Monitor判定は不変であること）と将来の対策候補（`metadata["retried_from"]`を手掛かりにした「Retry History」コンポーネントの新設等）は`docs/design/retry_enqueue_trigger_foundation.md` 11章 Known Issueに記録した
+- **一括処理結果は最小の集計`dataclass`のみ。** 理由文字列の列挙・例外的なケース分岐は追加しない（ユーザー確定方針）
+- **`workflow_monitor` / `retry_queue` / `retry_engine`はいずれも本Releaseでも無改修（ゼロ改修）。** 新規パッケージの追加のみ
+- 対象外（今回も未実装）：新設Adapterを定期的に駆動する起動スクリプト（Composition Root）・無限再投入対策（Retry History）・`dequeue()`の解禁・Retry Queueの永続化・Retry Strategy（`FixedRetryPolicy`等）の実装（いずれも将来Release候補。詳細は`docs/design/retry_enqueue_trigger_foundation_charter.md` 10章、`docs/design/retry_enqueue_trigger_foundation.md` 12章 Future Extension）
+
+### Tested
+
+- `tests/test_e2e_v4_6_0_retry_enqueue_trigger_foundation.py`: 89/89 PASS
+- 既存回帰確認：`v1.9.0`〜`v2.9.0`（Analytics Foundation `[KI-1]`除く）全PASS、`v3.1.0`（152/152）・`v3.4.0`（94/94）・`v3.7.0`（74/74）・`v4.5.0`（64/64）全PASS
+- `v3.0.0`（200/202）・`v3.2.0`（100/102）・`v3.3.0`（71/72）・`v3.5.0`（71/72）・`v3.6.0`（102/104）・`v3.8.0`（67/70）・`v3.9.0`（70/73）・`v4.0.0`（83/88）・`v4.1.0`（84/87）・`v4.2.0`（91/94）・`v4.3.0`（105/108）・`v4.4.0`（122/123）：いずれも既存の`[KI-3]`〜`[KI-14]`による既知差分のみで、`git stash`によるベースライン比較（本Release適用前と適用後で件数・FAIL内容が完全一致）により本Releaseによる新規差分がないことを確認済み
+- `v1.10.0`（Analytics Foundation）は`[KI-1]`（既知の問題、本Releaseと無関係）のため今回は実行対象外
+
+---
+
 ## [v4.5.0] - 2026-07-08 ★ Retry Policy Foundation
 
 ### Added

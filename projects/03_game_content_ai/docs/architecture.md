@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-09（v4.6.0 — Retry Enqueue Trigger Foundation層を追記。v3.0.0〜v4.5.0の16回のReleaseで完成した「Queueから取り出して実行する」下流パイプラインに対し、「実際にQueueへ投入する」上流が存在しなかったギャップを埋める新規独立パッケージ`src/retry_enqueue_trigger/`（`RetryEnqueueTrigger` / `NullRetryEnqueueTrigger`）を追加した設計判断。`WorkflowMonitorManager.list_status()`でFAILED/TIMEOUTを検知し`RetryQueueManager.exists()`で重複を確認したうえで`enqueue()`する薄いAdapterであること、`retry_engine`は経由せず`workflow_monitor` / `retry_queue`に直接依存する構成（`retry_scheduler_source`と同じ「下位パッケージへの直接依存」パターン）であること、Feature Gate・Configクラスは追加せずNull Object Patternのみで有効/無効を表現すること、Queueから除去された`run_id`の無限再投入リスクを意図的に対策せずKnown Issueとして明記したこと、新設Adapterを定期的に駆動する起動スクリプト（Composition Root）は対象外（Non-Goal）であることを明記）  
 更新日：2026-07-08（v4.5.0 — Retry Policy Foundation層を追記。`RetryManager`が実際に依存している面（`retry()`が呼び出す`should_retry(monitor_status, attempt) -> bool`、`_skip_reason()`が参照する`target_statuses` / `max_attempts`）をProtocolとして明示化した新規コンポーネント`RetryDecisionPolicy`（最小契約）・`ExplainableRetryPolicy`（`RetryDecisionPolicy`を拡張した説明可能契約）を追加した設計判断。既存`RetryPolicy`（v3.0.0）は本Releaseでも無改修（0 diff）のまま、Protocolの性質上明示的な継承なしに構造的に両契約を満たすこと、`RetryManager`の変更は`policy` / `retry_policy`引数の型注釈のみで`retry()` / `_skip_reason()`のロジック本体は無変更であること、新しいRetry戦略（`FixedRetryPolicy` / `ExponentialBackoffPolicy` / `AdaptiveRetryPolicy`等）の実装自体は本Releaseの対象外（Non-Goal）であることを明記）  
 更新日：2026-07-08（v4.3.0 — Retry Queue Cleanup Foundation層を追記。`RetryQueueUpdateDecider`（v4.1.0）が判定した`RetryQueueUpdateDecision`のうち、`outcome`が`NOOP`かつ`retry_result.outcome`が`SKIPPED`（`max_attempts`到達）の項目についてのみ`RetryQueueManager.remove()`を呼び出す新規コンポーネント`RetryQueueCleanupDecider`（判定）・`RetryQueueCleanupExecutor`（除去実行）を追加した設計判断。v4.2.0で対象外だった`SKIPPED`由来のQueue滞留に対応する一方、`COMPLETE` / `FAILED`（v4.2.0で除去済みのはず） / `NOT_FOUND` / `DISABLED`はいずれも対象外（KEEP）のまま構造的に維持したCleanup方針、Dead Letter Queue等の新しいQueueステータスを追加せず既存の`RetryQueueManager.remove()`を再利用した判断を明記）  
 更新日：2026-07-06（v4.1.0 — Retry Queue Update Foundation層を追記。`RetryManager.execute_dispatchable_retries()`（v4.0.0）が集約した`RetryExecutionResult`を対象に、対応するRetry Queue項目が`RetryQueueStatus.COMPLETED` / `FAILED`のどちらへ更新されるべきか（あるいは更新しないか）を判定する新規コンポーネント`RetryQueueUpdateDecider`を追加した設計判断。「再実行が実際に実行されたか」（`RetryResult.outcome == RETRIED`）を唯一の分岐点とし、`SKIPPED` / `NOT_FOUND` / `DISABLED`はいずれも`NOOP`（更新なし）に統一する判定方針、`RetryQueueManager.remove()`等への呼び出し経路を一切持たない境界、`retry_queue`パッケージへの変更が一切不要だった設計上の理由を明記）  
@@ -1605,4 +1606,73 @@ Composition Rootも同様に対象外（`docs/ROADMAP.md`「v3.x 以降の候補
 
 詳細は`docs/design/retry_policy_foundation_charter.md`（Project
 Charter）・`docs/design/retry_policy_foundation.md`（Architecture
+Design・Architecture Review含む）を参照。
+
+---
+
+## Retry Enqueue Trigger Foundation層（`src/retry_enqueue_trigger/`、v4.6.0 追加）
+
+v3.0.0〜v4.5.0の16回のReleaseで、Retry Queue（v3.1.0）からRetry Engine
+（v3.0.0）を経てQueueの後始末（Update / Removal / Cleanup / Terminal
+Cleanup、v4.1.0〜v4.4.0）に至る**下流**のパイプラインが完成した。しかし
+`RetryQueueManager.enqueue()` / `RetryManager.enqueue_retry()`はコード
+ベース全体のどこからも呼び出されておらず、Queueへ実際に項目を投入する
+**上流**が存在しなかった。本Releaseはこの欠落を埋める新規独立パッケージ
+`src/retry_enqueue_trigger/`を追加する。
+
+```
+WorkflowMonitorManager（v2.9.0、無改修）
+   │  list_status() でFAILED/TIMEOUTを判定
+   ▼
+RetryEnqueueTrigger / NullRetryEnqueueTrigger（v4.6.0、新規） ★本Release
+   │  RetryQueueManager.exists() で重複を確認
+   ▼
+RetryQueueManager（v3.1.0、無改修）
+   │  enqueue() でWAITING状態のRetryQueueItemを追加
+   ▼
+（v3.3.0〜v4.5.0の既存下流パイプラインが初めて実データを受け取れる）
+```
+
+### `retry_engine`を経由しない依存方向
+
+`RetryEnqueueTrigger`は`WorkflowMonitorManager` / `RetryQueueManager`に
+Constructor Injectionで直接依存し、`retry_engine`（`RetryManager.
+enqueue_retry()`）は経由しない。`RetrySchedulerSource`（v3.3.0）が
+`retry_engine`を経由せず`retry_queue`に直接依存する既存パターンと同じ
+判断であり、`RETRY_ENGINE_ENABLED=false`（デフォルト）の状態でも
+Queueへの投入自体は可能な構造としている（Queueへの投入自体は外部副作用を
+伴わないメモリ操作であり、`RetryQueueConfig.enabled`のデフォルトが`true`
+である既存設計と同じ分類に属するため。実際にRetryを実行するかは引き続き
+下流の`RetryConfig.enabled`で止まる）。
+
+### Feature Gate・Configクラスを持たない設計
+
+`RetrySchedulerSource` / `NullRetrySchedulerSource`（v3.3.0）と同じ
+Null Object Patternを踏襲し、`RetryEnqueueTrigger` / `NullRetryEnqueueTrigger`
+のどちらを構築するかを呼び出し元が選ぶことで有効/無効を表現する。
+`RetryEnqueueTriggerConfig`のような起動口・環境変数は追加しない。
+
+### Known Issue：Queueから除去された`run_id`の無限再投入リスク
+
+Queue内の重複防止は`RetryQueueManager.exists()`のみで行う。`RetryExecutor`
+（v3.0.0、無改修）は再実行のたびに**新しい`run_id`**を発行し、`metadata`に
+`{"retried_from": 元run_id}`を記録するため、元`run_id`のExecution History
+記録・Workflow Monitor判定は不変のままである。そのため、Queueから一度
+除去（`COMPLETE` / `FAIL` / `CLEANUP`）された`run_id`が、Monitor上でなお
+`FAILED` / `TIMEOUT`のまま観測され続けると、`enqueue_pending_failures()`
+が呼ばれるたびに無限に再投入されうる。本Releaseではこの対策を意図的に
+実装しない（呼び出し元＝Composition Rootが存在しないため実害はない）。
+将来の対策候補（`metadata["retried_from"]`を手掛かりにした「Retry
+History」コンポーネントの新設等）は`docs/ROADMAP.md`「v3.x 以降の候補」に
+記録した。
+
+### 本Releaseの対象外（Non-Goal）
+
+`RetryEnqueueTrigger`を定期的に駆動する起動スクリプト（Composition
+Root）・無限再投入対策（Retry History）・`dequeue()`の解禁・Retry Queueの
+永続化はいずれも**本Releaseの対象外**。既存の`workflow_monitor` /
+`retry_queue` / `retry_engine`はいずれも無改修（ゼロ改修）。
+
+詳細は`docs/design/retry_enqueue_trigger_foundation_charter.md`（Project
+Charter）・`docs/design/retry_enqueue_trigger_foundation.md`（Architecture
 Design・Architecture Review含む）を参照。
