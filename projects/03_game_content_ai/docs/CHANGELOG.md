@@ -268,6 +268,71 @@
 
 ---
 
+## [v5.5.0] - 2026-07-09 ★ Retry Runtime Loop Foundation
+
+### Added
+
+- `src/retry_runtime_loop/`新規パッケージ作成：`RetryRuntimeOrchestrator.run_once()`
+  （v5.3.0）を繰り返し呼び出すだけの薄いWrapper`RetryRuntimeLoop`
+  - `run_once_fn` / `sleep_fn` / `should_continue_fn` / `interval_seconds`を
+    Constructor Injectionで保持し、`run()`で
+    `while should_continue_fn(): run_once_fn(); sleep_fn(interval_seconds)`を
+    実行するだけのStateless Wrapper。Business Logicは一切持たない
+  - `RetryManager` / `RetryQueueManager` / `RetryHistoryManager` / `RetryPolicy` /
+    `RetryRuntimeOrchestrator` / `RetryCompositionRoot`のいずれもimportしない
+- `docs/design/retry_runtime_loop_foundation.md`新規作成（Project Charter /
+  Architecture Design。Architecture Review Final・ユーザー承認済み。
+  Option A（Loop Foundation）とOption B（Safe Dry Run Foundation）の比較評価を含む）
+- `tests/test_e2e_v5_5_0_retry_runtime_loop_foundation.py`新規作成（37件）
+
+### Note
+
+- **本Releaseは未配線のFoundationに限定した。** `scripts/run_retry_runtime.py` /
+  `RetryRuntimeOrchestrator` / `RetryCompositionRoot`のいずれからも
+  `RetryRuntimeLoop`を呼び出さない（消費者不在の先行実装。v3.1.0・v3.3.0・
+  v3.5.0・v5.1.0・v5.2.0と同型のパターン）
+- **Architecture Reviewを2回実施した。** 初回レビューでは「Loop Foundation」を
+  配線・運用まで見据えたものとして評価し、`run_once()`のdry_run未対応
+  （v5.3.0 Known Issue）による安全性リスクが配線によって増幅されることを理由に、
+  代替テーマ（Safe Dry Run Foundation）を提案した。ユーザーからの再レビュー依頼
+  （Loop自体がBusiness Logicを持たない前提での再評価）を受け、未配線の
+  Foundationに限定すれば実運用リスクを増やさずに導入できると判断し、結論を
+  修正した（Option A'として採用。`docs/design/retry_runtime_loop_foundation.md`
+  3章に比較評価を記録）
+- **`run_once_fn`の戻り値は一切解釈しない。** 実運用では`RetryRuntimeCycleResult`
+  が渡される想定だが、`RetryRuntimeLoop`はその型自体を知らず、戻り値を破棄する。
+  `run()`の戻り値は`None`
+- **例外はfail-fastで伝播させる。** `run_once_fn`が例外を送出した場合、そのまま
+  `run()`から呼び出し元へ伝播し、直後の`sleep_fn`は呼ばれない
+  （`RetryRuntimeOrchestrator.run_once()`と対称的な方針）
+- **既存13パッケージ（`workflow_monitor` 〜 `retry_runtime_orchestrator`）・
+  `scripts/run_retry_runtime.py`はいずれも本Releaseでも無改修。** 変更は
+  `src/retry_runtime_loop/`の新規追加のみ
+- Known Issue（未解消）：`RetryRuntimeLoop`を呼び出す消費者が存在しない、Loop配線時
+  に必要となる`dry_run`安全性は引き続き未解決、interval設定方法（環境変数/CLI）・
+  停止方法（signal handling）は未設計（詳細は
+  `docs/design/retry_runtime_loop_foundation.md` 5章）
+- 対象外（今回は未実装）：CLI配線（`--loop` / `argparse`）、`dry_run`対応、
+  daemon化・signal handling、Exit Code再設計、Summary Formatter、
+  `RetryRuntimeCycleResult`の解釈（いずれも将来Release候補）
+
+### Tested
+
+- `tests/test_e2e_v5_5_0_retry_runtime_loop_foundation.py`: 37/37 PASS
+  （Fakeによる振る舞い確認：呼び出し回数・引数・順序・例外伝播・戻り値の破棄、
+  責務境界の静的確認：禁止パッケージのimportなし・`RetryRuntimeCycleResult`
+  識別子の不出現、ディレクトリ構成・export確認、既存13パッケージ・
+  `scripts/run_retry_runtime.py`の無変更確認、消費者不在の確認、副作用なしの確認）
+- 既存回帰確認：`v5.3.0`（54/54）・`v5.4.0`（67/67）：全PASS。`v5.1.0`（36/38、
+  既存の`[KI-19]`による既知差分のみ）・`v5.2.0`（49/54、既存の`[KI-20]`・`[KI-21]`
+  による既知差分のみ）：いずれも本Releaseによる新規差分はない
+- **本Releaseでは新規Known Issue（KI）は発生しなかった。** 既存ファイルへの
+  変更が一切なく、`retry_runtime_loop`を参照する既存ファイルも存在しないため、
+  過去のFoundation Release（`[KI-19]`〜`[KI-21]`等）で恒常的に発生していた
+  Architecture Guardの恒久差分は本Releaseでは生じていない
+
+---
+
 ## [v5.4.0] - 2026-07-09 ★ Retry Runtime Script Entry Point Foundation
 
 ### Added

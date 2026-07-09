@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-09（v5.5.0 — Retry Runtime Loop Foundationを追記。`RetryRuntimeOrchestrator.run_once()`（v5.3.0）を繰り返し呼び出すだけの薄いLoop Wrapper`RetryRuntimeLoop`（`src/retry_runtime_loop/`）を新設したこと、`run_once_fn` / `sleep_fn` / `should_continue_fn` / `interval_seconds`をConstructor Injectionで保持し`run()`で`while should_continue_fn(): run_once_fn(); sleep_fn(interval_seconds)`を実行するだけのStateless Wrapperとしたこと（`RetryManager` / `RetryQueueManager` / `RetryHistoryManager` / `RetryPolicy` / `RetryRuntimeOrchestrator` / `RetryCompositionRootのいずれもimportしない）、`run_once_fn`の戻り値を一切解釈せず破棄し`run()`は`None`を返すこと、例外はtry/exceptで握りつぶさずfail-fastで伝播させること、ユーザーから当初提示された「Loop Foundation」を初回Architecture Reviewでは配線・運用まで見据えたものとして評価しdry_run未対応による安全性リスクを理由に一度は代替テーマを提案したが、再レビューの結果Loop自体がBusiness Logicを持たず`scripts/`への配線を伴わない未配線Foundationに限定すれば実運用リスクを増やさないと判断し結論を修正したこと（Option A'採用の経緯）、`scripts/run_retry_runtime.py` / `RetryRuntimeOrchestrator` / `RetryCompositionRoot`のいずれからも本Releaseでは配線しないこと（消費者不在の先行実装）、既存13パッケージ（`workflow_monitor` 〜 `retry_runtime_orchestrator`）・`scripts/run_retry_runtime.py`はいずれも無改修であり本Releaseによる新規Architecture Guard差分（KI）は発生しなかったことを明記）
 更新日：2026-07-09（v5.4.0 — Retry Runtime Script Entry Point Foundationを追記。`RetryRuntimeOrchestrator.run_once()`（v5.3.0）を初めてCLIから呼び出せるEntry Point `scripts/run_retry_runtime.py`を新設したこと、`RetryCompositionRoot.from_env()` → `RetryRuntimeOrchestrator.from_composition_root()` → `run_once()`のみを呼び出す薄い構成としBusiness Logicを一切持たせなかったこと（既存script群と同じscripts層の責務）、CLI引数は持たない設計としたこと（`run_once()`自体に分岐点がなく、特に`--dry-run`は`run_once()`側がdry_run未対応のため見せかけの安全機能になることを理由に見送ったこと）、Exit Code Policyとして正常終了0（Python標準）・例外発生時はPython標準の非0（fail-fast）を採用し独自のExit Code体系は導入しなかったこと、`format_summary(result: RetryRuntimeCycleResult) -> str`という関数へ表示ロジックを局所化し、Formatterクラスの実装自体は見送りつつ将来の抽出を容易にする構造に留めたこと（Architecture Review Minor Recommendation 2件の反映）、Gate（`RETRY_ENGINE_ENABLED`等）が閉じている場合もscriptは`isinstance()`によるNull判定を一切行わず常に`run_once()`を呼び出して結果件数（すべて0件）をそのまま表示する設計としたこと（Null Object Patternの意図を保つため）、`RetryCompositionRoot` / `RetryRuntimeOrchestrator`および既存12パッケージはいずれも無改修であること、本Releaseにより`retry_runtime_orchestrator`が初めて実際の消費者を持ったことでv5.2.0の一部Architecture GuardがFAILする恒久差分が生じ`[KI-21]`として記録したことを明記）  
 更新日：2026-07-09（v5.3.0 — Retry Runtime Run Once Foundationを追記。`RetryRuntimeOrchestrator`へ`run_once()`を追加し、Retry Runtimeを1サイクルだけ安全に実行できるようにした設計判断。実行順序は`trigger.enqueue_pending_failures(max_attempts=policy.max_attempts)` → `scheduler.run_due(jobs=[])` → `manager.execute_dispatchable_retries(events)`（本メソッド内でちょうど1回だけ呼び出す） → `RetryQueueUpdateDecider` / `RetryQueueRemovalExecutor` / `RetryQueueCleanupDecider` / `RetryQueueCleanupExecutor` / `RetryQueueTerminalCleanupDecider` / `RetryQueueTerminalCleanupExecutor` / `RetryHistoryRecordExecutor`（いずれも`retry_engine`が既に公開しているStateless・無引数コンストラクタのクラス）への結果配布、という固定順序としたこと、`execute_dispatchable_retries()`を1回だけ呼びその戻り値を保持したまま配布することで、v5.2.0で発見された「発見B」（同一run_idに対する`retry()`の多重実行リスク）を`retry_manager.py`を無改修のまま解消したこと、戻り値として`None`ではなく新設の`RetryRuntimeCycleResult`（`trigger_result` / `scheduler_events` / `execution_results` / `removal_results` / `cleanup_results` / `terminal_cleanup_results` / `history_results`の7フィールドを持つfrozen dataclass）を返す設計としたこと、`run_once()`に`dry_run`引数を追加しなかった理由（`RetryExecutor.execute()`が`dry_run`の値に関わらず常に`outcome=RetryOutcome.RETRIED`を返すため、`dry_run=True`でもQueue除去・History記録という実際の副作用を防げず「安全なdry_run」にならないと判明したため、Known Issueとして記録し独立Releaseへ送ったこと）、`scripts/`エントリーポイント・`loop()`・`daemon()`はいずれも本Releaseの対象外としたこと、既存11パッケージ（`workflow_monitor` 〜 `retry_scheduler_decision`）および`retry_manager.py`はいずれも無改修であることを明記）  
 更新日：2026-07-09（v5.2.0 — Retry Runtime Orchestrator Foundationを追記。新規パッケージ`src/retry_runtime_orchestrator/`（`RetryRuntimeOrchestrator`）を追加し、「Retry Runtimeの実行順序を将来管理する場所」として`trigger` / `scheduler` / `manager` / `queue` / `history` / `policy`の6つをConstructor Injectionで保持するだけの設計判断。`run()` / `run_once()` / `loop()` / `daemon()`等のBusiness Logicはいずれも本Releaseの対象外とし、Composition（`RetryCompositionRoot`＝組み立て）とOrchestration（`RetryRuntimeOrchestrator`＝実行順序の置き場所）の責務分離を明確化したこと、Architecture Reviewの過程で発見した2点（Scheduler系コンポーネントがComposition Rootへ未配線のため`RetryQueueManager`に積まれた再試行候補を`SchedulerEvent`化する経路が存在しなかったこと／`RetryManager`の上位メソッド群を同一`events`に対して素朴に並べて呼び出すと`execute_dispatchable_retries()`が重複実行され`retry()`が同一run_idに対して複数回呼ばれかねないこと）を踏まえ、`RetryCompositionRoot`へ`RetrySchedulerSource` / `RetrySchedulerDecision` / `SchedulerEngine`の配線を追加する一方、後者の解決は`RetryManager`へ`run_cycle()`等の統合APIを追加せず、次Execution Releaseで`RetryRuntimeOrchestrator`が`execute_dispatchable_retries()`を1回だけ呼び出しその結果を既存の公開Decider/Executor群へ配布する方針とし`retry_manager.py`を無改修に保つ設計判断としたこと、`queue` / `history` / `policy`を本Release時点から保持する理由（次Execution Releaseで確定的に必要になることが判明したため、Constructor変更の再往復を避けた）、`workflow_monitor` / `retry_queue` / `retry_history` / `retry_enqueue_trigger` / `retry_engine` / `workflow_engine` / `ai` / `execution_history` / `scheduler` / `retry_scheduler_source` / `retry_scheduler_decision`はいずれも無改修であることを明記）  
@@ -2193,4 +2194,72 @@ Development Charter 3章が警戒する誤動作を招くため見送った。
 `retry_composition`）はいずれも無改修（ゼロ改修）。
 
 詳細は`docs/design/retry_runtime_script_entry_point_foundation.md`
+（Project Charter / Architecture Design・Architecture Review Final含む）を参照。
+
+---
+
+## Retry Runtime Loop Foundation層（`src/retry_runtime_loop/`、v5.5.0 追加）
+
+`RetryRuntimeOrchestrator.run_once()`（v5.3.0）を繰り返し呼び出すだけの薄いLoop
+Wrapper`RetryRuntimeLoop`を新設した。本Releaseは**未配線のFoundation限定**であり、
+`scripts/run_retry_runtime.py`・`RetryRuntimeOrchestrator`・`RetryCompositionRoot`
+のいずれからも呼び出されない（消費者不在の先行実装）。
+
+```
+RetryRuntimeLoop(run_once_fn, sleep_fn, should_continue_fn, interval_seconds)
+   │
+   └─ run()
+        └─ while should_continue_fn():
+               run_once_fn()
+               sleep_fn(interval_seconds)
+```
+
+### Option A（Loop Foundation）と Option B（Safe Dry Run）の再評価
+
+ユーザーから当初「Retry Runtime Loop Foundation」が第一候補として提示され、
+初回Architecture Reviewでは「配線・運用まで見据えたLoop」として評価し、
+dry_run未対応のまま導入すると安全上のリスクが増幅されることを理由に、
+代替テーマ（Safe Dry Run Foundation）を提案した。
+
+再レビューの結果、Loop自体がBusiness Logicを一切持たず、かつ`scripts/`への
+配線を伴わない**未配線のFoundation**に限定すれば、v3.1.0・v3.3.0・v3.5.0・
+v5.1.0・v5.2.0で繰り返してきた「消費者不在の先行実装」パターンと同型であり、
+実運用リスクを増やさずにRuntime Architectureを1歩前進させられると判断した
+（Option A'）。これにより初回レビューの結論を修正し、本Releaseとして採用した。
+詳細な比較は`docs/design/retry_runtime_loop_foundation.md` 3章を参照。
+
+### `RetryRuntimeLoop`の設計
+
+* `run_once_fn` / `sleep_fn` / `should_continue_fn` / `interval_seconds`を
+  Constructor Injectionで保持するだけのStatelessなWrapper
+* `RetryManager` / `RetryQueueManager` / `RetryHistoryManager` / `RetryPolicy` /
+  `RetryRuntimeOrchestrator` / `RetryCompositionRoot`のいずれもimportしない
+* `run_once_fn`の戻り値（実運用では`RetryRuntimeCycleResult`が渡される想定だが、
+  本クラスはその型を一切知らない）は破棄する。`run()`の戻り値は`None`
+* 例外はtry/exceptで握りつぶさず、そのまま`run()`から呼び出し元へ伝播させる
+  （fail-fast。`RetryRuntimeOrchestrator.run_once()`と対称的な方針）。
+  `run_once_fn`が例外を送出した場合、直後の`sleep_fn`は呼ばれない
+* `interval_seconds`のバリデーションは行わない（DIのみで完結し境界に該当しない
+  ため、呼び出し元を信頼する）
+
+### 未配線である理由
+
+`scripts/run_retry_runtime.py`・`RetryRuntimeOrchestrator`・
+`RetryCompositionRoot`のいずれからも`RetryRuntimeLoop`を参照しない。
+`run_once()`自体がdry_run未対応というKnown Issue（v5.3.0・v5.4.0から継続）を
+抱えたままLoopを配線すると、この未解決の安全上のギャップを「無人で繰り返す」
+形に増幅させてしまうため、本Releaseでは意図的に未配線のまま留めた。配線判断
+（`--loop`のCLI化）は、dry_run安全性の状況を踏まえて次Release以降に改めて
+評価する。
+
+### 本Releaseの対象外（Non-Goal）
+
+CLI配線（`--loop` / `argparse`）、`RetryRuntimeOrchestrator`へのLoop責務追加、
+`RetryCompositionRoot`へのExecution/Loop責務追加、`RetryManager`への変更、
+`dry_run`対応、daemon化・signal handling、Exit Code再設計、
+`RetryRuntimeCycleResult`の解釈はいずれも**本Releaseの対象外**。既存13パッケージ
+（`workflow_monitor` 〜 `retry_runtime_orchestrator`）・`scripts/run_retry_runtime.py`
+はいずれも無改修（ゼロ改修）。
+
+詳細は`docs/design/retry_runtime_loop_foundation.md`
 （Project Charter / Architecture Design・Architecture Review Final含む）を参照。
