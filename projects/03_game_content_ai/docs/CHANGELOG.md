@@ -257,6 +257,77 @@
 - **対応状況**：対応しない。v5.3.0のArchitecture Review（Final、ユーザー承認済み）で`run_once()`の追加・`RetryRuntimeCycleResult`の新設・それに伴うファイル構成/export変更はいずれも正式に承認済みである。本質的な制約（`RetryManager`・既存11パッケージのゼロ改修、`execute_dispatchable_retries()`が1回だけ呼ばれること等）は、v5.3.0の新規テスト（`tests/test_e2e_v5_3_0_retry_runtime_run_once_foundation.py`、54件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-19]`と同じ扱い）
 - **今後の対応**：不要（本エントリで説明を確定）。`RetryRuntimeOrchestrator`が本Releaseで初めて実行系メソッド（`run_once()`）を持つ実装段階へ移行したことの自然な帰結であり、将来Release（`loop()`/`daemon()`追加等）でさらに変更が入るたびに同様の差分が起こりうるが、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
 
+### [KI-21] v5.4.0でのRetry Runtime Script Entry Point Foundationにより、v5.2.0の一部Architecture GuardがFAILする（設計上の意図的な差分）
+
+- **発見日**：2026-07-09（v5.4.0 Retry Runtime Script Entry Point Foundation Test工程実施時）
+- **対象と症状**：`tests/test_e2e_v5_2_0_retry_runtime_orchestrator_foundation.py`：49/54 PASS（新規1件FAIL、`[KI-20]`による既存4件FAILと合わせて計5件）
+  - テスト25「`retry_runtime_orchestrator`を参照する既存ファイルが存在しない」（本Releaseで新設した`scripts/run_retry_runtime.py`が`retry_runtime_orchestrator`をimportする、`retry_runtime_orchestrator`の初めての実消費者となったため）
+- **原因**：v5.4.0（Retry Runtime Script Entry Point Foundation）で`scripts/run_retry_runtime.py`を新規追加し、`RetryCompositionRoot.from_env()` → `RetryRuntimeOrchestrator.from_composition_root()` → `run_once()`を呼び出すEntry Pointとした（`docs/design/retry_runtime_script_entry_point_foundation.md`）。v5.2.0のテスト25は「その時点で`retry_runtime_orchestrator`をどこからも呼び出していないこと」を当時の事実としてArchitecture Guardに固定していたものであり、`[KI-4]`2026-07-03追記のv3.3.0テスト17・`[KI-19]`と同型の既知差分である
+- **対応状況**：対応しない。v5.4.0のArchitecture Review（Final、ユーザー承認済み）で`scripts/run_retry_runtime.py`の新規追加・`retry_runtime_orchestrator`の初回消費は正式に承認済みである。本質的な制約（`RetryCompositionRoot` / `RetryRuntimeOrchestrator`・既存12パッケージのゼロ改修、scriptがBusiness Logicを持たないこと、CLI引数を持たないこと）は、v5.4.0の新規テスト（`tests/test_e2e_v5_4_0_retry_runtime_script_entry_point_foundation.py`、67件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-20]`と同じ扱い）
+- **今後の対応**：不要（本エントリで説明を確定）。本チェックは`git diff`を使わず`src/` / `scripts/`配下の全ファイルを走査する恒久的な静的検査であり、コミットの有無に関わらず本Release以降も成立しなくなる（`[KI-4]`2026-07-03追記・`[KI-19]`と同型。`retry_runtime_orchestrator`が本Releaseで初めて実際の消費者（`scripts/run_retry_runtime.py`）を持ったことの自然な帰結）
+
+---
+
+## [v5.4.0] - 2026-07-09 ★ Retry Runtime Script Entry Point Foundation
+
+### Added
+
+- `scripts/run_retry_runtime.py`新規作成：`RetryCompositionRoot.from_env()` →
+  `RetryRuntimeOrchestrator.from_composition_root()` → `run_once()`を1回だけ呼び出す
+  Entry Point。CLI引数は持たない
+  - `format_summary(result: RetryRuntimeCycleResult) -> str`：`RetryRuntimeCycleResult`を
+    人間向けサマリー文字列へ変換する関数。表示ロジックを`main()`から分離し、
+    将来Formatterクラスへ抽出しやすい構造に留めた（Architecture Review Minor
+    Recommendation #2）
+- `docs/design/retry_runtime_script_entry_point_foundation.md`新規作成（Project
+  Charter / Architecture Design。Architecture Review Final・ユーザー承認済み）
+- `tests/test_e2e_v5_4_0_retry_runtime_script_entry_point_foundation.py`新規作成（67件）
+
+### Note
+
+- **`RetryRuntimeOrchestrator.run_once()`（v5.3.0）に初めての実際の呼び出し口が
+  できた。** v5.1.0〜v5.3.0で積み上げたComposition Root / Orchestratorの土台が、
+  本Releaseで初めてCLIから実行可能になった
+- **Exit Code Policyを明文化した（Architecture Review Minor Recommendation #1）。**
+  正常終了はexit code 0（Python標準）、例外発生時はPython標準の非0（fail-fast
+  でそのまま伝播）。独自のExit Code体系は導入していない
+- **`--dry-run`は追加しなかった。** `run_once()`自体がdry_run未対応
+  （v5.3.0 Known Issue）のため、CLI側にだけ`--dry-run`を追加すると「指定したのに
+  実際にQueue除去・History記録が起きた」という見せかけの安全機能になり、
+  Development Charter 3章が警戒する誤動作を招くため見送った
+  （`docs/design/retry_runtime_script_entry_point_foundation.md` 2.3節）
+- **Gate（`RETRY_ENGINE_ENABLED`等）の状態を判定しない設計とした。**
+  `NullRetryManager.execute_dispatchable_retries()`が常に空リストを安全に返す
+  設計（既存実装で確認済み）であるため、scriptは`isinstance()`によるNull判定を
+  一切行わず、常に`run_once()`を呼び出して結果件数をそのまま表示する
+  （同設計書2.6節）
+- **`RetryCompositionRoot` / `RetryRuntimeOrchestrator`・既存12パッケージ
+  （`workflow_monitor` 〜 `retry_composition`）はいずれも本Releaseでも無改修。**
+  変更は`scripts/run_retry_runtime.py`の新規追加のみ
+- Known Issue（未解消）：`dry_run`未対応（継続）、Exit Codeによる成否監視は不可
+  （標準出力の目視確認のみ）、他のAgent系scriptとの同時実行に対する排他制御なし
+  （詳細は`docs/design/retry_runtime_script_entry_point_foundation.md` 5章）
+- 対象外（今回は未実装）：`--loop` / `--daemon`、安全なdry_run再設計、独自Exit Code
+  体系、Summary Formatterクラス化（いずれも将来Release候補）
+
+### Tested
+
+- `tests/test_e2e_v5_4_0_retry_runtime_script_entry_point_foundation.py`: 67/67 PASS
+  （スクリプトの存在・`format_summary()`の構造と出力内容・scripts層の責務に関する
+  静的import検査・Null判定を行わない方針の確認・サブプロセス実行によるGate無効時の
+  正常終了と副作用なしの確認・Exit Code Policy（不正環境変数によるfail-fast）の確認・
+  Architecture Guardを確認）
+- 既存回帰確認：`v5.3.0`（54/54）・`v4.7.0`（178/178）・`v2.0.0`（118/118）：全PASS
+- `v5.1.0`（36/38、既存の`[KI-19]`による既知差分のみ）・`v5.0.0`（109/110、既存の
+  既知差分のみ）・`v4.9.0`（既存の`[KI-18]`による`TypeError`が引き続き再現）・
+  `v4.1.0`（84/87、既存の`[KI-11]`による既知差分のみ）・`v3.0.0`（206/208、既存の
+  既知差分のみ）：いずれも本Releaseによる新規差分はない
+- `v5.2.0`（49/54、新規1件は`[KI-21]`参照。`[KI-20]`の既存4件と合わせて計5件FAIL）：
+  本Releaseで想定済みの差分
+- 既存12パッケージ（`retry_composition` / `retry_runtime_orchestrator`含む）は
+  いずれも`git diff --quiet`で無変更を確認済み。既存の他scripts
+  （`run_workflow_engine.py`等6本）も無変更を確認済み
+
 ---
 
 ## [v5.3.0] - 2026-07-09 ★ Retry Runtime Run Once Foundation
