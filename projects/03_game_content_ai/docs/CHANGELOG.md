@@ -238,6 +238,41 @@
 
 ---
 
+## [v5.1.0] - 2026-07-09 ★ Retry Composition Root Foundation
+
+### Added
+
+- `src/retry_composition/`新規パッケージ作成（`RetryCompositionRoot`）
+  - `retry_composition_root.py`：`RetryCompositionRoot`（`__init__.py`は`RetryCompositionRoot`のみexport）
+- `docs/design/retry_composition_root_foundation.md`新規作成（Project Charter / Architecture Design。Architecture Review Final・ユーザー承認済み）
+- `tests/test_e2e_v5_1_0_retry_composition_root_foundation.py`新規作成（38件）
+
+### Changed
+
+- なし（既存パッケージへの変更は一切ない。新規パッケージ追加のみ）
+
+### Note
+
+- **v5.0.0までのGuard判定基準精緻化が実運用で意味を持つための前提条件（Queue/Historyインスタンスの共有）を整備した。** `RetryQueueManager` / `RetryHistoryManager`はいずれもプロセス内メモリの`dict`のみで状態を保持するため、`RetryEnqueueTrigger`（Enqueue側）と`RetryManager`（Execute側）を別々に構築すると、それぞれが独立した空のQueue/Historyを持つことになり、v4.7.0〜v5.0.0で構築したGuardの回数比較判定が実運用上意味を持たない、というアーキテクチャ上のリスクがArchitecture Reviewの過程で判明した（`docs/design/retry_composition_root_foundation.md` 1.2節）
+- **Enqueue単体のComposition Rootではなく、Enqueue・Execute双方を対象にしたComposition Rootへとテーマを見直した。** 当初は`RetryEnqueueTrigger`のみを配線する限定スコープの案を検討していたが、Runtime全体を組む段階になった時点で書き直しが発生する「使い捨てComposition Root」になるリスクを指摘され、`RetryQueueManager` / `RetryHistoryManager`を1インスタンスずつ生成して`trigger`と`manager`の両方へ注入する設計に変更した
+- **責務は「既存の`from_env()`/`from_config()`のみを使って組み立て、属性として公開すること」に限定した。** `RetryCompositionRoot`は`from_env()`以外の公開メソッドを持たない。`enqueue_pending_failures()` / `execute_dispatchable_retries()`等を呼び出す実行順序の決定（`run_once()`等）・ループ・デーモン化・起動スクリプトはいずれも本Releaseの対象外とした。新規business logicはゼロ（同設計書2.3節 Design Policy #1・#4）
+- **パッケージ配置・クラス名をArchitecture Reviewで再検討した。** `src/retry_composition/`（既存16パッケージと同じドメインスコープの命名。汎用`src/runtime/`・`src/application/`は2つ目の消費者が存在しない段階での先回り抽象化として不採用）、`RetryCompositionRoot`（「Runtime」は実行責任を連想させ本Releaseの責務境界と矛盾するため不採用。「Builder」「Factory」は生成後の参照を保持し続ける性質と不一致のため不採用。DI文脈で確立した「Composition Root」という語を採用）（同設計書2.1節）
+- **`workflow_monitor` / `retry_queue` / `retry_history` / `retry_enqueue_trigger` / `retry_engine` / `workflow_engine` / `ai` / `execution_history`はいずれも本Releaseでも無改修（ゼロ改修）。** 変更は`src/retry_composition/`配下2ファイルの新規追加のみ
+- **本Release単体では何も実行されない。** `RetryCompositionRoot.from_env()`を呼び出して終わりであり、ユーザーから見て動く機能が増えるわけではない。次Release以降の「1サイクル実行」の起動スクリプトが実装されて初めて実運用上の価値が生まれる（同設計書5章 Known Issue）
+- 対象外（今回は未実装）：起動スクリプト・1サイクル実行・ループ・デーモン化・`RetryQueueManager` / `RetryHistoryManager`の永続化・新規Configクラス（いずれも将来Release候補）
+
+### Tested
+
+- `tests/test_e2e_v5_1_0_retry_composition_root_foundation.py`: 38/38 PASS（`RETRY_ENGINE_ENABLED`等の全ゲート無効時・全ゲート有効時の両方で、`trigger`と`manager`が同一のQueue/Historyインスタンスを参照していることを`is`比較で確認）
+- 既存回帰確認：`workflow_monitor` / `retry_queue` / `retry_history` / `retry_enqueue_trigger` / `retry_engine` / `workflow_engine` / `ai` / `execution_history`のいずれも`git diff --quiet`で無変更を確認済み（本Releaseの新規テスト19）
+- `v2.7.0`（163/163）・`v2.9.0`（103/103）・`v3.1.0`（152/152）・`v3.4.0`（94/94）・`v3.7.0`（74/74）・`v4.7.0`（178/178）：全PASS
+- `v3.0.0`（206/208）・`v3.2.0`（100/102）・`v3.3.0`（71/72）・`v3.5.0`（71/72）・`v3.6.0`（102/104）・`v3.8.0`（67/70）・`v3.9.0`（70/73）・`v4.0.0`（83/88）・`v4.1.0`（84/87）・`v4.2.0`（91/94）・`v4.3.0`（105/108）・`v4.4.0`（120/123）・`v4.5.0`（63/64）・`v4.6.0`（97/100）：いずれも既存の`[KI-3]`〜`[KI-17]`による既知差分のみで、本Releaseによる新規差分はない（対象パッケージを一切変更していないため）
+- `v4.8.0`・`v4.9.0`：既存の`[KI-18]`（Guardシグネチャ変更による`TypeError`中断）が引き続き再現。本Releaseによる新規差分ではない
+- `v5.0.0`（109/110、`[KI-18]`のv4.7.0テスト29 `git diff`一時検知）：本Releaseによる新規差分ではない
+- `v1.10.0`（Analytics Foundation）は`[KI-1]`（既知の問題、本Releaseと無関係）のため今回は実行対象外
+
+---
+
 ## [v5.0.0] - 2026-07-09 ★ Retry Enqueue Guard Refinement Foundation
 
 ### Added
