@@ -207,6 +207,57 @@
 - **今後の対応**：不要（本エントリで説明を確定）。`git diff --quiet`ベースのチェックは本Releaseをcommitすれば自然に解消する。一方、v4.4.0の最終引数検査・v4.5.0の`__all__`件数検査は`git diff`を使わない恒久的な静的検査であり、コミットの有無に関わらず本Release以降も成立しなくなる。将来Release（Retry Enqueue Guard等）で`retry_engine`側にさらに変更が入るたびに同様のFAILが起こりうるが、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
 - **無限再投入対策との関係**：本Releaseは`[KI]`ではないが、`docs/design/retry_enqueue_trigger_foundation.md` 11章 Known Issue（Queueから除去された`run_id`の無限再投入リスク）は本Releaseでは未解消のままである。本Releaseは再試行履歴を記録する土台（`RetryHistoryManager`）のみを整備し、`RetryEnqueueTrigger`側からの参照・ガード判定は次Release（Retry Enqueue Guard）に送った
 
+### [KI-16] v4.8.0でのRetry Enqueue Guardにより、v4.6.0の一部Architecture GuardがFAILする（設計上の意図的な差分）
+
+- **発見日**：2026-07-09（v4.8.0 Retry Enqueue Guard Test工程実施時）
+- **対象と症状**：
+  - `tests/test_e2e_v4_6_0_retry_enqueue_trigger_foundation.py`：98/100 PASS（新規2件FAIL：テスト12「`RetryEnqueueTrigger.__init__`のパラメータが`self, monitor, queue`のみ」・テスト16「`src/retry_enqueue_trigger/`が`__init__.py` / `retry_enqueue_trigger.py`の2ファイルのみ」）
+  - `tests/test_e2e_v4_7_0_retry_history_foundation.py`：176/178 PASS（新規2件FAIL：テスト29「`src/retry_enqueue_trigger/retry_enqueue_trigger.py` / `__init__.py`に変更がない（`git diff`）」。いずれも本Release分の未コミット差分による一時的な検知であり、`[KI-3]`等と同型。本Releaseをcommitすれば自然に解消する見込み）
+- **原因**：v4.8.0（Retry Enqueue Guard）で`src/retry_enqueue_trigger/`に`retry_enqueue_guard.py`を新規追加し、`retry_enqueue_trigger.py`（`history` / `guard`引数・`skipped_history`フィールド追加）・`__init__.py`（新規シンボルexport）を変更した（`docs/design/retry_enqueue_guard.md`）。v4.6.0のテスト12・16は「その時点で`__init__`が2引数だった」「`src/retry_enqueue_trigger/`が2ファイルだった」という当時の事実をArchitecture Guardとして固定していたものであり、`[KI-3]`〜`[KI-15]`と同種の既知差分である
+- **対応状況**：対応しない。v4.8.0のProject Charter / Architecture Design / Architecture Reviewで`retry_enqueue_guard.py`の新規追加・`retry_enqueue_trigger.py`の変更（`history` / `guard`引数・`skipped_history`フィールド追加）・`__init__.py`の`__all__`更新はいずれも正式に承認済みである。本質的な制約（`workflow_monitor` / `retry_queue` / `retry_history` / `retry_engine`のゼロ改修、`history`省略時は`NullRetryHistoryManager()`にフォールバックしGuardが常にALLOWを返すこと＝v4.6.0時点と完全に同一の挙動を維持すること、`RetryEnqueueGuard`が`retry_history`等の外部パッケージ型を一切importしないこと）は、v4.8.0の新規テスト（`tests/test_e2e_v4_8_0_retry_enqueue_guard.py`、129件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-15]`と同じ扱い）
+- **今後の対応**：不要（本エントリで説明を確定）。`tests/test_e2e_v4_7_0_retry_history_foundation.py`テスト29の`git diff --quiet`ベースのチェックは本Releaseをcommitすれば自然に解消する。一方、`tests/test_e2e_v4_6_0_retry_enqueue_trigger_foundation.py`テスト12・16は`git diff`を使わない恒久的な静的検査であり、コミットの有無に関わらず本Release以降も成立しなくなる。将来Release（`attempt`の実回数連動等）で`retry_enqueue_trigger`側にさらに変更が入るたびに同様のFAILが起こりうるが、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
+
+---
+
+## [v4.8.0] - 2026-07-09 ★ Retry Enqueue Guard
+
+### Added
+
+- `src/retry_enqueue_trigger/retry_enqueue_guard.py`（新規）：再試行履歴（`has_history`）の有無から、enqueueを許可するか拒否するかを判定するだけの最小Deciderコンポーネント
+  - `RetryEnqueueGuardOutcome`（`ALLOW` / `BLOCK`の2値Enum）
+  - `RetryEnqueueGuardDecision`（`frozen=True`の`dataclass`）：`run_id` / `outcome` / `reason`の3フィールドのみを持つ
+  - `RetryEnqueueGuard`：`decide(run_id, has_history) -> RetryEnqueueGuardDecision`の1メソッドのみを持つStatelessなコンポーネント。`RetryHistoryManager` / `NullRetryHistoryManager`型を一切importせず、`has_history: bool`という既に解決済みの値のみを入力とする（`RetryQueueUpdateDecider` / `RetryQueueCleanupDecider`と同じ設計言語）
+  - `decide_all()`（バッチ版）・`NullRetryEnqueueGuard`はいずれも追加しない（呼び出し元は元々1件ずつループしており、Guardを無効化したい場合は`history`を省略することで既に完結しているため）
+- `src/retry_enqueue_trigger/retry_enqueue_trigger.py`（変更）：`RetryEnqueueTrigger`が`RetryHistoryManager` / `NullRetryHistoryManager`・`RetryEnqueueGuard`をConstructor Injectionで保持できるようにし、以下を追加した
+  - `RetryEnqueueTrigger.__init__`に`history` / `guard`引数（いずれもデフォルト`None`）を末尾に追加。省略時は`history`は`NullRetryHistoryManager()`（stateful storeのため`RetryManager`の`history`引数と同じ理由でNullへフォールバック）、`guard`は`RetryEnqueueGuard()`（Stateless・害のない実体のためデフォルトで実体を使う）にそれぞれ自動フォールバックする
+  - `enqueue_pending_failures()`のループへ、`monitor_status`判定の直後・`queue.exists()`判定の直前に`self._history.has_history(record.run_id)` → `self._guard.decide(...)`の判定を追加した。`BLOCK`と判定された`run_id`は`queue.exists()` / `queue.enqueue()`のいずれにも到達しない
+  - `RetryEnqueueTriggerResult`に`skipped_history: int = 0`フィールドを末尾のデフォルト値付きで追加した
+  - `NullRetryEnqueueTrigger`は`skipped_history=0`を明示的に返すよう更新した（既存5フィールドと同じスタイルを踏襲）
+- `src/retry_enqueue_trigger/__init__.py`（変更）：`RetryEnqueueGuard` / `RetryEnqueueGuardOutcome` / `RetryEnqueueGuardDecision`を新規export。既存の3シンボルは維持（計6シンボル）
+- `tests/test_e2e_v4_8_0_retry_enqueue_guard.py`新規作成（129件）
+- `docs/design/retry_enqueue_guard_charter.md`新規作成（Project Charter、ユーザー承認済み）
+- `docs/design/retry_enqueue_guard.md`新規作成（Architecture Design。Architecture Review完了・**Approve**・ユーザー承認済み）
+
+### Note
+
+- **v4.6.0 Known Issue（無限再投入リスク）を解消した。** `RetryEnqueueTrigger`は`RetryQueueManager.exists()`による「Queue内に現在存在するか」の確認に加え、v4.8.0で`RetryHistoryManager.has_history()`を参照する`RetryEnqueueGuard`（「再試行履歴が1回でもあればブロック」の二値判定）を追加した。これにより、Queueから除去（`COMPLETE` / `FAIL` / `CLEANUP`）された後もWorkflow Monitor上で`FAILED` / `TIMEOUT`のまま観測され続ける`run_id`が、`enqueue_pending_failures()`が呼ばれるたびに無限に再enqueueされる問題を解消した（`docs/design/retry_enqueue_guard.md` 1章・11章）
+- **対策が単なる改善ではなく安全性上必須であることをコード調査で確認した。** `RetryEnqueueTrigger.enqueue_pending_failures()`は`queue.enqueue()`呼び出し時に`retry_attempt`を渡しておらず常に`1`固定でQueueへ投入される。下流の`RetryExecutionCoordinator.execute()`はQueue項目由来のこの`1`をそのまま`RetryManager.retry()`の`attempt`引数として使うため、`RetryPolicy.should_retry()`は常に`attempt=1 < max_attempts（デフォルト3）`という条件で判定される。つまり`attempt`は実際の累積試行回数と連動しておらず、無対策のままComposition Root（定期実行）が実装されると、同一`run_id`のWorkflowが無制限に再実行されうる（News収集・WordPress下書き投稿等の実際の副作用込みで）。本Releaseの`RetryEnqueueGuard`はこれを止める唯一の現実的なセーフティネットである（`docs/design/retry_enqueue_guard_charter.md` 1章1.1節、ユーザー承認済み）
+- **Guard判定は「履歴の有無」の二値のみとした（ユーザー承認済み方針）。** `RetryHistoryRecord.attempt_count`と`RetryPolicy.max_attempts`を比較する、より精密な判定も技術的には可能だが、`retry_enqueue_trigger`が`retry_engine`（`RetryPolicy`）へ新たに依存することになり、v4.6.0 Design Policy #2（`retry_engine`を経由しない）との整合性を崩す。また`attempt`が実回数と連動していない現状の構造では、これ以上精密な判定を導入しても正しく機能しない
+- **新たな制約（Known Issue）が生じたことを明記する。** `RETRY_MAX_ATTEMPTS`（デフォルト3）を活かした複数回の自動リトライ運用は、`RetryEnqueueTrigger`経由では本Release後も実質的に機能しないままである（一度でも再試行履歴があれば以後は二度と自動enqueueされないため）。安全性を最優先する意図的な設計判断であり、複数回リトライを実現するには`attempt`の実回数連動を別Releaseで先に実装する必要がある（`docs/design/retry_enqueue_guard.md` 11章 Known Issue）
+- **`history`省略時は`NullRetryHistoryManager()`にフォールバックし、Guardは常に`ALLOW`を返す。** これにより、本Releaseの新規引数を渡さない既存の呼び出し（v4.6.0時点の2引数コンストラクタ呼び出し）は、本Release後もv4.6.0時点とまったく同じ挙動になる
+- **`RetryEnqueueGuard`は完全にStateless。** `RetryHistoryManager`等の外部パッケージ型を一切importせず、`has_history: bool`という既に解決済みの値のみを受け取る。外部ストアへの問い合わせ（`history.has_history()`の呼び出し）は`RetryEnqueueTrigger`側の責務として残した
+- **Backward Compatibility を維持。** `RetryEnqueueTrigger.__init__`への引数追加・`RetryEnqueueTriggerResult`へのフィールド追加はいずれも末尾のデフォルト値付きのみであり、既存の呼び出し（新規引数を渡さない場合）は本Release後もまったく同じ結果になる
+- **`workflow_monitor` / `retry_queue` / `retry_history` / `retry_engine`はいずれも本Releaseでも無改修。** 変更は`src/retry_enqueue_trigger/`配下3ファイル（新規1・変更2）のみ
+- 対象外（今回も未実装）：`attempt`の実回数連動・Guard判定基準の精緻化（`max_attempts`比較）・Composition Root・`RetryHistoryManager`の永続化・Feature Gate/Configクラスの新設（いずれも将来Release候補。詳細は`docs/design/retry_enqueue_guard_charter.md` 10章、`docs/design/retry_enqueue_guard.md` 12章 Future Extension）
+
+### Tested
+
+- `tests/test_e2e_v4_8_0_retry_enqueue_guard.py`: 129/129 PASS
+- 既存回帰確認：`v1.9.0`〜`v2.9.0`（Analytics Foundation `[KI-1]`除く）全PASS
+- `v3.0.0`（206/208）・`v3.1.0`（152/152）・`v3.2.0`（100/102）・`v3.3.0`（71/72）・`v3.4.0`（94/94）・`v3.5.0`（71/72）・`v3.6.0`（102/104）・`v3.7.0`（74/74）・`v3.8.0`（67/70）・`v3.9.0`（70/73）・`v4.0.0`（83/88）・`v4.1.0`（84/87）・`v4.2.0`（91/94）・`v4.3.0`（105/108）・`v4.4.0`（120/123）・`v4.5.0`（63/64）：いずれも既存の`[KI-3]`〜`[KI-15]`による既知差分のみで、本Releaseによる新規差分はない（`retry_engine` / `retry_queue` / `retry_history` / `workflow_monitor` / `scheduler`等を一切変更していないため）
+- `v4.6.0`（98/100、新規2件は`[KI-16]`参照）・`v4.7.0`（176/178、新規2件は`[KI-16]`参照）：`[KI-16]`にて説明
+- `v1.10.0`（Analytics Foundation）は`[KI-1]`（既知の問題、本Releaseと無関係）のため今回は実行対象外
+
 ---
 
 ## [v4.7.0] - 2026-07-09 ★ Retry History Foundation

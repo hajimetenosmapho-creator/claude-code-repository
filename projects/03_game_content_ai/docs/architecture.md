@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-09（v4.8.0 — Retry Enqueue Guard層を追記。v4.6.0のKnown Issue（無限再投入リスク）・v4.7.0のFuture Extension「Retry Enqueue Guard」を接続し、無限再投入対策を完成させた設計判断。`RetryEnqueueTrigger.enqueue_pending_failures()`が`queue.enqueue()`時に`retry_attempt`を渡さず常に`1`固定でQueueへ投入するため`RetryPolicy.should_retry()`の`max_attempts`判定が実質機能せず、無対策では同一`run_id`が無制限に再実行されうることをコード調査で確認したこと、この対策として`RetryHistoryManager.has_history()`を参照する新規Stateless Decider`RetryEnqueueGuard`（`src/retry_enqueue_trigger/retry_enqueue_guard.py`）を追加したこと、判定基準を`retry_engine`への新規依存を避けるため「履歴の有無」の二値のみに意図的に限定したこと、`RetryEnqueueTrigger.__init__`へ`history` / `guard`引数を末尾のデフォルト値付きで追加しBackward Compatibilityを維持したこと、`workflow_monitor` / `retry_queue` / `retry_history` / `retry_engine`はいずれも無改修であること、副作用として`RETRY_MAX_ATTEMPTS`を活かした複数回リトライが本Release後も実質使えないという新たな制約が生じたことを明記）  
 更新日：2026-07-09（v4.7.0 — Retry History Foundation層を追記。v4.6.0のKnown Issue（無限再投入リスク）が対策候補として挙げていた`metadata["retried_from"]`は、`WorkflowExecutionRecord`に`metadata`フィールドが存在せず実際には参照不可能であることが判明したため、情報源を`RetryResult`（`retry_engine`自身が生成するデータ）に限定した新規独立パッケージ`src/retry_history/`（`RetryHistoryManager` / `NullRetryHistoryManager`）と`retry_engine`側のStatelessコンポーネント`RetryHistoryRecordExecutor`を追加した設計判断。`RetryManager.record_retry_history()`は`execute_dispatchable_retries()`（v4.0.0、無変更）への委譲・`RetryHistoryRecordExecutor.record_all()`への委譲の2段階のみで完結する薄い委譲であること、`history`引数省略時は`RetryQueueManager`と同じ理由（stateful store）で`NullRetryHistoryManager()`にフォールバックすること、`retry_history`は`retry_engine`を一切importしないこと、記録のみに留め`RetryEnqueueTrigger`側の消費（無限再投入対策の完成）は次Release以降に送ったことを明記）  
 更新日：2026-07-09（v4.6.0 — Retry Enqueue Trigger Foundation層を追記。v3.0.0〜v4.5.0の16回のReleaseで完成した「Queueから取り出して実行する」下流パイプラインに対し、「実際にQueueへ投入する」上流が存在しなかったギャップを埋める新規独立パッケージ`src/retry_enqueue_trigger/`（`RetryEnqueueTrigger` / `NullRetryEnqueueTrigger`）を追加した設計判断。`WorkflowMonitorManager.list_status()`でFAILED/TIMEOUTを検知し`RetryQueueManager.exists()`で重複を確認したうえで`enqueue()`する薄いAdapterであること、`retry_engine`は経由せず`workflow_monitor` / `retry_queue`に直接依存する構成（`retry_scheduler_source`と同じ「下位パッケージへの直接依存」パターン）であること、Feature Gate・Configクラスは追加せずNull Object Patternのみで有効/無効を表現すること、Queueから除去された`run_id`の無限再投入リスクを意図的に対策せずKnown Issueとして明記したこと、新設Adapterを定期的に駆動する起動スクリプト（Composition Root）は対象外（Non-Goal）であることを明記）  
 更新日：2026-07-08（v4.5.0 — Retry Policy Foundation層を追記。`RetryManager`が実際に依存している面（`retry()`が呼び出す`should_retry(monitor_status, attempt) -> bool`、`_skip_reason()`が参照する`target_statuses` / `max_attempts`）をProtocolとして明示化した新規コンポーネント`RetryDecisionPolicy`（最小契約）・`ExplainableRetryPolicy`（`RetryDecisionPolicy`を拡張した説明可能契約）を追加した設計判断。既存`RetryPolicy`（v3.0.0）は本Releaseでも無改修（0 diff）のまま、Protocolの性質上明示的な継承なしに構造的に両契約を満たすこと、`RetryManager`の変更は`policy` / `retry_policy`引数の型注釈のみで`retry()` / `_skip_reason()`のロジック本体は無変更であること、新しいRetry戦略（`FixedRetryPolicy` / `ExponentialBackoffPolicy` / `AdaptiveRetryPolicy`等）の実装自体は本Releaseの対象外（Non-Goal）であることを明記）  
@@ -1758,3 +1759,72 @@ Configクラス・Feature Gateは追加しない。`history`引数省略時は
 詳細は`docs/design/retry_history_foundation_charter.md`（Project
 Charter）・`docs/design/retry_history_foundation.md`（Architecture
 Design・Architecture Review含む）を参照。
+
+---
+
+## Retry Enqueue Guard層（`src/retry_enqueue_trigger/retry_enqueue_guard.py`、v4.8.0 追加）
+
+v4.6.0 Known Issue（Queueから除去された`run_id`の無限再投入リスク）・
+v4.7.0 Future Extension「Retry Enqueue Guard」を接続し、無限再投入対策を
+完成させたRelease。`RetryHistoryManager`（v4.7.0）が記録した再試行履歴を
+`RetryEnqueueTrigger`（v4.6.0）が参照できるようにした。
+
+```
+WorkflowMonitorManager（判定、v2.9.0、無改修）
+   │
+   ▼
+RetryEnqueueTrigger（Adapter、v4.6.0、拡張） ★本Release
+   │
+   ├── RetryHistoryManager.has_history()（v4.7.0、無改修）を参照
+   │      └── RetryEnqueueGuard.decide() で ALLOW/BLOCK を判定（新規） ★本Release
+   │
+   └── RetryQueueManager.enqueue()（v3.1.0、無改修）
+```
+
+### 対策が安全性上必須であることの技術的根拠
+
+`RetryEnqueueTrigger.enqueue_pending_failures()`は`queue.enqueue()`呼び出し時に
+`retry_attempt`を明示的に渡しておらず、常にデフォルト値`1`固定でQueueへ
+投入される。下流の`RetryExecutionCoordinator.execute()`はQueue項目由来の
+この`1`をそのまま`RetryManager.retry()`の`attempt`引数として使うため、
+`RetryPolicy.should_retry()`は常に`attempt=1 < max_attempts`（デフォルト3）
+という条件で判定される。つまり`attempt`は実際の累積試行回数と連動して
+いない。無対策のままComposition Root（定期実行）が実装されると、同一
+`run_id`のWorkflowが無制限に再実行されうる（News収集・WordPress下書き
+投稿等の実際の副作用込みで）。本Releaseの`RetryEnqueueGuard`はこれを
+止める唯一の現実的なセーフティネットである。
+
+### Guard判定は「履歴の有無」の二値のみ
+
+`RetryHistoryRecord.attempt_count`と`RetryPolicy.max_attempts`を比較する、
+より精密な判定も技術的には可能だが、これは`retry_enqueue_trigger`が
+`retry_engine`（`RetryPolicy`）へ新たに依存することを意味し、v4.6.0の
+「`retry_engine`を経由しない」という設計方針を崩す。また`attempt`が実回数と
+連動していない現状の構造では、これ以上精密な判定を導入しても正しく
+機能しない。そのため`RetryEnqueueGuard.decide(run_id, has_history) ->
+ALLOW/BLOCK`という単純な二値判定を採用した（`RetryEnqueueGuard`は
+`RetryHistoryManager`型はもちろん`retry_history`パッケージ自体も一切
+importしない。`has_history: bool`という既に解決済みの値のみを
+`RetryEnqueueTrigger`から受け取る、完全にStatelessなコンポーネント）。
+
+### 新たに生じた制約（Known Issue）
+
+`RETRY_MAX_ATTEMPTS`（デフォルト3）を活かした複数回の自動リトライ運用は、
+`RetryEnqueueTrigger`経由では本Release後も実質的に機能しないままである
+（一度でも再試行履歴があれば、以後は同じ`original_run_id`が二度と自動
+enqueueされないため）。安全性を最優先する意図的な設計判断であり、複数回
+リトライを実現するには「`attempt`の実回数連動」（`RetryHistoryRecord.
+attempt_count`をQueueへのenqueue時点の`retry_attempt`へ反映する統合）を
+別Releaseで先に実装したうえで、Guardの判定基準を「履歴の有無」から
+「`attempt_count >= max_attempts`」へ精緻化する必要がある。
+
+### 本Releaseの対象外（Non-Goal）
+
+`attempt`の実回数連動・Guard判定基準の精緻化・Composition Root・
+`RetryHistoryManager`の永続化・Feature Gate/Configクラスの新設はいずれも
+**本Releaseの対象外**。`workflow_monitor` / `retry_queue` / `retry_history` /
+`retry_engine`はいずれも無改修（ゼロ改修）。
+
+詳細は`docs/design/retry_enqueue_guard_charter.md`（Project Charter）・
+`docs/design/retry_enqueue_guard.md`（Architecture Design・Architecture
+Review含む）を参照。
