@@ -1,8 +1,9 @@
 """
-Retry Composition Root（v5.1.0）
+Retry Composition Root（v5.1.0、v5.2.0でScheduler系配線を追加）
 
 RetryCompositionRoot: workflow_monitor / retry_queue / retry_history /
-                       retry_enqueue_trigger / retry_engine / workflow_engine の
+                       retry_enqueue_trigger / retry_engine / workflow_engine /
+                       retry_scheduler_source / retry_scheduler_decision / scheduler の
                        既存 from_env()/from_config() のみを呼び出して組み立て、
                        RetryQueueManager / RetryHistoryManager を共有インスタンスとして
                        RetryEnqueueTrigger（Enqueue側）と RetryManager（Execute側）の
@@ -29,6 +30,16 @@ RetryCompositionRoot: workflow_monitor / retry_queue / retry_history /
     - 既存パッケージ（workflow_monitor / retry_queue / retry_history /
       retry_enqueue_trigger / retry_engine / workflow_engine / ai / execution_history）は
       いずれも本Releaseでも無改修。
+
+    - （v5.2.0）RetryQueueManagerに積まれた再試行候補を、将来SchedulerEvent経由で
+      実行可能な状態にするため、RetrySchedulerSource / RetrySchedulerDecision / SchedulerEngine
+      の3コンポーネントを新たに組み立てる（Retry Runtime Orchestrator Foundation）。
+      RetrySchedulerSource には trigger/manager と同一の queue インスタンスを注入し、
+      RetrySchedulerDecision には retry_source を、SchedulerEngine には
+      retry_source / retry_decision の両方を Constructor Injection で渡す。
+    - （v5.2.0）retry_scheduler_source / retry_scheduler_decision / scheduler はいずれも
+      本Releaseでも無改修。RetryCompositionRoot が既存の公開コンストラクタを呼び出す
+      だけであり、新規business logicは追加しない。
 """
 from __future__ import annotations
 
@@ -40,6 +51,9 @@ from retry_engine import NullRetryManager, RetryConfig, RetryManager, RetryPolic
 from retry_enqueue_trigger import RetryEnqueueGuard, RetryEnqueueTrigger
 from retry_history import RetryHistoryManager
 from retry_queue import NullRetryQueueManager, RetryQueueConfig, RetryQueueManager
+from retry_scheduler_decision import RetrySchedulerDecision
+from retry_scheduler_source import NullRetrySchedulerSource, RetrySchedulerSource
+from scheduler import SchedulerEngine
 from workflow_engine import NullWorkflowEngineManager, WorkflowEngineConfig, WorkflowEngineManager
 from workflow_monitor import NullWorkflowMonitorManager, WorkflowMonitorConfig, WorkflowMonitorManager
 
@@ -62,6 +76,9 @@ class RetryCompositionRoot:
         trigger: RetryEnqueueTrigger,
         policy: RetryPolicy,
         manager: "RetryManager | NullRetryManager",
+        retry_source: "RetrySchedulerSource | NullRetrySchedulerSource",
+        retry_decision: RetrySchedulerDecision,
+        scheduler: SchedulerEngine,
     ):
         self.monitor = monitor
         self.queue = queue
@@ -70,6 +87,9 @@ class RetryCompositionRoot:
         self.trigger = trigger
         self.policy = policy
         self.manager = manager
+        self.retry_source = retry_source
+        self.retry_decision = retry_decision
+        self.scheduler = scheduler
 
     @classmethod
     def from_env(cls, base_dir: Path | None = None) -> "RetryCompositionRoot":
@@ -90,6 +110,10 @@ class RetryCompositionRoot:
         history = RetryHistoryManager()
         guard = RetryEnqueueGuard()
         trigger = RetryEnqueueTrigger(monitor=monitor, queue=queue, history=history, guard=guard)
+
+        retry_source = RetrySchedulerSource(queue)
+        retry_decision = RetrySchedulerDecision(retry_source)
+        scheduler = SchedulerEngine(retry_source=retry_source, retry_decision=retry_decision)
 
         policy = RetryPolicy.from_env()
         agent_config = AgentConfig.from_env(base_dir=project_root)
@@ -114,4 +138,7 @@ class RetryCompositionRoot:
             trigger=trigger,
             policy=policy,
             manager=manager,
+            retry_source=retry_source,
+            retry_decision=retry_decision,
+            scheduler=scheduler,
         )

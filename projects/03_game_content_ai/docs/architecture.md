@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-09（v5.2.0 — Retry Runtime Orchestrator Foundationを追記。新規パッケージ`src/retry_runtime_orchestrator/`（`RetryRuntimeOrchestrator`）を追加し、「Retry Runtimeの実行順序を将来管理する場所」として`trigger` / `scheduler` / `manager` / `queue` / `history` / `policy`の6つをConstructor Injectionで保持するだけの設計判断。`run()` / `run_once()` / `loop()` / `daemon()`等のBusiness Logicはいずれも本Releaseの対象外とし、Composition（`RetryCompositionRoot`＝組み立て）とOrchestration（`RetryRuntimeOrchestrator`＝実行順序の置き場所）の責務分離を明確化したこと、Architecture Reviewの過程で発見した2点（Scheduler系コンポーネントがComposition Rootへ未配線のため`RetryQueueManager`に積まれた再試行候補を`SchedulerEvent`化する経路が存在しなかったこと／`RetryManager`の上位メソッド群を同一`events`に対して素朴に並べて呼び出すと`execute_dispatchable_retries()`が重複実行され`retry()`が同一run_idに対して複数回呼ばれかねないこと）を踏まえ、`RetryCompositionRoot`へ`RetrySchedulerSource` / `RetrySchedulerDecision` / `SchedulerEngine`の配線を追加する一方、後者の解決は`RetryManager`へ`run_cycle()`等の統合APIを追加せず、次Execution Releaseで`RetryRuntimeOrchestrator`が`execute_dispatchable_retries()`を1回だけ呼び出しその結果を既存の公開Decider/Executor群へ配布する方針とし`retry_manager.py`を無改修に保つ設計判断としたこと、`queue` / `history` / `policy`を本Release時点から保持する理由（次Execution Releaseで確定的に必要になることが判明したため、Constructor変更の再往復を避けた）、`workflow_monitor` / `retry_queue` / `retry_history` / `retry_enqueue_trigger` / `retry_engine` / `workflow_engine` / `ai` / `execution_history` / `scheduler` / `retry_scheduler_source` / `retry_scheduler_decision`はいずれも無改修であることを明記）  
 更新日：2026-07-09（v5.1.0 — Retry Composition Root Foundationを追記。新規パッケージ`src/retry_composition/`（`RetryCompositionRoot`）を追加し、`RetryQueueManager` / `RetryHistoryManager`を1インスタンスずつ生成して`RetryEnqueueTrigger`（Enqueue側）・`RetryManager`（Execute側）の両方へ同一インスタンスとして注入する設計判断。責務は「既存の`from_env()`/`from_config()`のみを使って組み立て、属性として公開すること」に限定し、実行順序の決定（`run_once()`等）・ループ・デーモン化・起動スクリプトはいずれも本Releaseの対象外としたこと、パッケージ配置は`src/retry_composition/`（既存16パッケージと同じドメインスコープの命名。汎用`src/runtime/`・`src/application/`は2つ目の消費者が存在しない段階での先回り抽象化として不採用）、クラス名は`RetryCompositionRoot`（「Runtime」は実行責任を連想させ本Releaseの責務境界と矛盾するため不採用。Architecture Reviewで一貫して使ってきた「Composition Root」という既存語彙を採用）としたこと、`workflow_monitor` / `retry_queue` / `retry_history` / `retry_enqueue_trigger` / `retry_engine` / `workflow_engine` / `ai` / `execution_history`はいずれも無改修であることを明記）  
 更新日：2026-07-09（v5.0.0 — Retry Enqueue Guard Refinement Foundationを追記。`RetryEnqueueGuard`（v4.8.0）の判定基準を「再試行履歴が1回でもあればBLOCK」の二値判定から「`next_attempt > max_attempts` ならBLOCK」の回数比較判定へ精緻化した設計判断。`decide()`のシグネチャを`decide(run_id, has_history: bool)`から`decide(run_id, next_attempt: int, max_attempts: int)`へ変更し、`RetryHistoryManager`型・`RetryPolicy`（`retry_engine`）型のいずれも一切importしないStateless性は維持したこと、`RetryEnqueueTrigger.enqueue_pending_failures()`に`max_attempts: int = 1`を末尾のデフォルト値付き引数として追加し、`RetryEnqueueTrigger.__init__`は本Releaseでも完全に無変更としたこと（`max_attempts`をConstructor Injectionで保持する当初案をChatGPTレビューで再検討し、`limit`と同じ「呼び出しの都度渡す」スタイルへ変更したことで、Backward Compatibilityがさらに強くなったこと）、`max_attempts`省略時のデフォルト値`1`はv4.8.0/v4.9.0時点と完全に同一の挙動を再現する安全側の値であり、`RetryPolicy.max_attempts`（デフォルト3）とは意図的に独立した、`retry_engine`非依存を保つための構造的セーフガードであること、`RetryEnqueueOptions`等のDTO（Immutable Value Object）導入はYAGNI・Development Charter「抽象化は必要になってから行う」に従い本Releaseでは見送り、将来Policy値が複数に増えた場合の再検討基準を設計書へ明記したこと、`retry_history` / `retry_queue` / `workflow_monitor` / `retry_engine`はいずれも無改修であることを明記）  
 更新日：2026-07-09（v4.9.0 — Retry Attempt Synchronization Foundationを追記。`RetryEnqueueTrigger.enqueue_pending_failures()`が`queue.enqueue()`呼び出し時に`retry_attempt`を渡しておらず常に`1`固定でQueueへ投入していた状態（v4.8.0 Known Issue）を踏まえ、`self._history.has_history()`の呼び出しを`self._history.get()`（既存の公開API）に置き換え、その戻り値から「履歴の有無」（`RetryEnqueueGuard`判定用）と「次のattempt番号（`RetryHistoryRecord.attempt_count + 1`、履歴なしは`1`）」（Queue登録用）の両方を導出するよう変更した設計判断。`RetryQueueItem.retry_attempt` → `RetryExecutionCoordinator.execute()` → `RetryManager.retry(attempt=...)` → `RetryPolicy.should_retry()`という下流への伝播経路は既に完成しており、本Releaseで追加した配線は`RetryEnqueueTrigger`内のこの1箇所のみであることをコード調査で確認したこと、`RetryEnqueueGuard`（v4.8.0）の判定基準（「履歴が1回でもあればBLOCK」の二値）自体は本Releaseでも無変更のため、`queue.enqueue()`に実際に到達するのは履歴なし（＝attempt=1）のケースのみであり、本Release単体では観測可能な挙動変化が発生しない「消費者不在の配線」であることを明記したこと、`RetryEnqueueTrigger.__init__`のシグネチャ・`RetryEnqueueTriggerResult`のフィールド・`src/retry_enqueue_trigger/__init__.py`の`__all__`はいずれも無変更でBackward Compatibilityを維持したこと、`retry_queue` / `retry_history` / `retry_engine` / `workflow_monitor` / `retry_enqueue_guard.py`はいずれも無改修であることを明記）  
@@ -1998,4 +1999,77 @@ Feature Gateはいずれも**本Releaseの対象外**。`workflow_monitor` / `re
 `ai` / `execution_history`はいずれも無改修（ゼロ改修）。
 
 詳細は`docs/design/retry_composition_root_foundation.md`
+（Project Charter / Architecture Design・Architecture Review Final含む）を参照。
+
+---
+
+## Retry Runtime Orchestrator Foundation層（`src/retry_runtime_orchestrator/`、v5.2.0 追加）
+
+v5.1.0がQueue/History共有の前提条件を整えた後、Architecture Reviewの過程で2つの発見が
+あった。（発見A）`RetryManager.execute_dispatchable_retries(events)`が要求する
+`events: list[SchedulerEvent]`は`RetryQueueManager → RetrySchedulerSource →
+RetrySchedulerDecision → SchedulerEngine`という経路でしか得られないが、v5.1.0の
+`RetryCompositionRoot`はこの経路を配線していなかった。（発見B）`RetryManager`の
+上位メソッド群（`apply_retry_queue_removals()`等）はそれぞれ独立に
+`execute_dispatchable_retries()`を再計算するため、同一`events`に対して複数呼び出すと
+`retry()`が重複実行されるリスクがある。
+
+本Releaseはこの2つの発見に対応する。
+
+```
+RetryCompositionRoot.from_env()
+   │
+   ├─ ...（v5.1.0までの組み立て、無変更）...
+   ├─ RetrySchedulerSource(queue)                          ★新規
+   ├─ RetrySchedulerDecision(retry_source)                  ★新規
+   ├─ SchedulerEngine(retry_source=..., retry_decision=...) ★新規
+   └─ ...（policy・manager組み立て、無変更）...
+
+RetryRuntimeOrchestrator.from_composition_root(root)
+   └─ trigger / scheduler / manager / queue / history / policy を
+      rootと同一インスタンスのまま保持するだけ（新規インスタンス生成なし）
+```
+
+### Composition（組み立て）とOrchestration（実行順序）の責務分離
+
+`RetryCompositionRoot`は今後もDependency Injectionのみを責務とし、実行系メソッド
+（`run()` / `run_once()`等）は追加しない。新設した`RetryRuntimeOrchestrator`は
+「Retry Runtimeの実行順序を将来管理する場所」だが、本Releaseでは`run()` /
+`run_once()` / `loop()` / `daemon()`等のBusiness Logicは一切実装しない。
+
+### 保持する依存を`queue` / `history` / `policy`まで広げた理由
+
+`RetryRuntimeOrchestrator`は`trigger` / `scheduler` / `manager`に加え、
+`queue` / `history` / `policy`も本Releaseから保持する。次Execution Releaseで
+`queue.remove` / `history.record`をDecider/Executorへのコールバックとして渡すこと、
+`policy.max_attempts`を`enqueue_pending_failures()`へ渡すことが確定しているため、
+Foundation Release完了直後に避けられるConstructor変更が発生することを防いだ
+（Development Charter 8章の「使われる保証のない実装の先回り」には該当しない。
+利用が確定した参照の保持のみであり、Business Logicの実装ではないため）。
+`guard`（`RetryEnqueueTrigger`専属の内部コンポーネント）・`monitor`（将来依存が
+未確定）は保持しない。
+
+### 発見Bへの対応方針（`RetryManager`は無改修のまま）
+
+`RetryManager`へ`run_cycle()`等の統合APIを追加する案は、`RetryManager`が
+Trigger/Scheduler/Cleanup/Historyの呼び出し順序まで知ることになりSingle
+Responsibilityから外れる可能性があるため不採用とした。代わりに、次Execution
+Releaseで`RetryRuntimeOrchestrator`が`execute_dispatchable_retries()`を1回だけ
+呼び出し、その結果（`RetryExecutionResult`のリスト）を保持したうえで、
+`retry_engine`が既に公開しているStateless・無引数コンストラクタのDecider/Executor群
+（`RetryQueueUpdateDecider` / `RetryQueueRemovalExecutor` / `RetryQueueCleanupDecider` /
+`RetryQueueCleanupExecutor` / `RetryQueueTerminalCleanupDecider` /
+`RetryQueueTerminalCleanupExecutor` / `RetryHistoryRecordExecutor`）へ直接配布する
+方針を確定した。これにより`retry_manager.py`は本Releaseでも無改修であり、次
+Execution Releaseでも無改修のまま実装できる見込みである。
+
+### 本Releaseの対象外（Non-Goal）
+
+`run()` / `run_once()` / `loop()` / `daemon()`の実装、発見Bの解決の実装（方針の確定
+のみ）、`scripts/`層へのBusiness Flowの実装はいずれも**本Releaseの対象外**。
+`workflow_monitor` / `retry_queue` / `retry_history` / `retry_enqueue_trigger` /
+`retry_engine` / `workflow_engine` / `ai` / `execution_history` / `scheduler` /
+`retry_scheduler_source` / `retry_scheduler_decision`はいずれも無改修（ゼロ改修）。
+
+詳細は`docs/design/retry_runtime_orchestrator_foundation.md`
 （Project Charter / Architecture Design・Architecture Review Final含む）を参照。

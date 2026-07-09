@@ -236,6 +236,56 @@
 - **対応状況**：対応しない。v5.0.0のArchitecture Review（Final、ユーザー承認済み）で`RetryEnqueueGuard.decide()`のシグネチャ変更（`has_history: bool`の廃止、`next_attempt: int` / `max_attempts: int`の新設）は正式に承認済みである。`RetryEnqueueGuard`は`RetryEnqueueTrigger`専属の内部コンポーネントであり他パッケージから単独参照される想定がないため（v4.8.0設計書5章）、影響範囲は`RetryEnqueueTrigger`自身とv4.8.0/v4.9.0の既存テストに閉じる。本質的な制約（`RetryEnqueueTrigger.__init__`が完全に無変更であること、`max_attempts`省略時はv4.8.0/v4.9.0時点と完全に同一の挙動になること、`retry_history` / `retry_queue` / `workflow_monitor` / `retry_engine`のゼロ改修）は、v5.0.0の新規テスト（`tests/test_e2e_v5_0_0_retry_enqueue_guard_refinement_foundation.py`、110件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-17]`と同じ扱い）
 - **今後の対応**：不要（本エントリで説明を確定）。v4.7.0テスト29の`git diff --quiet`ベースのチェックは本Releaseをcommitすれば自然に解消する。v4.8.0・v4.9.0の`TypeError`による中断は、Guardのシグネチャが将来さらに変わらない限り恒久的に残る（`[KI-4]`2026-07-03追記のテスト17と同種の「恒久化した既知差分」）。将来Release（Composition Root等）で`retry_enqueue_trigger`側にさらに変更が入るたびに同様の差分が起こりうるが、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
 
+### [KI-19] v5.2.0でのRetry Runtime Orchestrator Foundationにより、v5.1.0の一部Architecture GuardがFAILする（設計上の意図的な差分）
+
+- **発見日**：2026-07-09（v5.2.0 Retry Runtime Orchestrator Foundation Test工程実施時）
+- **対象と症状**：`tests/test_e2e_v5_1_0_retry_composition_root_foundation.py`：36/38 PASS（新規2件FAIL）
+  - テスト15「`RetryCompositionRoot.__init__`のパラメータが`(self, monitor, queue, history, guard, trigger, policy, manager)`のみ」
+  - テスト20「`retry_composition`を参照する既存ファイルが存在しない」（本Releaseで新設した`src/retry_runtime_orchestrator/retry_runtime_orchestrator.py`が`RetryCompositionRoot`をimportする、`retry_composition`の初めての実消費者となったため）
+- **原因**：v5.2.0（Retry Runtime Orchestrator Foundation）で`RetryCompositionRoot.__init__`へ`retry_source` / `retry_decision` / `scheduler`の3パラメータを追加し、新規パッケージ`src/retry_runtime_orchestrator/`を追加した（`docs/design/retry_runtime_orchestrator_foundation.md`）。v5.1.0のテスト15・テスト20は「その時点で`__init__`が7パラメータだった」「`retry_composition`がどこからも参照されていなかった」という当時の事実をArchitecture Guardとして固定していたものであり、`[KI-3]`〜`[KI-18]`と同種の既知差分である
+- **対応状況**：対応しない。v5.2.0のArchitecture Review（Final、ユーザー承認済み）で`RetryCompositionRoot.__init__`への3パラメータ追加（末尾追加、既存7パラメータの並び順は無変更）・`src/retry_runtime_orchestrator/`の新規追加はいずれも正式に承認済みである。本質的な制約（`workflow_monitor` / `retry_queue` / `retry_history` / `retry_enqueue_trigger` / `retry_engine` / `workflow_engine` / `ai` / `execution_history` / `scheduler` / `retry_scheduler_source` / `retry_scheduler_decision`のゼロ改修、`RetryCompositionRoot`が`from_env()`以外の公開メソッドを持たないこと、`RetryRuntimeOrchestrator`が参照保持以外のBusiness Logicを持たないこと）は、v5.2.0の新規テスト（`tests/test_e2e_v5_2_0_retry_runtime_orchestrator_foundation.py`、54件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-18]`と同じ扱い）
+- **今後の対応**：不要（本エントリで説明を確定）。テスト20（「`retry_composition`を参照する既存ファイルが存在しない」）は`git diff`を使わない恒久的な静的検査であり、コミットの有無に関わらず本Release以降も成立しなくなる（`[KI-4]`2026-07-03追記のv3.3.0テスト17と同型。`retry_composition`が本Releaseで初めて実際の消費者（`RetryRuntimeOrchestrator`）を持ったことの自然な帰結）。将来Release（Execution Release等）で`retry_composition`側にさらに変更が入るたびに同様の差分が起こりうるが、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
+
+---
+
+## [v5.2.0] - 2026-07-09 ★ Retry Runtime Orchestrator Foundation
+
+### Added
+
+- `src/retry_runtime_orchestrator/`新規パッケージ作成（`RetryRuntimeOrchestrator`）
+  - `retry_runtime_orchestrator.py`：`RetryRuntimeOrchestrator`（`__init__.py`は`RetryRuntimeOrchestrator`のみexport）
+- `docs/design/retry_runtime_orchestrator_foundation.md`新規作成（Project Charter / Architecture Design。Architecture Review Final・ユーザー承認済み）
+- `tests/test_e2e_v5_2_0_retry_runtime_orchestrator_foundation.py`新規作成（54件）
+
+### Changed
+
+- `src/retry_composition/retry_composition_root.py`：`RetryCompositionRoot`にScheduler系3コンポーネントの配線を追加した
+  - `__init__`へ`retry_source: RetrySchedulerSource | NullRetrySchedulerSource` / `retry_decision: RetrySchedulerDecision` / `scheduler: SchedulerEngine`の3属性を末尾に追加（既存7属性の並び順は無変更）
+  - `from_env()`内で`RetrySchedulerSource(queue)` → `RetrySchedulerDecision(retry_source)` → `SchedulerEngine(retry_source=..., retry_decision=...)`の順に組み立て、`queue`はtrigger/managerと同一インスタンスを注入する
+  - 新規business logicは追加しない（既存の公開コンストラクタへの委譲のみ）
+
+### Note
+
+- **Architecture Reviewで2つの重要な発見があった。** （発見A）`RetryManager.execute_dispatchable_retries()`が要求する`events: list[SchedulerEvent]`は`RetryQueueManager → RetrySchedulerSource → RetrySchedulerDecision → SchedulerEngine`という経路でしか得られないが、v5.1.0の`RetryCompositionRoot`はこの経路を配線しておらず、「Queueに積まれた再試行候補を実行可能にする」ことが構造的にできなかった。（発見B）`RetryManager`の上位メソッド群（`apply_retry_queue_removals()` / `apply_retry_queue_cleanup()` / `apply_retry_queue_terminal_cleanup()` / `record_retry_history()`）はそれぞれ独立に`execute_dispatchable_retries()`を再計算するため、同一`events`に対して素朴に並べて呼び出すと`retry()`が同一run_idに対して最大4回呼ばれるリスクがある（`docs/design/retry_runtime_orchestrator_foundation.md` 1.2節）
+- **ChatGPTレビューを経て、Scheduler配線単独のReleaseではなく「Composition（組み立て）とOrchestration（実行順序）の責務分離を確立するRelease」へテーマを再定義した。** `RetryCompositionRoot`は今後もDependency Injectionのみを責務とし、実行系メソッド（`run()` / `run_once()`等）は追加しない方針を維持する。新設した`RetryRuntimeOrchestrator`は「Retry Runtimeの実行順序を将来管理する場所」だが、本Releaseでは`run()` / `run_once()` / `loop()` / `daemon()`等のBusiness Logicは一切実装しない（同設計書2.1節・2.2節）
+- **`RetryRuntimeOrchestrator`は`trigger` / `scheduler` / `manager`に加え、`queue` / `history` / `policy`も本Releaseから保持する。** これはDevelopment Charter 8章が禁じる「使われる保証のない実装の先回り」ではなく、次Execution Releaseで確定的に必要になることが判明した参照の保持のみである。`queue.remove` / `history.record`はDecider/Executorへのコールバックとして、`policy.max_attempts`は`enqueue_pending_failures()`への引数として、次Releaseで確実に使われる（同設計書2.4節）。`guard`（`RetryEnqueueTrigger`専属の内部コンポーネント）・`monitor`（将来依存が未確定）は保持しない
+- **発見Bの解決は`RetryManager`への統合API（`run_cycle()`等）の追加ではなく、Orchestrator側での直接構成とした。** ChatGPTレビューにより「`RetryManager`が実行順序（Trigger/Scheduler/Cleanup/Historyの呼び出し順）まで知ることになりSingle Responsibilityから外れる」という懸念が指摘され、代替として、次Execution Releaseで`RetryRuntimeOrchestrator`が`execute_dispatchable_retries()`を1回だけ呼び出しその結果を保持したうえで、`retry_engine`が既に公開しているStateless・無引数コンストラクタのDecider/Executor群（`RetryQueueUpdateDecider` / `RetryQueueRemovalExecutor` / `RetryQueueCleanupDecider` / `RetryQueueCleanupExecutor` / `RetryQueueTerminalCleanupDecider` / `RetryQueueTerminalCleanupExecutor` / `RetryHistoryRecordExecutor`）へ直接配布する方針を確定した。これにより`retry_manager.py`は本Releaseでも、次Execution Releaseでも無改修のまま維持できる見込みである（同設計書1.2節・2.5節）
+- **`scripts/`層へのBusiness Flowの実装は行わない。** scriptsはEntry Pointのみに限定する方針とし、本Releaseではscriptsの追加自体を行わない
+- **既存11パッケージ（`workflow_monitor` / `retry_queue` / `retry_history` / `retry_enqueue_trigger` / `retry_engine` / `workflow_engine` / `ai` / `execution_history` / `scheduler` / `retry_scheduler_source` / `retry_scheduler_decision`）はいずれも本Releaseでも無改修（ゼロ改修）。** `retry_manager.py`を含め、変更は`src/retry_composition/retry_composition_root.py`の拡張と`src/retry_runtime_orchestrator/`の新規追加のみ
+- **本Release単体では何も実行されない。** `RetryRuntimeOrchestrator`は`from_composition_root()`で組み立てられるだけであり、ユーザーから見て動く機能が増えるわけではない。次Execution Releaseで`run_once()`が実装されて初めて実運用上の価値が生まれる（同設計書5章 Known Issue）
+- 対象外（今回は未実装）：`run()` / `run_once()` / `loop()` / `daemon()`・発見Bの解決の実装・scripts層のEntry Point（いずれも将来Release候補）
+
+### Tested
+
+- `tests/test_e2e_v5_2_0_retry_runtime_orchestrator_foundation.py`: 54/54 PASS（Scheduler系配線のインスタンス共有・`RetryRuntimeOrchestrator`が保持する6属性すべての同一インスタンス確認・責務境界（実行系メソッド不在）を`is`比較・シグネチャ検査で確認）
+- 既存回帰確認：`workflow_monitor` / `retry_queue` / `retry_history` / `retry_enqueue_trigger` / `retry_engine` / `workflow_engine` / `ai` / `execution_history` / `scheduler` / `retry_scheduler_source` / `retry_scheduler_decision`のいずれも`git diff --quiet`で無変更を確認済み（本Releaseの新規テスト24）
+- `v2.6.0`・`v2.7.0`（163/163）・`v2.9.0`（103/103）・`v3.1.0`（152/152）・`v3.4.0`（94/94）・`v3.7.0`（74/74）・`v4.7.0`（178/178）：全PASS
+- `v3.0.0`（206/208）・`v3.2.0`（100/102）・`v3.3.0`（71/72）・`v3.5.0`（71/72）・`v3.6.0`（102/104）・`v3.8.0`（67/70）・`v3.9.0`（70/73）・`v4.0.0`（83/88）・`v4.1.0`（84/87）・`v4.2.0`（91/94）・`v4.3.0`（105/108）・`v4.4.0`（120/123）・`v4.5.0`（63/64）・`v4.6.0`（97/100）：いずれも既存の`[KI-3]`〜`[KI-18]`による既知差分のみで、本Releaseによる新規差分はない（対象パッケージを一切変更していないため）
+- `v4.8.0`・`v4.9.0`：既存の`[KI-18]`（Guardシグネチャ変更による`TypeError`中断）が引き続き再現。本Releaseによる新規差分ではない
+- `v5.0.0`（109/110、既存差分。`retry_composition`が既に`retry_enqueue_trigger`を参照していることに起因する消費者スキャン検知で、v5.1.0時点から継続する差分）：本Releaseによる新規差分ではない
+- `v5.1.0`（36/38、新規2件は`[KI-19]`参照。`RetryCompositionRoot.__init__`のパラメータ追加・`retry_composition`の初の実消費者化による恒久的な既知差分）：本Releaseで想定済みの差分
+- `v1.10.0`（Analytics Foundation）は`[KI-1]`（既知の問題、本Releaseと無関係）のため今回は実行対象外
+
 ---
 
 ## [v5.1.0] - 2026-07-09 ★ Retry Composition Root Foundation
