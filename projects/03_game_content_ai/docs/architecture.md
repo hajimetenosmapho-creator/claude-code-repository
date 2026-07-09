@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-09（v5.0.0 — Retry Enqueue Guard Refinement Foundationを追記。`RetryEnqueueGuard`（v4.8.0）の判定基準を「再試行履歴が1回でもあればBLOCK」の二値判定から「`next_attempt > max_attempts` ならBLOCK」の回数比較判定へ精緻化した設計判断。`decide()`のシグネチャを`decide(run_id, has_history: bool)`から`decide(run_id, next_attempt: int, max_attempts: int)`へ変更し、`RetryHistoryManager`型・`RetryPolicy`（`retry_engine`）型のいずれも一切importしないStateless性は維持したこと、`RetryEnqueueTrigger.enqueue_pending_failures()`に`max_attempts: int = 1`を末尾のデフォルト値付き引数として追加し、`RetryEnqueueTrigger.__init__`は本Releaseでも完全に無変更としたこと（`max_attempts`をConstructor Injectionで保持する当初案をChatGPTレビューで再検討し、`limit`と同じ「呼び出しの都度渡す」スタイルへ変更したことで、Backward Compatibilityがさらに強くなったこと）、`max_attempts`省略時のデフォルト値`1`はv4.8.0/v4.9.0時点と完全に同一の挙動を再現する安全側の値であり、`RetryPolicy.max_attempts`（デフォルト3）とは意図的に独立した、`retry_engine`非依存を保つための構造的セーフガードであること、`RetryEnqueueOptions`等のDTO（Immutable Value Object）導入はYAGNI・Development Charter「抽象化は必要になってから行う」に従い本Releaseでは見送り、将来Policy値が複数に増えた場合の再検討基準を設計書へ明記したこと、`retry_history` / `retry_queue` / `workflow_monitor` / `retry_engine`はいずれも無改修であることを明記）  
 更新日：2026-07-09（v4.9.0 — Retry Attempt Synchronization Foundationを追記。`RetryEnqueueTrigger.enqueue_pending_failures()`が`queue.enqueue()`呼び出し時に`retry_attempt`を渡しておらず常に`1`固定でQueueへ投入していた状態（v4.8.0 Known Issue）を踏まえ、`self._history.has_history()`の呼び出しを`self._history.get()`（既存の公開API）に置き換え、その戻り値から「履歴の有無」（`RetryEnqueueGuard`判定用）と「次のattempt番号（`RetryHistoryRecord.attempt_count + 1`、履歴なしは`1`）」（Queue登録用）の両方を導出するよう変更した設計判断。`RetryQueueItem.retry_attempt` → `RetryExecutionCoordinator.execute()` → `RetryManager.retry(attempt=...)` → `RetryPolicy.should_retry()`という下流への伝播経路は既に完成しており、本Releaseで追加した配線は`RetryEnqueueTrigger`内のこの1箇所のみであることをコード調査で確認したこと、`RetryEnqueueGuard`（v4.8.0）の判定基準（「履歴が1回でもあればBLOCK」の二値）自体は本Releaseでも無変更のため、`queue.enqueue()`に実際に到達するのは履歴なし（＝attempt=1）のケースのみであり、本Release単体では観測可能な挙動変化が発生しない「消費者不在の配線」であることを明記したこと、`RetryEnqueueTrigger.__init__`のシグネチャ・`RetryEnqueueTriggerResult`のフィールド・`src/retry_enqueue_trigger/__init__.py`の`__all__`はいずれも無変更でBackward Compatibilityを維持したこと、`retry_queue` / `retry_history` / `retry_engine` / `workflow_monitor` / `retry_enqueue_guard.py`はいずれも無改修であることを明記）  
 更新日：2026-07-09（v4.8.0 — Retry Enqueue Guard層を追記。v4.6.0のKnown Issue（無限再投入リスク）・v4.7.0のFuture Extension「Retry Enqueue Guard」を接続し、無限再投入対策を完成させた設計判断。`RetryEnqueueTrigger.enqueue_pending_failures()`が`queue.enqueue()`時に`retry_attempt`を渡さず常に`1`固定でQueueへ投入するため`RetryPolicy.should_retry()`の`max_attempts`判定が実質機能せず、無対策では同一`run_id`が無制限に再実行されうることをコード調査で確認したこと、この対策として`RetryHistoryManager.has_history()`を参照する新規Stateless Decider`RetryEnqueueGuard`（`src/retry_enqueue_trigger/retry_enqueue_guard.py`）を追加したこと、判定基準を`retry_engine`への新規依存を避けるため「履歴の有無」の二値のみに意図的に限定したこと、`RetryEnqueueTrigger.__init__`へ`history` / `guard`引数を末尾のデフォルト値付きで追加しBackward Compatibilityを維持したこと、`workflow_monitor` / `retry_queue` / `retry_history` / `retry_engine`はいずれも無改修であること、副作用として`RETRY_MAX_ATTEMPTS`を活かした複数回リトライが本Release後も実質使えないという新たな制約が生じたことを明記）  
 更新日：2026-07-09（v4.7.0 — Retry History Foundation層を追記。v4.6.0のKnown Issue（無限再投入リスク）が対策候補として挙げていた`metadata["retried_from"]`は、`WorkflowExecutionRecord`に`metadata`フィールドが存在せず実際には参照不可能であることが判明したため、情報源を`RetryResult`（`retry_engine`自身が生成するデータ）に限定した新規独立パッケージ`src/retry_history/`（`RetryHistoryManager` / `NullRetryHistoryManager`）と`retry_engine`側のStatelessコンポーネント`RetryHistoryRecordExecutor`を追加した設計判断。`RetryManager.record_retry_history()`は`execute_dispatchable_retries()`（v4.0.0、無変更）への委譲・`RetryHistoryRecordExecutor.record_all()`への委譲の2段階のみで完結する薄い委譲であること、`history`引数省略時は`RetryQueueManager`と同じ理由（stateful store）で`NullRetryHistoryManager()`にフォールバックすること、`retry_history`は`retry_engine`を一切importしないこと、記録のみに留め`RetryEnqueueTrigger`側の消費（無限再投入対策の完成）は次Release以降に送ったことを明記）  
@@ -1877,3 +1878,62 @@ Composition Root・`.env.example`整備はいずれも**本Releaseの対象外**
 
 詳細は`docs/design/retry_attempt_synchronization_foundation.md`
 （Project Charter / Architecture Design・Architecture Review含む）を参照。
+
+---
+
+## Retry Enqueue Guard Refinement Foundation層（`src/retry_enqueue_trigger/`、v5.0.0 拡張）
+
+v4.9.0で配線済みだった「`attempt`の実回数連動」に、初めて実際の消費者を
+与えたRelease。`RetryEnqueueGuard`（v4.8.0）の判定基準を「履歴の有無」の
+二値から「`next_attempt > max_attempts`」の回数比較へ精緻化した。
+
+```
+RetryEnqueueTrigger.enqueue_pending_failures(limit=None, max_attempts=1)
+   │                                          ★max_attemptsは呼び出し引数（__init__は無変更）
+   ├── self._history.get(run_id)（v4.9.0、無改修）
+   │      └── next_attempt = history_record.attempt_count + 1（履歴なしは1）
+   │
+   ├── RetryEnqueueGuard.decide(run_id, next_attempt, max_attempts)  ★本Release（旧: has_history）
+   │      └── next_attempt > max_attempts で BLOCK、そうでなければ ALLOW
+   │
+   └── RetryQueueManager.enqueue(..., retry_attempt=next_attempt)（無改修）
+```
+
+### `max_attempts`はConstructor InjectionではなくMethod引数（Architecture Review Finalでの再検討）
+
+当初のArchitecture Reviewでは`RetryEnqueueTrigger.__init__(..., max_attempts:
+int = 1)`という案だったが、ChatGPTレビューで「Triggerが設定値を長期保持する
+責務まで持つべきか」を再検討した結果、`enqueue_pending_failures(limit=None,
+max_attempts=1)`という呼び出し引数へ変更した。既存の`limit`と同じ「呼び出し
+の都度渡す」スタイルに統一したことで、`RetryEnqueueTrigger.__init__`は
+本Releaseでも1文字も変わらず、Stateless性・Single Responsibility・
+Backward Compatibilityのいずれも向上した。
+
+### `max_attempts`のデフォルト値は`RetryPolicy.max_attempts`と意図的に独立
+
+`RetryPolicy.max_attempts`（デフォルト3、環境変数`RETRY_MAX_ATTEMPTS`）は
+`retry_engine`内で完結する業務ルールである。`retry_enqueue_trigger`が
+これを直接参照する案（二重管理の解消）も検討したが、v4.6.0の「`retry_engine`
+を経由しない」という設計方針を優先し、採用しなかった。
+`enqueue_pending_failures()`の`max_attempts`デフォルト値`1`は、呼び出し元が
+明示的に業務ルールを注入しなかった場合の構造的セーフガードであり、
+v4.8.0/v4.9.0時点とまったく同じ安全側の挙動（履歴が1件でもあれば以降
+ブロック）を再現する。両者は別の意味を持つ独立した値として扱う。
+
+### DTO（`RetryEnqueueOptions`等）は本Releaseでは導入しない
+
+現時点でGuard判定に渡すPolicy値は`max_attempts`の1項目のみであり、YAGNI・
+Development Charter 8章「抽象化は必要になってから行う」に従い、素朴な
+引数のまま維持した。将来`retry_delay` / `batch_size` / `priority`等が
+具体的に2件以上必要になった時点で、`frozen=True`の`dataclass`による
+Immutable Value Object導入を再検討する。
+
+### 本Releaseの対象外（Non-Goal）
+
+Composition Root（`RetryPolicy.from_env().max_attempts`を実際に注入する
+起動導線）・`RetryEnqueueOptions`等のDTO・`.env.example`整備はいずれも
+**本Releaseの対象外**。`retry_history` / `retry_queue` / `workflow_monitor` /
+`retry_engine`はいずれも無改修（ゼロ改修）。
+
+詳細は`docs/design/retry_enqueue_guard_refinement_foundation.md`
+（Project Charter / Architecture Design・Architecture Review Final含む）を参照。

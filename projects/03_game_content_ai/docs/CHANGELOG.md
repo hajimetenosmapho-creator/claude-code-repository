@@ -225,6 +225,57 @@
 - **対応状況**：対応しない。v4.9.0のArchitecture Reviewで`retry_enqueue_trigger.py`の変更（`enqueue_pending_failures()`内で`self._history.has_history()`を`self._history.get()`に置き換え、`retry_attempt`に実際の`attempt_count + 1`を渡すよう変更）は正式に承認済みである。本質的な制約（`retry_queue` / `retry_history` / `retry_engine` / `workflow_monitor` / `retry_enqueue_guard.py`のゼロ改修、`RetryEnqueueTrigger.__init__`のシグネチャ・`RetryEnqueueTriggerResult`のフィールド・`__all__`がいずれも無変更であること）は、v4.9.0の新規テスト（`tests/test_e2e_v4_9_0_retry_attempt_synchronization_foundation.py`、96件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-16]`と同じ扱い）
 - **今後の対応**：不要（本エントリで説明を確定）。`git diff --quiet`ベースのチェックは本Releaseをcommitすれば自然に解消する。将来Release（Guard判定基準の精緻化等）で`retry_enqueue_trigger`側にさらに変更が入るたびに同様のFAILが起こりうるが、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
 
+### [KI-18] v5.0.0でのRetry Enqueue Guard Refinementにより、v4.8.0/v4.9.0の既存テストが例外で中断する（設計上の意図的な差分）
+
+- **発見日**：2026-07-09（v5.0.0 Retry Enqueue Guard Refinement Foundation Test工程実施時）
+- **対象と症状**：
+  - `tests/test_e2e_v4_8_0_retry_enqueue_guard.py`：テスト1（`guard.decide("run-x", has_history=True)`）で`TypeError: RetryEnqueueGuard.decide() got an unexpected keyword argument 'has_history'`が発生し、以降のテストが実行されないまま中断する
+  - `tests/test_e2e_v4_9_0_retry_attempt_synchronization_foundation.py`：テスト2（カスタムGuard `_AlwaysAllowGuard.decide(self, run_id, has_history)` を注入するシナリオ）で`TypeError: _AlwaysAllowGuard.decide() got an unexpected keyword argument 'next_attempt'`が発生し、以降のテストが実行されないまま中断する
+  - `tests/test_e2e_v4_7_0_retry_history_foundation.py`：テスト29（`src/retry_enqueue_trigger/retry_enqueue_trigger.py`に変更がないことを確認する`git diff`チェック）が1件FAILする（`[KI-17]`と同型の、本Release分の未コミット差分による一時的な検知）
+- **原因**：v5.0.0（Retry Enqueue Guard Refinement Foundation）で`RetryEnqueueGuard.decide()`のシグネチャを`decide(run_id, has_history: bool)`から`decide(run_id, next_attempt: int, max_attempts: int)`へ変更した（`docs/design/retry_enqueue_guard_refinement_foundation.md`）。v4.8.0・v4.9.0の既存テストは旧シグネチャ（`has_history`キーワード引数）を前提にGuardを直接呼び出しているため、`[KI-3]`〜`[KI-17]`のような「assertionレベルのFAILカウント」ではなく、Python自体の`TypeError`によりテストスクリプトが即座に中断するという、従来とは異なる形で現れる
+- **対応状況**：対応しない。v5.0.0のArchitecture Review（Final、ユーザー承認済み）で`RetryEnqueueGuard.decide()`のシグネチャ変更（`has_history: bool`の廃止、`next_attempt: int` / `max_attempts: int`の新設）は正式に承認済みである。`RetryEnqueueGuard`は`RetryEnqueueTrigger`専属の内部コンポーネントであり他パッケージから単独参照される想定がないため（v4.8.0設計書5章）、影響範囲は`RetryEnqueueTrigger`自身とv4.8.0/v4.9.0の既存テストに閉じる。本質的な制約（`RetryEnqueueTrigger.__init__`が完全に無変更であること、`max_attempts`省略時はv4.8.0/v4.9.0時点と完全に同一の挙動になること、`retry_history` / `retry_queue` / `workflow_monitor` / `retry_engine`のゼロ改修）は、v5.0.0の新規テスト（`tests/test_e2e_v5_0_0_retry_enqueue_guard_refinement_foundation.py`、110件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-17]`と同じ扱い）
+- **今後の対応**：不要（本エントリで説明を確定）。v4.7.0テスト29の`git diff --quiet`ベースのチェックは本Releaseをcommitすれば自然に解消する。v4.8.0・v4.9.0の`TypeError`による中断は、Guardのシグネチャが将来さらに変わらない限り恒久的に残る（`[KI-4]`2026-07-03追記のテスト17と同種の「恒久化した既知差分」）。将来Release（Composition Root等）で`retry_enqueue_trigger`側にさらに変更が入るたびに同様の差分が起こりうるが、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
+
+---
+
+## [v5.0.0] - 2026-07-09 ★ Retry Enqueue Guard Refinement Foundation
+
+### Added
+
+- `docs/design/retry_enqueue_guard_refinement_foundation.md`新規作成（Project Charter / Architecture Design。Architecture Review Final・ユーザー承認済み）
+- `tests/test_e2e_v5_0_0_retry_enqueue_guard_refinement_foundation.py`新規作成（110件）
+
+### Changed
+
+- `src/retry_enqueue_trigger/retry_enqueue_guard.py`：`RetryEnqueueGuard.decide()`のシグネチャ・判定式を変更した
+  - `decide(self, run_id: str, has_history: bool)` → `decide(self, run_id: str, next_attempt: int, max_attempts: int)`
+  - 判定基準を「履歴が1回でもあればBLOCK」の二値から「`next_attempt > max_attempts`ならBLOCK」の回数比較へ精緻化した
+  - `RetryHistoryManager`型・`RetryPolicy`（`retry_engine`）型のいずれも一切importしないStateless性は維持した
+- `src/retry_enqueue_trigger/retry_enqueue_trigger.py`：`RetryEnqueueTrigger.enqueue_pending_failures()`を変更した
+  - `max_attempts: int = 1`を末尾のデフォルト値付き引数として追加した（`limit`と同じ「呼び出しの都度渡す」スタイル）
+  - `next_attempt`の算出をGuard判定の直前に確定させ、Guard判定・Queue登録の両方に同じ値を使うようにした（v4.9.0時点はGuard判定後にQueue登録用として別途算出していた）
+  - `RetryEnqueueTrigger.__init__`は**本Releaseでも完全に無変更**（`max_attempts`はインスタンス状態として保持しない）
+
+### Note
+
+- **v4.9.0 Known Issue（Guard判定基準の精緻化）を解消した。** `RetryEnqueueGuard`の判定基準を「履歴の有無」の二値から「`next_attempt > max_attempts`」の回数比較へ精緻化し、v4.9.0で配線済みだった`retry_attempt`の実回数連動に初めて実際の消費者を与えた（`docs/design/retry_enqueue_guard_refinement_foundation.md` 1章・5章）
+- **`max_attempts`をConstructor InjectionではなくMethod引数として設計した（Architecture Review Finalでの再検討結果）。** 当初のArchitecture Reviewでは`RetryEnqueueTrigger.__init__(..., max_attempts: int = 1)`という案だったが、ChatGPTレビューを受けて「Triggerが設定値を長期保持する責務まで持つべきか」を再検討し、`enqueue_pending_failures(limit=None, max_attempts=1)`という呼び出し引数へ変更した。これにより`RetryEnqueueTrigger.__init__`は本Releaseでも1文字も変わらず、Backward Compatibilityがさらに強くなった（同設計書2.2節 Design Policy #2）
+- **`max_attempts`のデフォルト値`1`は、`RetryPolicy.max_attempts`（デフォルト3）とは意図的に独立した値である。** 二重管理の解消（`retry_enqueue_trigger`が`RetryPolicy`を直接参照する案）も検討したが、v4.6.0 Design Policy #2（`retry_engine`を経由しない）との整合性を優先し、採用しなかった。両者は「業務ルールとしての正式な再試行上限」と「設定未注入時の構造的セーフガード」という別の意味を持つ値として明確に区別する（同設計書5章 Known Issue、2.2節 Design Policy #4）
+- **`RetryEnqueueOptions`等のDTO（Immutable Value Object）は本Releaseでは導入しない。** 現時点でGuard判定に渡すPolicy値は`max_attempts`の1項目のみであり、YAGNI・Development Charter 8章「抽象化は必要になってから行う」に従い、素朴な引数のまま維持した。将来Policy値が複数へ増えた場合の再検討基準を設計書6章「Future Architecture Consideration」に明記した
+- **Backward Compatibility を強く維持。** `RetryEnqueueTrigger.__init__`は完全に無変更。`enqueue_pending_failures()`への引数追加は末尾のデフォルト値付きのみであり、既存の呼び出し（`enqueue_pending_failures()` / `enqueue_pending_failures(limit=10)`）は本Release後もまったく同じ結果になる
+- **`retry_history` / `retry_queue` / `workflow_monitor` / `retry_engine`はいずれも本Releaseでも無改修。** 変更は`src/retry_enqueue_trigger/`配下2ファイルのみ（新規ファイルなし）
+- **新たな制約（Known Issue）が本Releaseでも残る。** Composition Root未接続のため、`max_attempts`を明示的に注入する呼び出し元が存在しない限り、本Release後も実運用では実質1回しかリトライされないままである（`docs/design/retry_enqueue_guard_refinement_foundation.md` 5章 Known Issue）
+- 対象外（今回も未実装）：Composition Root・`RetryEnqueueOptions`等のDTO・`.env.example`整備（いずれも将来Release候補）
+
+### Tested
+
+- `tests/test_e2e_v5_0_0_retry_enqueue_guard_refinement_foundation.py`: 110/110 PASS
+- 既存回帰確認：`v1.9.0`〜`v2.9.0`（Analytics Foundation `[KI-1]`除く）全PASS
+- `v3.0.0`〜`v4.6.0`：いずれも既存の`[KI-3]`〜`[KI-16]`による既知差分のみで、本Releaseによる新規差分はない（`retry_engine` / `scheduler`等、`retry_enqueue_trigger`以外のパッケージを一切変更していないため）
+- `v4.7.0`（177/178、新規1件は`[KI-18]`参照。`git diff`ベースの一時的な検知で、commit後に解消見込み）
+- `v4.8.0`・`v4.9.0`：いずれもGuardのシグネチャ変更により`TypeError`でテストスクリプトが中断する（新規、`[KI-18]`参照。恒久的な既知差分として記録）
+- `v1.10.0`（Analytics Foundation）は`[KI-1]`（既知の問題、本Releaseと無関係）のため今回は実行対象外
+
 ---
 
 ## [v4.9.0] - 2026-07-09 ★ Retry Attempt Synchronization Foundation
