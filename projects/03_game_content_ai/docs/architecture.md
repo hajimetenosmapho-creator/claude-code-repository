@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-09（v5.3.0 — Retry Runtime Run Once Foundationを追記。`RetryRuntimeOrchestrator`へ`run_once()`を追加し、Retry Runtimeを1サイクルだけ安全に実行できるようにした設計判断。実行順序は`trigger.enqueue_pending_failures(max_attempts=policy.max_attempts)` → `scheduler.run_due(jobs=[])` → `manager.execute_dispatchable_retries(events)`（本メソッド内でちょうど1回だけ呼び出す） → `RetryQueueUpdateDecider` / `RetryQueueRemovalExecutor` / `RetryQueueCleanupDecider` / `RetryQueueCleanupExecutor` / `RetryQueueTerminalCleanupDecider` / `RetryQueueTerminalCleanupExecutor` / `RetryHistoryRecordExecutor`（いずれも`retry_engine`が既に公開しているStateless・無引数コンストラクタのクラス）への結果配布、という固定順序としたこと、`execute_dispatchable_retries()`を1回だけ呼びその戻り値を保持したまま配布することで、v5.2.0で発見された「発見B」（同一run_idに対する`retry()`の多重実行リスク）を`retry_manager.py`を無改修のまま解消したこと、戻り値として`None`ではなく新設の`RetryRuntimeCycleResult`（`trigger_result` / `scheduler_events` / `execution_results` / `removal_results` / `cleanup_results` / `terminal_cleanup_results` / `history_results`の7フィールドを持つfrozen dataclass）を返す設計としたこと、`run_once()`に`dry_run`引数を追加しなかった理由（`RetryExecutor.execute()`が`dry_run`の値に関わらず常に`outcome=RetryOutcome.RETRIED`を返すため、`dry_run=True`でもQueue除去・History記録という実際の副作用を防げず「安全なdry_run」にならないと判明したため、Known Issueとして記録し独立Releaseへ送ったこと）、`scripts/`エントリーポイント・`loop()`・`daemon()`はいずれも本Releaseの対象外としたこと、既存11パッケージ（`workflow_monitor` 〜 `retry_scheduler_decision`）および`retry_manager.py`はいずれも無改修であることを明記）  
 更新日：2026-07-09（v5.2.0 — Retry Runtime Orchestrator Foundationを追記。新規パッケージ`src/retry_runtime_orchestrator/`（`RetryRuntimeOrchestrator`）を追加し、「Retry Runtimeの実行順序を将来管理する場所」として`trigger` / `scheduler` / `manager` / `queue` / `history` / `policy`の6つをConstructor Injectionで保持するだけの設計判断。`run()` / `run_once()` / `loop()` / `daemon()`等のBusiness Logicはいずれも本Releaseの対象外とし、Composition（`RetryCompositionRoot`＝組み立て）とOrchestration（`RetryRuntimeOrchestrator`＝実行順序の置き場所）の責務分離を明確化したこと、Architecture Reviewの過程で発見した2点（Scheduler系コンポーネントがComposition Rootへ未配線のため`RetryQueueManager`に積まれた再試行候補を`SchedulerEvent`化する経路が存在しなかったこと／`RetryManager`の上位メソッド群を同一`events`に対して素朴に並べて呼び出すと`execute_dispatchable_retries()`が重複実行され`retry()`が同一run_idに対して複数回呼ばれかねないこと）を踏まえ、`RetryCompositionRoot`へ`RetrySchedulerSource` / `RetrySchedulerDecision` / `SchedulerEngine`の配線を追加する一方、後者の解決は`RetryManager`へ`run_cycle()`等の統合APIを追加せず、次Execution Releaseで`RetryRuntimeOrchestrator`が`execute_dispatchable_retries()`を1回だけ呼び出しその結果を既存の公開Decider/Executor群へ配布する方針とし`retry_manager.py`を無改修に保つ設計判断としたこと、`queue` / `history` / `policy`を本Release時点から保持する理由（次Execution Releaseで確定的に必要になることが判明したため、Constructor変更の再往復を避けた）、`workflow_monitor` / `retry_queue` / `retry_history` / `retry_enqueue_trigger` / `retry_engine` / `workflow_engine` / `ai` / `execution_history` / `scheduler` / `retry_scheduler_source` / `retry_scheduler_decision`はいずれも無改修であることを明記）  
 更新日：2026-07-09（v5.1.0 — Retry Composition Root Foundationを追記。新規パッケージ`src/retry_composition/`（`RetryCompositionRoot`）を追加し、`RetryQueueManager` / `RetryHistoryManager`を1インスタンスずつ生成して`RetryEnqueueTrigger`（Enqueue側）・`RetryManager`（Execute側）の両方へ同一インスタンスとして注入する設計判断。責務は「既存の`from_env()`/`from_config()`のみを使って組み立て、属性として公開すること」に限定し、実行順序の決定（`run_once()`等）・ループ・デーモン化・起動スクリプトはいずれも本Releaseの対象外としたこと、パッケージ配置は`src/retry_composition/`（既存16パッケージと同じドメインスコープの命名。汎用`src/runtime/`・`src/application/`は2つ目の消費者が存在しない段階での先回り抽象化として不採用）、クラス名は`RetryCompositionRoot`（「Runtime」は実行責任を連想させ本Releaseの責務境界と矛盾するため不採用。Architecture Reviewで一貫して使ってきた「Composition Root」という既存語彙を採用）としたこと、`workflow_monitor` / `retry_queue` / `retry_history` / `retry_enqueue_trigger` / `retry_engine` / `workflow_engine` / `ai` / `execution_history`はいずれも無改修であることを明記）  
 更新日：2026-07-09（v5.0.0 — Retry Enqueue Guard Refinement Foundationを追記。`RetryEnqueueGuard`（v4.8.0）の判定基準を「再試行履歴が1回でもあればBLOCK」の二値判定から「`next_attempt > max_attempts` ならBLOCK」の回数比較判定へ精緻化した設計判断。`decide()`のシグネチャを`decide(run_id, has_history: bool)`から`decide(run_id, next_attempt: int, max_attempts: int)`へ変更し、`RetryHistoryManager`型・`RetryPolicy`（`retry_engine`）型のいずれも一切importしないStateless性は維持したこと、`RetryEnqueueTrigger.enqueue_pending_failures()`に`max_attempts: int = 1`を末尾のデフォルト値付き引数として追加し、`RetryEnqueueTrigger.__init__`は本Releaseでも完全に無変更としたこと（`max_attempts`をConstructor Injectionで保持する当初案をChatGPTレビューで再検討し、`limit`と同じ「呼び出しの都度渡す」スタイルへ変更したことで、Backward Compatibilityがさらに強くなったこと）、`max_attempts`省略時のデフォルト値`1`はv4.8.0/v4.9.0時点と完全に同一の挙動を再現する安全側の値であり、`RetryPolicy.max_attempts`（デフォルト3）とは意図的に独立した、`retry_engine`非依存を保つための構造的セーフガードであること、`RetryEnqueueOptions`等のDTO（Immutable Value Object）導入はYAGNI・Development Charter「抽象化は必要になってから行う」に従い本Releaseでは見送り、将来Policy値が複数に増えた場合の再検討基準を設計書へ明記したこと、`retry_history` / `retry_queue` / `workflow_monitor` / `retry_engine`はいずれも無改修であることを明記）  
@@ -2072,4 +2073,65 @@ Execution Releaseでも無改修のまま実装できる見込みである。
 `retry_scheduler_source` / `retry_scheduler_decision`はいずれも無改修（ゼロ改修）。
 
 詳細は`docs/design/retry_runtime_orchestrator_foundation.md`
+（Project Charter / Architecture Design・Architecture Review Final含む）を参照。
+
+---
+
+## Retry Runtime Run Once Foundation層（`src/retry_runtime_orchestrator/`、v5.3.0 追加）
+
+v5.2.0で確定した方針どおり、`RetryRuntimeOrchestrator`へ`run_once()`を追加し、
+Retry Runtimeを1サイクルだけ安全に実行できるようにした。
+
+```
+RetryRuntimeOrchestrator.run_once()
+   │
+   ├─ 1. self.trigger.enqueue_pending_failures(max_attempts=self.policy.max_attempts)
+   ├─ 2. events = self.scheduler.run_due(jobs=[])   ← Retry候補由来のSchedulerEventのみ
+   ├─ 3. execution_results = self.manager.execute_dispatchable_retries(events)  ← 必ず1回だけ
+   ├─ 4. decisions = RetryQueueUpdateDecider().decide_all(execution_results)
+   ├─ 5. RetryQueueRemovalExecutor().apply_all(decisions, remove_fn=self.queue.remove)
+   ├─ 6. RetryQueueCleanupExecutor().apply_all(
+   │        RetryQueueCleanupDecider().decide_all(decisions), remove_fn=self.queue.remove)
+   ├─ 7. RetryQueueTerminalCleanupExecutor().apply_all(
+   │        RetryQueueTerminalCleanupDecider().decide_all(decisions), remove_fn=self.queue.remove)
+   └─ 8. RetryHistoryRecordExecutor().record_all(execution_results, record_fn=self.history.record)
+        │
+        └─ RetryRuntimeCycleResult（trigger_result / scheduler_events / execution_results /
+           removal_results / cleanup_results / terminal_cleanup_results / history_results）を返す
+```
+
+### 発見B（多重実行リスク）の解消
+
+`execute_dispatchable_retries()`は`run_once()`内でちょうど1回だけ呼び出され、その戻り値
+（`execution_results`）を保持したまま、Queue更新・Cleanup・History記録の各Decider/Executor
+へ配布する。これにより、v5.2.0で発見された「同一run_idに対する`retry()`の多重実行リスク」
+（`RetryManager`の上位メソッド群を素朴に並べて呼ぶと最大4回実行されうる問題）を構造的に
+解消した。`retry_manager.py`は本Releaseでも無改修のまま維持されている。
+
+### `RetryRuntimeCycleResult`（新規）
+
+`run_once()`は`None`ではなく`RetryRuntimeCycleResult`（frozen dataclass）を返す。
+`trigger_result` / `scheduler_events` / `execution_results` / `removal_results` /
+`cleanup_results` / `terminal_cleanup_results` / `history_results`の7フィールドを保持し、
+1サイクルで何が起きたかを外部から確認できる。
+
+### dry_runを追加しなかった理由
+
+`RetryExecutor.execute()`は`dry_run`の値に関わらず常に`outcome=RetryOutcome.RETRIED`を
+返すため、`dry_run`を`execute_dispatchable_retries()`へそのまま渡しても、後続の
+Queue除去（`queue.remove()`）・History記録（`history.record()`）という実際の副作用は
+防げない。本Releaseでは安全なdry_runにならないと判断し、`run_once()`に`dry_run`引数を
+追加しなかった（Known Issueとして`docs/design/retry_runtime_run_once_foundation.md`
+4章に記録）。
+
+### 本Releaseの対象外（Non-Goal）
+
+`loop()` / `daemon()`の実装、`run_once()`への`dry_run`引数の追加、`run_once()`を呼び出す
+`scripts/`エントリーポイントの追加、`RetryManager`への統合API追加、`SchedulerEngine`への
+Retry専用API追加はいずれも**本Releaseの対象外**。既存11パッケージ
+（`workflow_monitor` / `retry_queue` / `retry_history` / `retry_enqueue_trigger` /
+`retry_engine` / `workflow_engine` / `ai` / `execution_history` / `scheduler` /
+`retry_scheduler_source` / `retry_scheduler_decision`）はいずれも無改修（ゼロ改修）。
+
+詳細は`docs/design/retry_runtime_run_once_foundation.md`
 （Project Charter / Architecture Design・Architecture Review Final含む）を参照。

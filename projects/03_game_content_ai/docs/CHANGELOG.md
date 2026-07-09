@@ -246,6 +246,95 @@
 - **対応状況**：対応しない。v5.2.0のArchitecture Review（Final、ユーザー承認済み）で`RetryCompositionRoot.__init__`への3パラメータ追加（末尾追加、既存7パラメータの並び順は無変更）・`src/retry_runtime_orchestrator/`の新規追加はいずれも正式に承認済みである。本質的な制約（`workflow_monitor` / `retry_queue` / `retry_history` / `retry_enqueue_trigger` / `retry_engine` / `workflow_engine` / `ai` / `execution_history` / `scheduler` / `retry_scheduler_source` / `retry_scheduler_decision`のゼロ改修、`RetryCompositionRoot`が`from_env()`以外の公開メソッドを持たないこと、`RetryRuntimeOrchestrator`が参照保持以外のBusiness Logicを持たないこと）は、v5.2.0の新規テスト（`tests/test_e2e_v5_2_0_retry_runtime_orchestrator_foundation.py`、54件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-18]`と同じ扱い）
 - **今後の対応**：不要（本エントリで説明を確定）。テスト20（「`retry_composition`を参照する既存ファイルが存在しない」）は`git diff`を使わない恒久的な静的検査であり、コミットの有無に関わらず本Release以降も成立しなくなる（`[KI-4]`2026-07-03追記のv3.3.0テスト17と同型。`retry_composition`が本Releaseで初めて実際の消費者（`RetryRuntimeOrchestrator`）を持ったことの自然な帰結）。将来Release（Execution Release等）で`retry_composition`側にさらに変更が入るたびに同様の差分が起こりうるが、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
 
+### [KI-20] v5.3.0でのRetry Runtime Run Once Foundationにより、v5.2.0の一部Architecture GuardがFAILする（設計上の意図的な差分）
+
+- **発見日**：2026-07-09（v5.3.0 Retry Runtime Run Once Foundation Test工程実施時）
+- **対象と症状**：`tests/test_e2e_v5_2_0_retry_runtime_orchestrator_foundation.py`：50/54 PASS（新規4件FAIL）
+  - テスト18「`from_composition_root`以外の公開メソッドが存在しない」「`run_once`という名前のメソッドを持たない」の2アサーション
+  - テスト22「`src/retry_runtime_orchestrator/`のファイル構成が`__init__.py`・`retry_runtime_orchestrator.py`の2ファイルのみ」
+  - テスト23「`retry_runtime_orchestrator`パッケージのexportが`RetryRuntimeOrchestrator`のみ」
+- **原因**：v5.3.0（Retry Runtime Run Once Foundation）で`RetryRuntimeOrchestrator`へ`run_once()`という新規公開メソッドを追加し、`src/retry_runtime_orchestrator/retry_runtime_cycle_result.py`を新規追加、`__init__.py`のexportへ`RetryRuntimeCycleResult`を追加した（`docs/design/retry_runtime_run_once_foundation.md`）。v5.2.0のテスト18・22・23は「その時点でrun_once()等の実行系メソッドが存在しないこと」「ファイル構成が2ファイルのみであること」「exportが1シンボルのみであること」を当時の事実としてArchitecture Guardに固定していたものであり、`[KI-3]`〜`[KI-19]`と同種の既知差分である
+- **対応状況**：対応しない。v5.3.0のArchitecture Review（Final、ユーザー承認済み）で`run_once()`の追加・`RetryRuntimeCycleResult`の新設・それに伴うファイル構成/export変更はいずれも正式に承認済みである。本質的な制約（`RetryManager`・既存11パッケージのゼロ改修、`execute_dispatchable_retries()`が1回だけ呼ばれること等）は、v5.3.0の新規テスト（`tests/test_e2e_v5_3_0_retry_runtime_run_once_foundation.py`、54件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-19]`と同じ扱い）
+- **今後の対応**：不要（本エントリで説明を確定）。`RetryRuntimeOrchestrator`が本Releaseで初めて実行系メソッド（`run_once()`）を持つ実装段階へ移行したことの自然な帰結であり、将来Release（`loop()`/`daemon()`追加等）でさらに変更が入るたびに同様の差分が起こりうるが、その都度Charter/Design側で承認済みの変更範囲を確認すればよく、個別のFAILは許容する
+
+---
+
+## [v5.3.0] - 2026-07-09 ★ Retry Runtime Run Once Foundation
+
+### Added
+
+- `src/retry_runtime_orchestrator/retry_runtime_cycle_result.py`新規作成（`RetryRuntimeCycleResult`）
+  - `trigger_result` / `scheduler_events` / `execution_results` / `removal_results` /
+    `cleanup_results` / `terminal_cleanup_results` / `history_results`の7フィールドを持つ
+    frozen dataclass
+- `docs/design/retry_runtime_run_once_foundation.md`新規作成（Project Charter / Architecture Design。Architecture Review Final・ユーザー承認済み）
+- `tests/test_e2e_v5_3_0_retry_runtime_run_once_foundation.py`新規作成（54件）
+
+### Changed
+
+- `src/retry_runtime_orchestrator/retry_runtime_orchestrator.py`：`RetryRuntimeOrchestrator`へ`run_once()`を追加した
+  - 実行順序：`trigger.enqueue_pending_failures(max_attempts=self.policy.max_attempts)` →
+    `scheduler.run_due(jobs=[])` → `manager.execute_dispatchable_retries(events)`
+    （本メソッド内でちょうど1回だけ呼び出す） → `RetryQueueUpdateDecider` /
+    `RetryQueueRemovalExecutor` / `RetryQueueCleanupDecider` / `RetryQueueCleanupExecutor` /
+    `RetryQueueTerminalCleanupDecider` / `RetryQueueTerminalCleanupExecutor` /
+    `RetryHistoryRecordExecutor`（いずれも`retry_engine`が既に公開しているStateless・
+    無引数コンストラクタのクラス）への結果配布
+  - 戻り値は`None`ではなく`RetryRuntimeCycleResult`
+- `src/retry_runtime_orchestrator/__init__.py`：`RetryRuntimeCycleResult`をexportへ追加
+  （`__all__`が`RetryRuntimeOrchestrator` / `RetryRuntimeCycleResult`の2シンボルになった）
+
+### Note
+
+- **発見B（v5.2.0で発見された多重実行リスク）を解消した。** `execute_dispatchable_retries()`
+  は`run_once()`内でちょうど1回だけ呼び出され、その戻り値（`execution_results`）を保持した
+  まま各Decider/Executorへ配布する。これにより、`RetryManager`の上位メソッド群を素朴に
+  並べて呼ぶと最大4回`retry()`が実行されうるリスクを構造的に解消した
+  （`docs/design/retry_runtime_run_once_foundation.md` 1.2節・2.1節）
+- **`RetryManager`（`retry_manager.py`）は本Releaseでも無改修のまま維持した。**
+  `run_cycle()`等の統合APIは追加せず、実行順序の知識は`RetryRuntimeOrchestrator.run_once()`
+  だけに閉じた（Single Responsibility）
+- **`RetryQueueUpdateDecider`が生成する`decisions`は、Removal / Cleanup / TerminalCleanupの
+  3系統に共有される。** COMPLETE/FAIL（Removal対象）・SKIPPED由来のNOOP（Cleanup対象）・
+  NOT_FOUND由来のNOOP（TerminalCleanup対象）は構造的に排他であり、同一run_idに対して
+  `queue.remove()`が二重に呼ばれることはない（実コード・E2Eテストで確認済み）
+- **`dry_run`引数は追加しなかった。** `RetryExecutor.execute()`は`dry_run`の値に関わらず
+  常に`outcome=RetryOutcome.RETRIED`を返すため、`dry_run`を`execute_dispatchable_retries()`
+  へそのまま渡しても、後続のQueue除去（`queue.remove()`）・History記録
+  （`history.record()`）という実際の副作用は防げない。「安全なはずのdry_runが実は副作用を
+  起こす」という誤動作を避けるため、本Releaseでは`dry_run`引数を追加せず、Known Issueとして
+  記録した（`docs/design/retry_runtime_run_once_foundation.md` 4章）
+- **`scripts/`エントリーポイントは追加しなかった。** `run_once()`本体の設計・実装・テストに
+  集中し、起動スクリプトは次Release候補とした
+- **`scheduler.run_due(jobs=[])`を利用した。** `jobs=[]`によりJob判定は行わず、Retry候補由来の
+  `SchedulerEvent`のみを取得する。将来Retry専用Scheduler API（例：`run_retry_due()`）が
+  `scheduler`パッケージへ追加された場合は置き換え可能とする（Future Architecture Consideration）
+- **既存11パッケージ（`workflow_monitor` / `retry_queue` / `retry_history` /
+  `retry_enqueue_trigger` / `retry_engine` / `workflow_engine` / `ai` / `execution_history` /
+  `scheduler` / `retry_scheduler_source` / `retry_scheduler_decision`）はいずれも本Releaseでも
+  無改修（ゼロ改修）。** 変更は`src/retry_runtime_orchestrator/`配下のみ
+- Known Issue（未解消）：同一サイクル内での即時再試行（バックオフなし）、
+  `scheduler.run_due()`が常にシステム時刻を使うこと（clock注入経路の未整備）、
+  `RetryQueueManager` / `RetryHistoryManager`の永続化、`scripts/`エントリーポイントの未整備
+  （詳細は`docs/design/retry_runtime_run_once_foundation.md` 6章）
+- 対象外（今回は未実装）：`dry_run`・`loop()` / `daemon()`・`scripts/`エントリーポイント・
+  Retry専用Scheduler API（いずれも将来Release候補）
+
+### Tested
+
+- `tests/test_e2e_v5_3_0_retry_runtime_run_once_foundation.py`: 54/54 PASS
+  （呼び出し順序・`execute_dispatchable_retries()`が1回だけ呼ばれること・
+  `RetryRuntimeCycleResult`の内容・Decider/Executorへの配布ロジック・実コンポーネントによる
+  End-to-Endシナリオ（Enqueue→Retry→Queue除去→History記録）・NullRetryManager経路の安全性・
+  Architecture Guardを確認）
+- 既存回帰確認：`v4.7.0`（178/178）・`v2.0.0`（118/118）：全PASS
+- `v5.1.0`（36/38、既存の`[KI-19]`による既知差分のみ）・`v5.0.0`（既存の既知差分のみ）・
+  `v4.9.0`（既存の`[KI-18]`による`TypeError`が引き続き再現）・`v4.1.0`（既存の既知差分のみ）・
+  `v3.0.0`（既存の`[KI-4]`系による既知差分のみ）：いずれも本Releaseによる新規差分はない
+- `v5.2.0`（50/54、新規4件は`[KI-20]`参照。`run_once()`追加・ファイル構成/export変更による
+  恒久的な既知差分）：本Releaseで想定済みの差分
+- `retry_manager.py`を含む既存11パッケージはいずれも`git diff --quiet`で無変更を確認済み
+
 ---
 
 ## [v5.2.0] - 2026-07-09 ★ Retry Runtime Orchestrator Foundation
