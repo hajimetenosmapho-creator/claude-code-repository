@@ -327,6 +327,85 @@
 - **対応状況**：対応しない。これは通常のArchitecture Guard差分（無改修前提の`git diff`チェック等）とは異なり、**Result（挙動）そのものの意図的な仕様変更**によるものである。v5.6.0時点で「Enqueue側は対象外」と明記されていた設計上の制約（`docs/design/retry_runtime_safe_dry_run_foundation.md` 4節）が、v5.8.0で解消されたことの自然な帰結であり、v5.8.0のArchitecture Review（ユーザー承認済み）で想定済みである。`run_once(dry_run=True)`が引き続き安全であること自体は、v5.8.0の新規テスト（テスト8「`run_once(dry_run=True)`がtriggerへdry_runを伝播し、enqueueが抑止される」）で別途確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした
 - **今後の対応**：不要（本エントリで説明を確定）
 
+### [KI-27] v5.9.0でのRetry Runtime Loop Wiring Foundationにより、`scripts/run_retry_runtime.py`無改修を前提とする一部Architecture GuardがFAILする（設計上の意図的な差分）
+
+- **発見日**：2026-07-12（v5.9.0 Retry Runtime Loop Wiring Foundation Test工程実施時）
+- **対象と症状**：
+  - `tests/test_e2e_v5_5_0_retry_runtime_loop_foundation.py`：テスト15（`unchanged_paths_15`の一部として`scripts/run_retry_runtime.py`の`git diff`無変更確認）が新規FAIL
+  - `tests/test_e2e_v5_6_0_retry_runtime_safe_dry_run_foundation.py`：テスト25（`scripts/run_retry_runtime.py`の`git diff`無変更確認、専用チェック）が新規FAIL
+  - `tests/test_e2e_v5_8_0_retry_enqueue_trigger_dry_run_foundation.py`：テスト17（`unchanged_paths_17`の一部として`scripts/run_retry_runtime.py`の`git diff`無変更確認）が新規FAIL
+- **原因**：v5.9.0（Retry Runtime Loop Wiring Foundation）で`scripts/run_retry_runtime.py`へ`--loop` / `--interval-seconds`引数、`RetryRuntimeLoop`の組み立て・実行、`KeyboardInterrupt`処理を追加した（`docs/design/retry_runtime_loop_wiring_foundation.md`）。上記の各テストは「その時点で`scripts/run_retry_runtime.py`が無改修だった」という当時の事実をArchitecture Guardとして固定していたものであり、`[KI-3]`〜`[KI-26]`と同型の既知差分である
+- **対応状況**：対応しない。v5.9.0のArchitecture Design/Review（GPT-5.6 Sol）・ユーザー承認済みで`scripts/run_retry_runtime.py`単独への変更は正式に承認済みである。本質的な制約（`src/retry_runtime_loop/` / `src/retry_runtime_orchestrator/` / `src/retry_composition/` / `RetryManager`（`retry_engine`）等のゼロ改修、単発実行の後方互換性、`format_summary()`の公開契約無変更）は、v5.9.0の新規テスト（`tests/test_e2e_v5_9_0_retry_runtime_loop_wiring_foundation.py`、64アサーション）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした
+- **今後の対応**：不要（本エントリで説明を確定）
+
+### [KI-28] v5.9.0でのRetry Runtime Loop Wiring Foundationにより、`retry_runtime_loop`が初めて実際の消費者を持ったことでv5.5.0の一部Architecture GuardがFAILする（`[KI-21]`と同型の恒久差分）
+
+- **発見日**：2026-07-12（v5.9.0 Retry Runtime Loop Wiring Foundation Test工程実施時）
+- **対象と症状**：`tests/test_e2e_v5_5_0_retry_runtime_loop_foundation.py`：テスト16「`retry_runtime_loop`を参照する既存ファイルが存在しない（消費者不在の先行実装）」が新規FAIL
+- **原因**：v5.9.0で`scripts/run_retry_runtime.py`が`from retry_runtime_loop import RetryRuntimeLoop`を追加し、`retry_runtime_loop`パッケージ（v5.5.0、Foundation Release時点では「消費者不在の先行実装」として意図的に未配線だった）が初めて実際の消費者を持った。v5.5.0テスト16は「本Releaseでは誰からも呼び出されない」という当時の事実を`src/` / `scripts/`双方を対象にした恒久的な静的検査として固定していたものであり、`[KI-21]`（`retry_runtime_orchestrator`がv5.4.0で初めて消費者を持った際の同型差分）と完全に同じパターンである
+- **対応状況**：対応しない。「消費者不在の先行実装」というFoundation Release（v5.5.0）の性質上、後続Releaseで実際に配線されれば本チェックは恒久的に成立しなくなることは`[KI-21]`の前例で確立済みの許容パターンである。`retry_runtime_loop`が正しく配線されていること自体は、v5.9.0の新規テスト（テスト11「既存`RetryRuntimeLoop`（本番クラス）がそのまま使用される」等）で別途確認済み
+- **今後の対応**：不要（本エントリで説明を確定）
+
+---
+
+## [v5.9.0] - 2026-07-12 ★ Retry Runtime Loop Wiring Foundation
+
+### Added
+
+- `scripts/run_retry_runtime.py`へ`--loop`（`action="store_true"`）・`--interval-seconds`
+  （`type=float`、`default=None`）引数を追加：`--loop`指定時、既存`RetryRuntimeLoop`（v5.5.0）を
+  使ってinterval_seconds間隔で繰り返し実行する。`--loop`省略時（デフォルト）は従来どおり1サイクルのみ
+- `--interval-seconds`は`--loop`と併用時のみ有効。`--loop`なしでの指定・0以下の指定はいずれも
+  `parser.error()`によるCLIエラー（非0終了）とした。`--loop`指定時に省略した場合のデフォルトは60秒
+- `main()`内のローカル関数`run_cycle()`（`orchestrator.run_once(dry_run=args.dry_run)` →
+  `print(format_summary(result))`）を`RetryRuntimeLoop`の`run_once_fn`として注入し、
+  `sleep_fn=time.sleep` / `should_continue_fn=lambda: True`とあわせて`RetryRuntimeLoop`を構築、
+  `loop.run()`を呼び出す
+- Loop実行中の`KeyboardInterrupt`（Ctrl+C）のみを`main()`内の`try/except`で捕捉し、短い終了メッセージ
+  （`Retry runtime loop stopped.`）を表示したうえで正常終了（exit code 0）とする
+- `docs/design/retry_runtime_loop_wiring_foundation.md`新規作成（Architecture Design（GPT-5.6 Sol）/
+  Architecture Review（GPT-5.6 Sol）/ Implementation（Claude Code）の経緯を含む）
+- `tests/test_e2e_v5_9_0_retry_runtime_loop_wiring_foundation.py`新規作成（32テストシナリオ・64アサーション）
+
+### Note
+
+- **`src/retry_runtime_loop/` / `src/retry_runtime_orchestrator/` / `src/retry_composition/` /
+  `RetryManager`（`retry_engine`）はいずれも無改修。** 本Releaseの変更対象は
+  `scripts/run_retry_runtime.py`の1ファイルのみ
+- **`RetryRuntimeLoop`へdry_run属性・引数は追加していない。** dry_runは`run_cycle()`のクロージャから
+  `orchestrator.run_once(dry_run=args.dry_run)`へ伝播する。Loopはdry_runの意味を一切知らない
+- **`RetryRuntimeCycleResult` / `format_summary()`の公開契約は無変更。** サイクルごとの出力は
+  `run_cycle()`内で`format_summary()`を呼ぶことで実現し、Loop APIの変更は行っていない
+- **KeyboardInterrupt以外の例外はfail-fastを維持。** `run_cycle()`内の未処理例外は`RetryRuntimeLoop.run()`
+  から伝播し、直後のsleepは実行されず、プロセスは非0終了する（例外を握りつぶして次サイクルへ進む設計は
+  不採用）
+- **`--loop`使用時の外部スケジューラとの重複起動リスクをdocstringへ明記した。** Runtime Lock・PID Lock等の
+  二重起動防止機構は本Releaseの対象外
+- Documentation Debt解消：`scripts/run_retry_runtime.py`のdocstringにあった「`RetryEnqueueTrigger`は
+  dry_run非対応」という v5.8.0以前の古い記述を削除した（`[KI-23]`はv5.8.0で解消済み）
+- 対象外（今回は未実装）：Daemon化、Windows Service化、PIDファイル・二重起動防止機構、自動再起動、
+  ログローテーション、Structured Logging（サイクル番号・タイムスタンプ・JSON出力）、独自Signal Handler、
+  SIGTERM対応、Error Continuation Policy、独自Exit Code体系、Scheduler API再設計、
+  Summary Formatterクラス化、intervalの環境変数化（いずれも将来Release候補または対象外）
+
+### Tested
+
+- `tests/test_e2e_v5_9_0_retry_runtime_loop_wiring_foundation.py`: 64/64 PASS
+  （単発実行・`--dry-run`単独の後方互換性確認、`--loop`経路への分岐確認、`--loop --dry-run`の
+  全サイクル伝播確認、interval未指定時60秒・指定値伝播・0以下拒否・非数値拒否・`--loop`なし指定拒否の
+  各CLIバリデーション確認、既存`RetryRuntimeLoop`の identity確認、run_once_fn/sleep_fn/
+  should_continue_fnの配線確認、各サイクルのSummary出力確認、通常例外のfail-fast伝播とsleep未呼び出し確認、
+  KeyboardInterruptの捕捉・終了メッセージ・正常終了確認（run_once_fn内・sleep_fn内の両方）、
+  KeyboardInterrupt以外の例外による実CLI非0終了確認、`format_summary()`出力形式・公開契約の無変更確認、
+  主要コンポーネントの無改修確認（git diff））
+- 既存回帰確認：`git stash`によるベースライン比較で新規FAILを特定し分類した
+  - `tests/test_e2e_v5_5_0_*.py`：37/37 → 35/37（新規2件、`[KI-27]`・`[KI-28]`）
+  - `tests/test_e2e_v5_6_0_*.py`：既存4件FAIL（`[KI-26]`）→ 既存4件＋新規1件（`[KI-27]`）
+  - `tests/test_e2e_v5_8_0_*.py`：64/64 → 63/64（新規1件、`[KI-27]`）
+  - `tests/test_e2e_v5_1_0_*.py`・`tests/test_e2e_v5_2_0_*.py`・`tests/test_e2e_v5_3_0_*.py`・
+    `tests/test_e2e_v5_4_0_*.py`・`tests/test_e2e_v5_7_0_*.py`：いずれも既存差分のみ（新規差分なし）
+- 本Releaseによる新規Known Issueは`[KI-27]`・`[KI-28]`の2件
+
 ---
 
 ## [v5.8.0] - 2026-07-12 ★ Retry Enqueue Trigger Dry Run Foundation
