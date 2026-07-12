@@ -54,6 +54,13 @@ RetryRuntimeOrchestrator: Retry Runtimeの実行順序を管理する場所。
     - （v5.6.0）CLI（scripts/run_retry_runtime.py）への--dry-run配線は本Releaseの
       対象外（Foundation First。次Release候補「Retry Runtime Safe Dry Run Wiring」
       （docs/ROADMAP.md）へ申し送る）。
+    - （v5.8.0）trigger.enqueue_pending_failures()へdry_runを伝播するよう変更した
+      （RetryEnqueueTrigger側がdry_run: bool = Falseを呼び出し引数として持つように
+      なったため。docs/design/retry_enqueue_trigger_dry_run_foundation.md）。
+      これによりdry_run=True時、Retry Queueへの新規enqueueが抑止されるように
+      なり、v5.6.0時点のKnown Issue（KI-23）が解消した。run_once()自体の
+      シグネチャ・実行順序・他の呼び出し（scheduler.run_due() /
+      execute_dispatchable_retries()以降）はいずれも無変更。
 """
 from __future__ import annotations
 
@@ -123,9 +130,10 @@ class RetryRuntimeOrchestrator:
         Retry Runtimeを1サイクルだけ実行する。
 
         実行順序（変更しないこと）：
-            1. self.trigger.enqueue_pending_failures(max_attempts=self.policy.max_attempts)
-               （FAILED/TIMEOUTのrun_idをRetry Queueへ登録する。dry_runは伝播しない。
-               v5.6.0 Known Issue、後述）
+            1. self.trigger.enqueue_pending_failures(max_attempts=self.policy.max_attempts, dry_run=dry_run)
+               （FAILED/TIMEOUTのrun_idをRetry Queueへ登録する。dry_run=Trueの場合、
+               Guard判定・Queue重複確認までは通常どおり実行するが、実際のenqueue
+               （queue.enqueue()）は抑止される。v5.8.0でdry_runの伝播に対応した）
             2. self.scheduler.run_due(jobs=[])
                （jobs=[]により、Job判定は行わずRetry候補由来のSchedulerEventのみ取得する）
             3. self.manager.execute_dispatchable_retries(events, dry_run=dry_run)
@@ -147,11 +155,14 @@ class RetryRuntimeOrchestrator:
         execute_dispatchable_retries()を2回以上呼び出す変更は行わないこと
         （同一run_idに対するretry()の多重実行を招くため）。
 
-        dry_run=Trueであっても、trigger.enqueue_pending_failures()（Retry Queueへの
-        新規登録）は通常どおり実行される（v5.6.0 Known Issue。次Release候補「Retry
-        Enqueue Trigger Dry Run Foundation」参照）。
+        dry_run=Trueの場合、trigger.enqueue_pending_failures()（Retry Queueへの
+        新規登録）もdry_runを受け取り、実際のenqueueを抑止する（v5.8.0でKI-23を
+        解消。Monitor走査・History参照・Guard判定・Queue重複確認は通常どおり
+        実行される）。
         """
-        trigger_result = self.trigger.enqueue_pending_failures(max_attempts=self.policy.max_attempts)
+        trigger_result = self.trigger.enqueue_pending_failures(
+            max_attempts=self.policy.max_attempts, dry_run=dry_run,
+        )
 
         events = self.scheduler.run_due(jobs=[])
 

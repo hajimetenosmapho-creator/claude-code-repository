@@ -285,8 +285,9 @@
 - **対象**：`scripts/run_retry_runtime.py --dry-run`、`RetryEnqueueTrigger.enqueue_pending_failures()`
 - **症状**：`--dry-run`指定時、`RetryRuntimeOrchestrator.run_once(dry_run=True)`はRetry実行（`execute_dispatchable_retries()`）以降を安全側（NOOP・記録なし・除去なし）に倒すが、`trigger.enqueue_pending_failures()`はdry_run引数を受け取らないため通常どおり実行される。WorkflowMonitor上のFAILED/TIMEOUTは`--dry-run`指定時もRetry Queueへ実際にenqueueされる
 - **原因**：`RetryEnqueueTrigger`（v4.6.0〜v5.0.0）はdry_run引数を持たない設計のまま。v5.6.0のArchitecture Reviewで、Queueへの追加はin-memoryで可逆的・外部作用を伴わないためExecution/Removal/Historyとはリスクレベルが異なると判断し、意図的に対象外とした（`docs/design/retry_runtime_safe_dry_run_foundation.md` 4節）
-- **対応状況**：未対応。CLIで一般公開される以上、利用者が「`--dry-run`＝完全に無害」と誤解しないよう正式なKnown Issueとして記録する
-- **今後の対応**：次Release候補「Retry Enqueue Trigger Dry Run Foundation」（`docs/ROADMAP.md`）で対応予定
+- **対応状況**：解消済み
+- **今後の対応**：不要（本エントリで解消済み）
+- **2026-07-12追記（v5.8.0 Retry Enqueue Trigger Dry Run Foundationで解消）**：`RetryEnqueueTrigger.enqueue_pending_failures()`へ`dry_run: bool = False`を呼び出し時引数として追加した。Monitor走査・History参照・Guard判定・Queue重複確認は`dry_run`の値に関わらず通常どおり実行するが、Guardを通過しQueue重複も存在しない候補について、`dry_run=True`の場合は`RetryQueueManager.enqueue()`を呼び出さず処理を終了するよう変更した（`enqueued` / `failed`いずれにも加算しない）。`RetryRuntimeOrchestrator.run_once()`から`trigger.enqueue_pending_failures(max_attempts=self.policy.max_attempts, dry_run=dry_run)`への伝播も追加し、`--dry-run`指定時にRetry Queueへの新規enqueueが実際に抑止されるようになった。`RetryEnqueueTriggerResult` / `format_summary()` / `scripts/run_retry_runtime.py`はいずれも無改修（`docs/design/retry_enqueue_trigger_dry_run_foundation.md`）
 
 ### [KI-24] v5.7.0でのRetry Runtime Safe Dry Run Wiring Foundationにより、v5.4.0/v5.5.0/v5.6.0の一部Architecture GuardがFAILする（設計上の意図的な差分）
 
@@ -298,6 +299,85 @@
 - **原因**：v5.7.0（Retry Runtime Safe Dry Run Wiring Foundation）で`scripts/run_retry_runtime.py`の`main()`へ`argparse`・`--dry-run`解析・`run_once(dry_run=...)`への伝播を追加した（`docs/design/retry_runtime_safe_dry_run_wiring_foundation.md`）。v5.4.0・v5.5.0・v5.6.0の該当テストは「その時点で`scripts/run_retry_runtime.py`が無改修・CLI引数を持たなかった」という当時の事実をArchitecture Guardとして固定していたものであり、`[KI-3]`〜`[KI-22]`と同型の既知差分である
 - **対応状況**：対応しない。v5.7.0のArchitecture Review（ユーザー承認済み）で`main()`内部のみへの変更（`RetryRuntimeOrchestrator` / `RetryManager` / `RetryExecutor` / `RetryCompositionRoot` / `RetryRuntimeCycleResult` / `format_summary()`はいずれも無改修）は正式に承認済みである。本質的な制約（既存13パッケージのゼロ改修、`format_summary()`のシグネチャ・実装が無改修であること、`parse_args()`等の関数分離を行わないこと）は、v5.7.0の新規テスト（`tests/test_e2e_v5_7_0_retry_runtime_safe_dry_run_wiring_foundation.py`、86件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-22]`と同じ扱い）
 - **今後の対応**：不要（本エントリで説明を確定）
+
+### [KI-25] v5.8.0でのRetry Enqueue Trigger Dry Run Foundationにより、一部Architecture GuardがFAILする（設計上の意図的な差分）
+
+- **発見日**：2026-07-12（v5.8.0 Retry Enqueue Trigger Dry Run Foundation Test工程実施時）
+- **対象と症状**：
+  - `tests/test_e2e_v5_0_0_retry_enqueue_guard_refinement_foundation.py`：テスト16「`enqueue_pending_failures()`のパラメータが`self, limit, max_attempts`」が新規FAIL（本Releaseで`dry_run`を追加したため）
+  - `tests/test_e2e_v5_1_0_retry_composition_root_foundation.py`：テスト19（`src/retry_enqueue_trigger`に変更がないことを確認する`git diff`チェック）が新規FAIL
+  - `tests/test_e2e_v5_2_0_retry_runtime_orchestrator_foundation.py`：テスト24（同上）が新規FAIL
+  - `tests/test_e2e_v5_3_0_retry_runtime_run_once_foundation.py`：テスト28（同上、`unchanged_paths_28`の一部）が新規FAIL（52/54 PASS。残り1件はテスト2、`[KI-22]`による既存差分）
+  - `tests/test_e2e_v5_4_0_retry_runtime_script_entry_point_foundation.py`：テスト15の2件（`src/retry_enqueue_trigger` / `src/retry_runtime_orchestrator`に変更がないことを確認する`git diff`チェック）が新規FAIL
+  - `tests/test_e2e_v5_6_0_retry_runtime_safe_dry_run_foundation.py`：テスト23（`src/retry_enqueue_trigger`に変更がないことを確認する`git diff`チェック、`unchanged_dirs_23`の一部）が新規FAIL
+  - `tests/test_e2e_v5_7_0_retry_runtime_safe_dry_run_wiring_foundation.py`：テスト24の2件（`src/retry_enqueue_trigger` / `src/retry_runtime_orchestrator`に変更がないことを確認する`git diff`チェック、`unchanged_dirs_24`の一部）が新規FAIL
+- **原因**：v5.8.0（Retry Enqueue Trigger Dry Run Foundation）で`src/retry_enqueue_trigger/retry_enqueue_trigger.py` / `src/retry_runtime_orchestrator/retry_runtime_orchestrator.py`の2ファイルを変更した（`docs/design/retry_enqueue_trigger_dry_run_foundation.md`）。上記の各テストは「その時点でこれらのファイル・パッケージが無改修だった」という当時の事実をArchitecture Guardとして固定していたものであり、`[KI-3]`〜`[KI-24]`と同型の既知差分である
+- **対応状況**：対応しない。v5.8.0のArchitecture Review（ユーザー承認済み）で対象2ファイルへの変更は正式に承認済みである。本質的な制約（`RetryEnqueueTriggerResult` / `RetryRuntimeCycleResult` / `format_summary()` / `scripts/run_retry_runtime.py` / `RetryCompositionRoot` / `RetryManager` / `RetryExecutor` / `RetryQueueManager` / `RetryHistoryManager` / `RetryEnqueueGuard` / `RetryRuntimeLoop` / `NullRetryEnqueueTrigger`のゼロ改修、`enqueue_pending_failures()` / `run_once()`双方のシグネチャの意図した形）は、v5.8.0の新規テスト（`tests/test_e2e_v5_8_0_retry_enqueue_trigger_dry_run_foundation.py`、20テスト・64アサーション）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-24]`と同じ扱い）
+- **今後の対応**：不要（本エントリで説明を確定）
+
+### [KI-26] v5.8.0でのRetry Enqueue Trigger Dry Run Foundationにより、v5.6.0の一部テストが仕様変更により新規FAILする（`[KI-23]`解消に伴う意図的な挙動変化）
+
+- **発見日**：2026-07-12（v5.8.0 Retry Enqueue Trigger Dry Run Foundation Test工程実施時）
+- **対象と症状**：`tests/test_e2e_v5_6_0_retry_runtime_safe_dry_run_foundation.py`の以下4件が新規FAILする
+  - テスト16「`run_once(dry_run=True)`後もQueueに`run-e2e-dry`が残っている」
+  - テスト18「`execution_results[0].retry_result.outcome`が`DRY_RUN`」
+  - テスト19「`WorkflowEngineManager.run()`に`dry_run=True`が伝播している」
+  - テスト20「`trigger.enqueue_pending_failures`は通常どおり実行されQueueへ登録される」
+- **原因**：これら4件は、v5.6.0時点で`RetryEnqueueTrigger`が`dry_run`非対応だったこと（`[KI-23]`の症状そのもの）を前提に、「`run_once(dry_run=True)`を呼んでも対象run_idはQueueへenqueueされ続ける」ことを期待値として固定していた。v5.8.0で`[KI-23]`を解消した結果、`run_once(dry_run=True)`は対象run_idをそもそもQueueへenqueueしなくなったため、Queueへ残る項目が存在せず、Scheduler候補・Execution対象にもならない（`execution_results`が空リストになる）。これによりテスト16・18・19・20の期待値が本Releaseの目的そのものによって反転した
+- **対応状況**：対応しない。これは通常のArchitecture Guard差分（無改修前提の`git diff`チェック等）とは異なり、**Result（挙動）そのものの意図的な仕様変更**によるものである。v5.6.0時点で「Enqueue側は対象外」と明記されていた設計上の制約（`docs/design/retry_runtime_safe_dry_run_foundation.md` 4節）が、v5.8.0で解消されたことの自然な帰結であり、v5.8.0のArchitecture Review（ユーザー承認済み）で想定済みである。`run_once(dry_run=True)`が引き続き安全であること自体は、v5.8.0の新規テスト（テスト8「`run_once(dry_run=True)`がtriggerへdry_runを伝播し、enqueueが抑止される」）で別途確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした
+- **今後の対応**：不要（本エントリで説明を確定）
+
+---
+
+## [v5.8.0] - 2026-07-12 ★ Retry Enqueue Trigger Dry Run Foundation
+
+### Added
+
+- `RetryEnqueueTrigger.enqueue_pending_failures()`へ`dry_run: bool = False`を呼び出し時引数として追加：
+  Monitor走査・History参照・Guard判定・Queue重複確認は`dry_run`の値に関わらず通常どおり実行するが、
+  Guardを通過しQueue重複も存在しない候補について、`dry_run=True`の場合は`RetryQueueManager.enqueue()`を
+  呼び出さず処理を終了する（`enqueued` / `failed`いずれにも加算しない）
+- `RetryRuntimeOrchestrator.run_once()`から`trigger.enqueue_pending_failures(max_attempts=self.policy.max_attempts,
+  dry_run=dry_run)`への伝播を追加：`run_once()`自体のシグネチャは無変更（v5.6.0のまま）
+- `docs/design/retry_enqueue_trigger_dry_run_foundation.md`新規作成（Architecture Design / Architecture Review。
+  Result Contract・CLI表示のいずれも変更しない方針（案B）を採用した経緯を含む）
+- `tests/test_e2e_v5_8_0_retry_enqueue_trigger_dry_run_foundation.py`新規作成（20テスト・64アサーション）
+
+### Note
+
+- **`RetryEnqueueTriggerResult`は無改修。** `dry_run_planned`等の新規フィールドは追加していない。「実際に行われた
+  結果のみを表す」という既存Result Contractの一貫性を優先した（Architecture Review過程での再検討。設計書5節）
+- **`format_summary()` / `scripts/run_retry_runtime.py`は無改修。** `RetryEnqueueTriggerResult`の構造を変えない
+  ため、既存の`format_summary()`が変更なしにdry_run時の`enqueued=0`を正しく表示するようになる
+- **`RetryRuntimeCycleResult` / `RetryCompositionRoot` / `RetryManager` / `RetryExecutor` / `RetryQueueManager` /
+  `RetryHistoryManager` / `RetryEnqueueGuard` / `RetryRuntimeLoop` / `NullRetryEnqueueTrigger`はいずれも無改修。**
+  本Releaseの変更対象は`src/retry_enqueue_trigger/retry_enqueue_trigger.py` /
+  `src/retry_runtime_orchestrator/retry_runtime_orchestrator.py`の2ファイルのみ
+- **Known Limitation：** dry_run時、Guard通過かつQueue重複なしの候補は既存カウンタのいずれにも加算されないため、
+  `scanned == enqueued + skipped_existing + skipped_status + skipped_history + failed`という暗黙の合計不変条件が
+  dry_run時には成立しない場合がある。既存フィールドの意味を偽らないための意図的なトレードオフ（設計書12節）
+- 対象外（今回は未実装）：Dry Run時の予定Enqueue件数の観測機能、Queue容量上限を考慮したシミュレーション、
+  `--loop`のCLI配線、Daemon化（いずれも将来Release候補または対象外として設計書15節に記録）
+- `[KI-23]`（v5.6.0で記録）を本Releaseで解消した（詳細は`[KI-23]`の2026-07-12追記を参照）
+
+### Tested
+
+- `tests/test_e2e_v5_8_0_retry_enqueue_trigger_dry_run_foundation.py`: 64/64 PASS
+  （Spyによるqueue.enqueue()呼び出し有無の構造的検証、dry_run=True/False/省略時の挙動確認、
+  RetryRuntimeOrchestrator.run_once(dry_run=...)からの実E2E伝播確認、シグネチャ・Result Contract無変更確認、
+  無改修対象のgit diff確認、format_summary()の出力文字列確認・実CLIサブプロセス確認、AST検査による補助確認、
+  副作用なしの確認）
+- 既存回帰確認：関連する既存テストファイルを`git stash`によるベースライン比較で検証し、新規FAILを
+  「本Releaseの意図的な仕様変更（`[KI-26]`）」「Architecture Guard差分（`[KI-25]`）」
+  「既存Known Issue（本Releaseと無関係、確認済み）」に分類した
+- `tests/test_e2e_v5_3_0_retry_runtime_run_once_foundation.py`のローカルFake`FakeTrigger`（本番`RetryEnqueueTrigger`
+  の代役）が`dry_run`引数を持たないため、`enqueue_pending_failures(..., dry_run=dry_run)`呼び出し時に
+  `TypeError`が発生し、同テストファイル全体（54件）がテスト3以降実行不能になっていたことを確認した。
+  `FakeTrigger.enqueue_pending_failures()`へ`dry_run: bool = False`を追加（シグネチャ互換性の確保のみ。
+  アサーション・期待値・戻り値・その他の挙動は無変更）し、52/54 PASSまで回復させた（残り2件はテスト2
+  `[KI-22]`・テスト28`[KI-25]`のいずれも既存差分と同型）。テストダブルの互換性不足であり製品仕様上の
+  問題ではないため、新規Known Issueとしては記録していない
+- 本Releaseによる新規Known Issueは`[KI-25]`・`[KI-26]`の2件
 
 ---
 

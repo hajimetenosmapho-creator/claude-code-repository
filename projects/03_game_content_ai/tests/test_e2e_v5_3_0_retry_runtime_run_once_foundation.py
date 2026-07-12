@@ -184,7 +184,7 @@ class FakeTrigger:
         self.calls: list[dict] = []
         self._result = result
 
-    def enqueue_pending_failures(self, limit=None, max_attempts: int = 1):
+    def enqueue_pending_failures(self, limit=None, max_attempts: int = 1, dry_run: bool = False):
         self.calls.append({"limit": limit, "max_attempts": max_attempts})
         call_order.append("trigger")
         return self._result
