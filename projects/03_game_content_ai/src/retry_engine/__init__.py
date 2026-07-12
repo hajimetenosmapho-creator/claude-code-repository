@@ -150,6 +150,18 @@ Workflow Monitor（v2.9.0）が FAILED / TIMEOUT と判定したWorkflowを、Wo
       retry_queue_terminal_cleanup_executor.py / retry_outcome_terminality.py /
       retry_policy.py / retry_policy_protocol.py はいずれも本Releaseでも無改修
       （詳細は docs/design/retry_history_foundation.md）
+
+    - （v5.6.0）RetryOutcomeにDRY_RUN（retry_result.py）を追加した（Retry Runtime
+      Safe Dry Run Foundation）。RetryExecutor.execute()がdry_run=Trueの場合、
+      outcome=RETRIEDではなくoutcome=DRY_RUNを返すようになり、後続の
+      RetryQueueUpdateDecider・RetryHistoryRecordExecutor・RetryQueueRemovalExecutor・
+      RetryQueueCleanupDeciderはいずれも無改修のまま自動的に安全側（NOOP・記録なし・
+      除去なし）に倒れる。唯一retry_outcome_terminality.py（classify_reason()が
+      明示列挙+raiseの網羅チェック方式のため）のみ、RetryCleanupReason.DRY_RUN追加・
+      classify_reason()の分岐追加・RETRY_OUTCOME_TERMINALITYへのDRY_RUN→TRANSIENT
+      追加が必須だった。retry_manager.py・retry_execution_coordinator.py等、
+      dry_run引数を既に受け取っていた既存箇所は無改修（詳細は
+      docs/design/retry_runtime_safe_dry_run_foundation.md）
 """
 from .retry_config import RetryConfig
 from .retry_policy import DEFAULT_TARGET_STATUSES, RetryPolicy

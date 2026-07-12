@@ -266,6 +266,93 @@
 - **対応状況**：対応しない。v5.4.0のArchitecture Review（Final、ユーザー承認済み）で`scripts/run_retry_runtime.py`の新規追加・`retry_runtime_orchestrator`の初回消費は正式に承認済みである。本質的な制約（`RetryCompositionRoot` / `RetryRuntimeOrchestrator`・既存12パッケージのゼロ改修、scriptがBusiness Logicを持たないこと、CLI引数を持たないこと）は、v5.4.0の新規テスト（`tests/test_e2e_v5_4_0_retry_runtime_script_entry_point_foundation.py`、67件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-20]`と同じ扱い）
 - **今後の対応**：不要（本エントリで説明を確定）。本チェックは`git diff`を使わず`src/` / `scripts/`配下の全ファイルを走査する恒久的な静的検査であり、コミットの有無に関わらず本Release以降も成立しなくなる（`[KI-4]`2026-07-03追記・`[KI-19]`と同型。`retry_runtime_orchestrator`が本Releaseで初めて実際の消費者（`scripts/run_retry_runtime.py`）を持ったことの自然な帰結）
 
+### [KI-22] v5.6.0でのRetry Runtime Safe Dry Run Foundationにより、v3.0.0〜v5.5.0の一部Architecture GuardがFAILする（設計上の意図的な差分）
+
+- **発見日**：2026-07-12（v5.6.0 Retry Runtime Safe Dry Run Foundation Test工程実施時。変更前後で全48件のE2Eテストを実行し差分を機械的に比較して確認）
+- **対象と症状**：
+  - `tests/test_e2e_v3_0_0_retry_engine_foundation.py`：204/208 PASS（新規2件FAIL）。テスト4「RetryOutcomeが4値で定義されている」（本Releaseで5値目の`DRY_RUN`を追加したため）、テスト24「dry_run=True指定時 outcome=RETRIED」（本Releaseの意図的な仕様変更によりoutcome=DRY_RUNへ変更したため）
+  - `tests/test_e2e_v3_1_0_*.py`〜`tests/test_e2e_v5_0_0_*.py`（`retry_result.py` / `retry_executor.py` / `retry_engine/__init__.py`を参照する多数のテスト）：各テストの「`src/retry_engine`（または個別ファイル）に変更がない（git diff）」チェックが新規FAILする（本Releaseが`retry_result.py` / `retry_executor.py` / `retry_outcome_terminality.py` / `retry_engine/__init__.py`を変更したため）。特に`retry_outcome_terminality.py`を参照する`tests/test_e2e_v4_5_0_*.py`・`tests/test_e2e_v4_7_0_*.py`は同ファイルの変更も新規FAILとして検出される
+  - `tests/test_e2e_v5_1_0_*.py`・`tests/test_e2e_v5_2_0_*.py`：「`src/retry_engine`に変更がない（git diff）」が新規FAIL
+  - `tests/test_e2e_v5_3_0_*.py`：テスト2「`run_once()`のパラメータが`self`のみ」が新規FAIL（本Releaseで`dry_run`引数を追加したため）。加えて「`src/retry_engine`に変更がない」も新規FAIL
+  - `tests/test_e2e_v5_4_0_*.py`・`tests/test_e2e_v5_5_0_*.py`：「`src/retry_engine`に変更がない」「`src/retry_runtime_orchestrator`に変更がない」が新規FAIL（`run_once()`への`dry_run`引数追加のため）
+- **原因**：v5.6.0（Retry Runtime Safe Dry Run Foundation）で、`RetryOutcome`へ`DRY_RUN`を追加し（`retry_result.py`）、`RetryExecutor.execute()`が`dry_run=True`の場合に`outcome=DRY_RUN`を返すよう変更し（`retry_executor.py`）、`retry_outcome_terminality.py`の`classify_reason()`へ`DRY_RUN`分岐を追加し（明示列挙+raiseの網羅チェック方式であるため追従が必須だった）、`RetryRuntimeOrchestrator.run_once()`へ`dry_run: bool = False`引数を追加した。いずれもRelease 5.6のArchitecture Review（ChatGPT/Claude Code/ユーザーの3者協業レビューを経て確定）でユーザー承認済みの設計である
+- **対応状況**：対応しない。「無改修」を前提としたArchitecture Guardは、当時（各リリース時点）の事実をテストとして固定したものであり、それ以降のFoundation Releaseが正当な理由で同じファイルへ手を入れるたびに恒久的な既知差分として積み上がっていく（`[KI-7]`〜`[KI-21]`と同型のパターン）。本Releaseの新機能自体は`tests/test_e2e_v5_6_0_retry_runtime_safe_dry_run_foundation.py`（49件、全PASS）で独立して検証済み
+- **今後の対応**：不要（本エントリで説明を確定）
+
+---
+
+## [v5.6.0] - 2026-07-12 ★ Retry Runtime Safe Dry Run Foundation
+
+### Added
+
+- `RetryOutcome.DRY_RUN`を追加（`src/retry_engine/retry_result.py`）：`dry_run=True`で
+  再実行を試行したことを表す新しいOutcome値
+- `RetryExecutor.execute()`（`src/retry_engine/retry_executor.py`）を変更：
+  `request.dry_run=True`の場合、`WorkflowEngineManager.run()`の呼び出し自体は維持しつつ
+  （dry_run=Trueが伝播しAgent層の`act()`が呼ばれないため実際の副作用はない。
+  `workflow_engine_result`により「何が起きたはずか」を引き続き可視化する）、戻り値の
+  `outcome`を`RetryOutcome.RETRIED`ではなく`RetryOutcome.DRY_RUN`とするよう変更
+- `retry_outcome_terminality.py`を変更：`RetryCleanupReason.DRY_RUN`追加、
+  `classify_reason()`へDRY_RUN分岐追加、`RETRY_OUTCOME_TERMINALITY`へ
+  `DRY_RUN → TRANSIENT`（KEEP、Queueから消さない）を追加
+- `RetryRuntimeOrchestrator.run_once()`（`src/retry_runtime_orchestrator/retry_runtime_orchestrator.py`）に
+  `dry_run: bool = False`引数を追加し、`manager.execute_dispatchable_retries(events, dry_run=dry_run)`へ伝播
+- `docs/design/retry_runtime_safe_dry_run_foundation.md`新規作成（Architecture Design /
+  Architecture Review。ChatGPT（GPT-5.6 Sol）レビューを経た4点の修正検討事項と、
+  それぞれの採用可否の判断を含む）
+- `tests/test_e2e_v5_6_0_retry_runtime_safe_dry_run_foundation.py`新規作成（49件）
+
+### Note
+
+- **既存のDecider/Executor（`RetryQueueUpdateDecider` / `RetryHistoryRecordExecutor` /
+  `RetryQueueRemovalExecutor` / `RetryQueueCleanupDecider`）はいずれも無改修。**
+  「outcome==RETRIEDかどうか」またはallowlist方式で判定しているため、`DRY_RUN`は
+  無改修のまま自動的に安全側（NOOP・記録なし・除去なし）に倒れる
+- **`retry_outcome_terminality.py`のみ改修が必須だった。** `classify_reason()`が
+  明示列挙+`raise ValueError`の網羅チェック方式（else方式ではない）であるため、
+  改修を怠ると`RetryQueueTerminalCleanupDecider`経由で`run_once(dry_run=True)`が
+  クラッシュすることをArchitecture Reviewで発見した（4点の修正検討事項の1つ、
+  設計書参照）。**恒久ルールとして、`RetryOutcome`へ新しい値を追加する場合は
+  リポジトリ全体で参照箇所を確認し、明示列挙・例外送出・永続化・表示・
+  シリアライズへの影響をレビューすることを設計書に明記した**
+- **CLI変更（`scripts/run_retry_runtime.py`への`--dry-run`・`argparse`配線）は
+  今回対象外とした。** ChatGPTレビューを踏まえ、`run_once()`本体の追加（Execution
+  Release）とCLIからの配線（Entry Point Release）を別Releaseに分けるという
+  このプロジェクトの一貫したパターン（v5.3.0/v5.4.0と同型）を踏襲し、次Release候補
+  「Retry Runtime Safe Dry Run Wiring」（`docs/ROADMAP.md`）へ申し送った
+- **Enqueue側（`RetryEnqueueTrigger.enqueue_pending_failures()`）のdry_run対応は
+  今回対象外。** `run_once(dry_run=True)`を呼んでも、WorkflowMonitor上のFAILED/TIMEOUTを
+  Retry Queueへenqueueする処理自体は通常どおり実行される（Queueへの追加はin-memoryで
+  可逆的・外部作用を伴わないためリスクレベルが異なると判断）。次Release候補
+  「Retry Enqueue Trigger Dry Run Foundation」（`docs/ROADMAP.md`）へ申し送った
+- **`run_once()`の`dry_run`をRequest Object化する案は見送った。** `RetryManager.retry()` /
+  `execute_dispatchable_retries()`等、retry_engine全体が「呼び出しの都度渡すbool引数」で
+  統一されているため、単一の振る舞い変更フラグのためにRequest Objectを導入するのは
+  Development Charter「抽象化は必要になってから行う」に反すると判断した。将来、
+  実行の振る舞いを変える引数（表示専用の`verbose`/`json`等ではなく）が2つ目以上
+  必要になった時点でRequest Object化を再検討する、という基準を設計書に明記した
+- 既存13パッケージ（`workflow_monitor` 〜 `retry_runtime_orchestrator`）のうち、
+  本Releaseで変更したのは`retry_engine`（`retry_result.py` / `retry_executor.py` /
+  `retry_outcome_terminality.py` / `__init__.py`）・`retry_runtime_orchestrator`
+  （`retry_runtime_orchestrator.py`）の2パッケージのみ。`scripts/run_retry_runtime.py`
+  を含むそれ以外の既存パッケージ・scriptsはいずれも無改修
+- 対象外（今回は未実装）：CLI配線（`--dry-run` / `argparse`）、Enqueue側のdry_run対応、
+  `--loop`のCLI配線、Exit Code再設計、Summary Formatter抽出（いずれも将来Release候補）
+
+### Tested
+
+- `tests/test_e2e_v5_6_0_retry_runtime_safe_dry_run_foundation.py`: 49/49 PASS
+  （`RetryOutcome.DRY_RUN`の追加確認、`RetryExecutor.execute()`のdry_run分岐（単体）、
+  Decider/Executor群がDRY_RUNを無改修のまま安全側に倒すことの確認（単体）、
+  未知のRetryOutcomeに対するfail-fast動作の維持確認、`run_once(dry_run=True/False)`
+  の実End-to-Endシナリオ、Architecture Guard）
+- 既存回帰確認：変更前後で全48件のE2Eテストを機械的に比較。新規に発生した差分は
+  すべて`[KI-22]`に記録した意図的なもの（`src/retry_engine` / `src/retry_runtime_orchestrator`
+  の変更に起因するArchitecture Guard差分、および`RetryOutcome`5値化・`run_once()`
+  シグネチャ変更という仕様変更そのもの）であり、それ以外の予期しない回帰は
+  発見されなかった
+- 本Releaseによる新規Known Issueは`[KI-22]`のみ
+
 ---
 
 ## [v5.5.0] - 2026-07-09 ★ Retry Runtime Loop Foundation

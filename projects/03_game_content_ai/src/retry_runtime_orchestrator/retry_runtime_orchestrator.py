@@ -38,6 +38,22 @@ RetryRuntimeOrchestrator: Retry Runtimeの実行順序を管理する場所。
       History記録という実際の副作用は防げない（安全なdry_runにならない）。
       これは既知の制約として設計書に記録し、本Releaseでは対応しない
       （同設計書4章 Known Issue）。
+    - （v5.6.0）run_once()にdry_run: bool = False引数を追加した。RetryOutcome.DRY_RUN
+      （retry_engine、v5.6.0新設）により、RetryExecutor.execute()がdry_run=Trueの場合に
+      outcome=DRY_RUNを返すようになったため、v5.3.0時点のKnown Issueが解消し、
+      dry_run引数をmanager.execute_dispatchable_retries(events, dry_run=dry_run)へ
+      伝播させることが安全になった（docs/design/retry_runtime_safe_dry_run_foundation.md
+      参照）。
+    - （v5.6.0）dry_runはtrigger.enqueue_pending_failures()へは伝播しない
+      （RetryEnqueueTriggerはdry_run引数を持たない）。そのためdry_run=Trueで
+      run_once()を呼んでも、WorkflowMonitor上のFAILED/TIMEOUTをRetry Queueへ
+      enqueueする処理自体は通常どおり実行される（Queueへの追加はin-memoryで可逆的・
+      外部作用を伴わないためリスクレベルが異なると判断し、本Releaseでは意図的に
+      対象外とした。Known Issueとして記録し、次Release候補「Retry Enqueue Trigger
+      Dry Run Foundation」（docs/ROADMAP.md）へ申し送る）。
+    - （v5.6.0）CLI（scripts/run_retry_runtime.py）への--dry-run配線は本Releaseの
+      対象外（Foundation First。次Release候補「Retry Runtime Safe Dry Run Wiring」
+      （docs/ROADMAP.md）へ申し送る）。
 """
 from __future__ import annotations
 
@@ -102,18 +118,22 @@ class RetryRuntimeOrchestrator:
             policy=root.policy,
         )
 
-    def run_once(self) -> RetryRuntimeCycleResult:
+    def run_once(self, dry_run: bool = False) -> RetryRuntimeCycleResult:
         """
         Retry Runtimeを1サイクルだけ実行する。
 
         実行順序（変更しないこと）：
             1. self.trigger.enqueue_pending_failures(max_attempts=self.policy.max_attempts)
-               （FAILED/TIMEOUTのrun_idをRetry Queueへ登録する）
+               （FAILED/TIMEOUTのrun_idをRetry Queueへ登録する。dry_runは伝播しない。
+               v5.6.0 Known Issue、後述）
             2. self.scheduler.run_due(jobs=[])
                （jobs=[]により、Job判定は行わずRetry候補由来のSchedulerEventのみ取得する）
-            3. self.manager.execute_dispatchable_retries(events)
+            3. self.manager.execute_dispatchable_retries(events, dry_run=dry_run)
                （本メソッド内でちょうど1回だけ呼び出す。dispatchable=Trueの候補について
-               実際にretry()を呼び出し、結果をexecution_resultsとして保持する）
+               実際にretry()を呼び出し、結果をexecution_resultsとして保持する。
+               dry_run=Trueの場合、RetryExecutor.execute()がoutcome=RetryOutcome.DRY_RUN
+               を返すため、以下4.の各Decider/Executorはいずれも無改修のまま自動的に
+               Queue除去・履歴記録を行わない（v5.6.0）
             4. execution_resultsを、retry_engineが公開する既存のStateless・無引数
                コンストラクタのDecider/Executor群へ配布する：
                  - RetryQueueUpdateDecider().decide_all(execution_results)
@@ -126,12 +146,16 @@ class RetryRuntimeOrchestrator:
 
         execute_dispatchable_retries()を2回以上呼び出す変更は行わないこと
         （同一run_idに対するretry()の多重実行を招くため）。
+
+        dry_run=Trueであっても、trigger.enqueue_pending_failures()（Retry Queueへの
+        新規登録）は通常どおり実行される（v5.6.0 Known Issue。次Release候補「Retry
+        Enqueue Trigger Dry Run Foundation」参照）。
         """
         trigger_result = self.trigger.enqueue_pending_failures(max_attempts=self.policy.max_attempts)
 
         events = self.scheduler.run_due(jobs=[])
 
-        execution_results = self.manager.execute_dispatchable_retries(events)
+        execution_results = self.manager.execute_dispatchable_retries(events, dry_run=dry_run)
 
         decisions = RetryQueueUpdateDecider().decide_all(execution_results)
         removal_results = RetryQueueRemovalExecutor().apply_all(decisions, remove_fn=self.queue.remove)
