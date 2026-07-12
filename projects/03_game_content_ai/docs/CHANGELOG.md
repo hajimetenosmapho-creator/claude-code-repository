@@ -279,6 +279,74 @@
 - **対応状況**：対応しない。「無改修」を前提としたArchitecture Guardは、当時（各リリース時点）の事実をテストとして固定したものであり、それ以降のFoundation Releaseが正当な理由で同じファイルへ手を入れるたびに恒久的な既知差分として積み上がっていく（`[KI-7]`〜`[KI-21]`と同型のパターン）。本Releaseの新機能自体は`tests/test_e2e_v5_6_0_retry_runtime_safe_dry_run_foundation.py`（49件、全PASS）で独立して検証済み
 - **今後の対応**：不要（本エントリで説明を確定）
 
+### [KI-23] `--dry-run`指定時でも、Retry QueueへのEnqueueは通常どおり実行される
+
+- **発見日**：2026-07-12（v5.6.0 Retry Runtime Safe Dry Run Foundation Architecture Design時点で判明。v5.7.0 Retry Runtime Safe Dry Run Wiring FoundationでCLIから`--dry-run`が一般利用可能になったことに伴い、正式なKnown Issueへ格上げ）
+- **対象**：`scripts/run_retry_runtime.py --dry-run`、`RetryEnqueueTrigger.enqueue_pending_failures()`
+- **症状**：`--dry-run`指定時、`RetryRuntimeOrchestrator.run_once(dry_run=True)`はRetry実行（`execute_dispatchable_retries()`）以降を安全側（NOOP・記録なし・除去なし）に倒すが、`trigger.enqueue_pending_failures()`はdry_run引数を受け取らないため通常どおり実行される。WorkflowMonitor上のFAILED/TIMEOUTは`--dry-run`指定時もRetry Queueへ実際にenqueueされる
+- **原因**：`RetryEnqueueTrigger`（v4.6.0〜v5.0.0）はdry_run引数を持たない設計のまま。v5.6.0のArchitecture Reviewで、Queueへの追加はin-memoryで可逆的・外部作用を伴わないためExecution/Removal/Historyとはリスクレベルが異なると判断し、意図的に対象外とした（`docs/design/retry_runtime_safe_dry_run_foundation.md` 4節）
+- **対応状況**：未対応。CLIで一般公開される以上、利用者が「`--dry-run`＝完全に無害」と誤解しないよう正式なKnown Issueとして記録する
+- **今後の対応**：次Release候補「Retry Enqueue Trigger Dry Run Foundation」（`docs/ROADMAP.md`）で対応予定
+
+### [KI-24] v5.7.0でのRetry Runtime Safe Dry Run Wiring Foundationにより、v5.4.0/v5.5.0/v5.6.0の一部Architecture GuardがFAILする（設計上の意図的な差分）
+
+- **発見日**：2026-07-12（v5.7.0 Retry Runtime Safe Dry Run Wiring Foundation Test工程実施時）
+- **対象と症状**：
+  - `tests/test_e2e_v5_4_0_retry_runtime_script_entry_point_foundation.py`：66/67 PASS（新規1件FAIL）。テスト7「argparseをimportしない」（本Releaseで`main()`内に`argparse`のローカルimportを追加したため）
+  - `tests/test_e2e_v5_5_0_retry_runtime_loop_foundation.py`：36/37 PASS（新規1件FAIL）。テスト15「`scripts/run_retry_runtime.py`に変更がない（git diff）」
+  - `tests/test_e2e_v5_6_0_retry_runtime_safe_dry_run_foundation.py`：48/49 PASS（新規1件FAIL）。テスト25「`scripts/run_retry_runtime.py`に変更がない（git diff）」
+- **原因**：v5.7.0（Retry Runtime Safe Dry Run Wiring Foundation）で`scripts/run_retry_runtime.py`の`main()`へ`argparse`・`--dry-run`解析・`run_once(dry_run=...)`への伝播を追加した（`docs/design/retry_runtime_safe_dry_run_wiring_foundation.md`）。v5.4.0・v5.5.0・v5.6.0の該当テストは「その時点で`scripts/run_retry_runtime.py`が無改修・CLI引数を持たなかった」という当時の事実をArchitecture Guardとして固定していたものであり、`[KI-3]`〜`[KI-22]`と同型の既知差分である
+- **対応状況**：対応しない。v5.7.0のArchitecture Review（ユーザー承認済み）で`main()`内部のみへの変更（`RetryRuntimeOrchestrator` / `RetryManager` / `RetryExecutor` / `RetryCompositionRoot` / `RetryRuntimeCycleResult` / `format_summary()`はいずれも無改修）は正式に承認済みである。本質的な制約（既存13パッケージのゼロ改修、`format_summary()`のシグネチャ・実装が無改修であること、`parse_args()`等の関数分離を行わないこと）は、v5.7.0の新規テスト（`tests/test_e2e_v5_7_0_retry_runtime_safe_dry_run_wiring_foundation.py`、86件）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした（`[KI-3]`〜`[KI-22]`と同じ扱い）
+- **今後の対応**：不要（本エントリで説明を確定）
+
+---
+
+## [v5.7.0] - 2026-07-12 ★ Retry Runtime Safe Dry Run Wiring Foundation
+
+### Added
+
+- `scripts/run_retry_runtime.py`の`main()`に`--dry-run`フラグを追加：`argparse`を`main()`内でローカルimportし、
+  `ArgumentParser`で`--dry-run`（`action="store_true"`、デフォルト`False`）を解析する
+- `--dry-run`指定時、`main()`が`[DRY RUN MODE]`を標準出力へ表示する（`format_summary()`は経由しない）
+- `orchestrator.run_once(dry_run=args.dry_run)`（v5.6.0で実装済みの`dry_run`引数）への伝播
+- `docs/design/retry_runtime_safe_dry_run_wiring_foundation.md`新規作成（Architecture Design / Architecture Review。
+  変更範囲を`main()`内部のみへ最小化する4点のユーザー方針判断を含む）
+- `tests/test_e2e_v5_7_0_retry_runtime_safe_dry_run_wiring_foundation.py`新規作成（86件）
+
+### Note
+
+- **`format_summary()`は無改修。** シグネチャ（`(result)`のみ）・実装とも一切変更していない。dry_run表示は
+  `main()`側の`print("[DRY RUN MODE]")`に限定し、Summary生成の責務（`RetryRuntimeCycleResult` → Summary文字列）
+  にCLI都合の情報を持ち込まない設計とした
+- **`RetryRuntimeCycleResult`は無改修。** `dry_run`フィールドは追加していない。CLI都合の情報をDomain側の
+  Resultクラスへ持ち込む設計を避けた
+- **`RetryRuntimeOrchestrator` / `RetryManager` / `RetryExecutor` / `RetryCompositionRoot`はいずれも無改修。**
+  本Releaseの変更対象は`scripts/run_retry_runtime.py`の`main()`内部のみ
+- **`parse_args()`等の関数分離は行わなかった。** `--dry-run`1フラグのみの現時点ではYAGNIを優先し、`main()`内で
+  直接処理する構成を採用した。`--loop` / `--config` / `--interval`等、フラグが複数に増えた時点で再検討する
+- **CLI SummaryへKnown Issueの説明文は表示しない。** `--dry-run`指定時もEnqueueは通常どおり実行される制約
+  （`[KI-23]`）は、CLI出力ではなくdocs（本ファイル・architecture.md・ROADMAP.md）で管理する方針とした
+- 既存13パッケージ（`workflow_monitor` 〜 `retry_runtime_orchestrator`）・他scriptsはいずれも本Releaseでも無改修
+- Technical Debtとして記録（本Release対象外）：`NullRetryEnqueueTrigger.enqueue_pending_failures()`が
+  `max_attempts`引数を持たないシグネチャ不整合。現状`RetryCompositionRoot`が`RetryEnqueueTrigger`を常に実体で
+  構築するため到達不能で実害はないが、将来Null経路が使われる設計変更が入る場合に修正を検討する
+  （`docs/design/retry_runtime_safe_dry_run_wiring_foundation.md` 6章）
+- 対象外（今回は未実装）：Enqueue側のdry_run対応、`--loop`のCLI配線、Exit Code再設計、Summary Formatter抽出
+  （いずれも将来Release候補）
+
+### Tested
+
+- `tests/test_e2e_v5_7_0_retry_runtime_safe_dry_run_wiring_foundation.py`: 86/86 PASS
+  （format_summary()無改修確認、RetryRuntimeCycleResult無改修確認、parse_args()不在確認（YAGNI）、
+  argparseがmain()内のみでimportされることの確認、main()の配線検証（Fake差し替えによるdry_run伝播の
+  モック検証）、`[DRY RUN MODE]`表示の有無確認、実CLIサブプロセス呼び出し（--dry-run有無両方）、
+  副作用ファイル未作成確認、不正環境変数指定時のfail-fast維持確認、Architecture Guard）
+- 既存回帰確認：`tests/test_e2e_v5_4_0_*.py`（66/67 PASS）・`tests/test_e2e_v5_5_0_*.py`（36/37 PASS）・
+  `tests/test_e2e_v5_6_0_*.py`（48/49 PASS）は、いずれも新規1件FAILが`[KI-24]`に記録した意図的なものであることを
+  確認。それ以外の既存46件のE2Eテストファイルはすべて変更前と同一の結果（本Releaseと無関係な既存事象
+  （`[KI-1]`、`v4.8.0`/`v4.9.0`のv5.0.0由来の既存シグネチャ不整合）を除く）
+- 本Releaseによる新規Known Issueは`[KI-23]`・`[KI-24]`の2件
+
 ---
 
 ## [v5.6.0] - 2026-07-12 ★ Retry Runtime Safe Dry Run Foundation
