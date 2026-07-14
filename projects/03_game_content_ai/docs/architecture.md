@@ -2664,3 +2664,101 @@ Foundation・アラートの抑制／重複排除／レート制限（詳細は`
 
 詳細は`docs/design/retry_alert_foundation.md`
 （Architecture Design・Architecture Review「条件付きPASS」反映事項の経緯を含む）を参照。
+
+---
+
+## Retry Notification Foundation層（`src/retry_notification/`、v6.6.0 追加）
+
+v6.5.0が生成する`RetryAlert`**のみ**を入力として受け取り、固定の対応表に基づいて通知要否
+（`RetryNotificationStatus`：`NO_NOTIFICATION` / `NOTIFY`）を判定するだけの新規独立パッケージ
+`src/retry_notification/`（`RetryNotificationStatus` / `RetryNotificationDecision` /
+`RetryNotificationEvaluator`）を追加した。Judgment Only Foundationであり、Runtime・Logger・
+JSONL・Metrics・Monitoring・Alertのいずれへも一切フィードバックを行わない。実際の通知送信
+（Slack／メール等）は実装していない。
+
+```
+RetryAlert（v6.5.0が生成した判定結果。本Foundationの唯一の入力）
+        │
+        ▼
+RetryNotificationEvaluator.evaluate(alert) -> RetryNotificationDecision
+        │
+        ▼
+（呼び出し元は本Releaseでは未定。消費者不在の先行実装。将来はMessage/Channel/Delivery
+ Foundationが消費）
+```
+
+### データフローとimport依存方向（区別して記述）
+
+**データフロー（実行順序）**：`Metrics → Monitoring → Alert → Notification`。処理はこの順で
+実行され、後段は前段の出力を入力として受け取る（Notificationは本パイプラインの4段目）。
+
+**import依存方向（ソースコードの依存関係）**：データフローとは逆向きになる。
+
+```
+retry_notification
+    ↓
+retry_alert
+    ↓
+retry_monitoring
+    ↓
+retry_metrics
+```
+
+`retry_notification`がimportするのは`retry_alert`（`RetryAlert` / `RetryAlertLevel`型の参照のみ）
+と標準ライブラリ（`__future__` / `enum` / `dataclasses`）のみであり、`retry_monitoring` /
+`retry_metrics` / `retry_runtime_logging` / `retry_runtime_orchestrator` / `retry_runtime_loop` /
+`retry_runtime_lock` / `retry_runtime_shutdown` / `retry_engine`（`RetryManager`） /
+`retry_composition`（`RetryCompositionRoot`） / Logger / `scripts/`（CLI） / 外部ライブラリの
+いずれもimportしない。逆方向（`retry_alert → retry_notification`）も発生しない。この契約は
+新規E2Eテストのソースコード走査（import文のAST解析）により機械的に保証する。AST解析は
+絶対importの許可集合チェックに加え、`from ..retry_monitoring import X`のような親パッケージ
+方向（level>=2）の相対importも検出対象とし、同一パッケージ内（level==1）の相対importのみを
+許容する（ChatGPT Code Review指摘反映）。
+
+### 変換規則（Design Contract）・RetryNotificationStatus.NO_NOTIFICATIONの意味
+
+- `RetryNotificationEvaluator`は閾値判定を一切行わない。`RetryAlertEvaluator`（v6.5.0）が既に
+  確定した`level`を、以下の固定対応表に従って`RetryNotificationStatus`へ変換するだけの単純な
+  写像である。`NONE → NO_NOTIFICATION` / `WARNING → NOTIFY` / `CRITICAL → NOTIFY`
+- `RetryNotificationStatus.NO_NOTIFICATION`は「`RetryNotificationEvaluator.evaluate()`が正常に
+  実行・完了した結果、入力された`RetryAlert`が通知対象となる状態ではないことを表す」**正常系の
+  明示値**であり、評価失敗・入力不足・未対応値・処理スキップ・Evaluator未実行のいずれも意味
+  しない。将来の送信処理は`status == NO_NOTIFICATION`の場合に通知を送信してはならない
+- 既知の3 Level（`NONE` / `WARNING` / `CRITICAL`）以外が渡された場合、`NO_NOTIFICATION` /
+  `NOTIFY`のいずれへもフォールバックせず`ValueError`を送出する（Fail Fast契約）。未対応の
+  Levelは正常なデータ状態ではなく「`RetryAlertLevel`拡張への追従漏れ」という契約違反として
+  扱う
+
+### RetryNotificationDecisionの設計判断
+
+- `RetryNotificationDecision`はRelease 6.6では`status`のみを保持するImmutable
+  （frozen dataclass）な値オブジェクトとした。`RetryAlert` / `RetryAlertLevel`は保持・複製
+  しない（呼び出し元が既に`RetryAlert`を保持しているため）。`message` / `channel` /
+  `timestamp`等は将来拡張の対象とし、本Releaseでは実装しない
+- `RetryNotificationEvaluator`はStateless Pure Functionであり、同一の`RetryAlert`に対し常に
+  同一の`RetryNotificationDecision`（既知Levelの場合）または同一の例外（未対応Levelの場合）を
+  返す
+
+### Runtime Pipeline・retry_metrics・retry_monitoring・retry_alertへ一切手を加えない設計判断
+
+`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` /
+`RetryManager` / `RetryCompositionRoot` / `RetryRuntimeCycleLogger`、`src/retry_metrics/`、
+`src/retry_monitoring/`、`src/retry_alert/`（`RetryAlertLevel` / `RetryAlert` /
+`RetryAlertEvaluator`）はいずれも無改修。本Foundationからのフィードバックは一切発生しない。
+
+### 責務境界（Out of Scope）
+
+実際の通知送信（Slack／メール／Webhook等）・メッセージ生成・チャネル選択・重複排除・抑制・
+レート制限・Recovery通知・履歴の永続化・Runtime Wiring・Composition Root Wiring・CLI表示は、
+いずれも本Releaseの対象外である。
+
+### Future Extension
+
+Retry Notification Message Foundation（`RetryNotificationDecision`を入力として通知本文を生成）・
+Retry Notification Channel Foundation（送信先の選択）・Retry Notification Delivery／Sender
+Foundation（実送信）・Retry Notification Suppression／Deduplication／Rate Limit Foundation・
+Retry Alert／Notification CLI Report Wiring Foundation・Runtime／Scheduler Integration（詳細は
+`docs/ROADMAP.md`）。
+
+詳細は`docs/design/retry_notification_foundation.md`
+（Architecture Design・ChatGPT Architecture Review2回の経緯・Design Freezeを含む）を参照。

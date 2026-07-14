@@ -361,6 +361,73 @@
 
 ---
 
+## [v6.6.0] - 2026-07-15 ★ Retry Notification Foundation
+
+### Added
+
+- 新規パッケージ`src/retry_notification/`：v6.5.0が生成する`RetryAlert`**のみ**を入力として
+  受け取り、通知要否（`RetryNotificationDecision`）を判定するだけのJudgment Only Foundation。
+  `RetryNotificationStatus`（`NO_NOTIFICATION` / `NOTIFY`のEnum）・`RetryNotificationDecision`
+  （判定結果、Immutable、`status`のみ保持）・`RetryNotificationEvaluator`（判定、Stateless Pure
+  Function）の3コンポーネントで構成
+- 変換規則（Design Contract）：`NONE → NO_NOTIFICATION` / `WARNING → NOTIFY` /
+  `CRITICAL → NOTIFY`の固定対応表に従って変換するのみで、閾値判定は行わない
+- `tests/test_e2e_v6_6_0_retry_notification_foundation.py`新規作成（20テストシナリオ・
+  135アサーション。ChatGPT Code Review指摘反映：①`retry_alert`の逆依存検査へ`__init__.py`を
+  追加、②AST解析による親パッケージ方向の相対import（level>=2）の検出を追加、③Fail Fast
+  テストの重複アサーションを1シナリオへ統合、④package rootの`__all__`を直接検証するテストを
+  追加）
+- `docs/design/retry_notification_foundation.md`新規作成：Architecture Design・ChatGPT
+  Architecture Review（1回目「Request Changes」・2回目「Approve with Minor Corrections」）・
+  Design Freezeの経緯を含む
+
+### Architecture／Behavior
+
+- `RetryNotificationStatus.NO_NOTIFICATION`は「`RetryNotificationEvaluator.evaluate()`が
+  正常に実行・完了した結果、入力された`RetryAlert`が通知対象となる状態ではないことを表す
+  正常系の明示値」。評価失敗・入力不足・未対応値・処理スキップ・Evaluator未実行のいずれも
+  意味しない（同設計書9章）
+- `RetryNotificationDecision`はfrozen dataclassであり、`status`のみを保持する。`RetryAlert`・
+  `RetryAlertLevel`は保持・複製しない
+- `RetryNotificationEvaluator`は`RetryAlert`のみを入力とするStateless Pure Function。閾値判定は
+  行わない
+- 未対応の`RetryAlertLevel`はフォールバックせず`ValueError`を送出する（Fail Fast契約）
+- `retry_notification`が唯一importする自作パッケージは`retry_alert`のみ。`retry_monitoring` /
+  `retry_metrics` / Runtime系 / `RetryManager` / Logger / CLI（`scripts/`） / 外部ライブラリは
+  いずれもimportしない。`retry_alert`側（`__init__.py`含む全productionモジュール）も
+  `retry_notification`をimportしない（逆依存禁止）。これらの契約は新規E2Eテストのソースコード
+  走査（AST解析。level>=2の親パッケージ方向の相対importも検出対象、ChatGPT Code Review指摘
+  反映）で機械的に保証した
+- 外部I/O・実送信・Runtime Wiring・Composition Root Wiringはいずれも行わない
+- 分類はArchitecture Release。新規パッケージ追加（Layer変更）に加え`retry_alert`への新規import
+  （Dependency変更）を伴うため（`docs/design/retry_notification_foundation.md` 4章）
+- 対象外（今回は未実装）：実際の通知送信（Slack／メール等）、Message生成、Channel選択、
+  Suppression／重複排除／レート制限、Recovery通知、履歴・永続化、Runtime Wiring、
+  Composition Root Wiring、CLI表示（同設計書14章・15章）
+- `RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` /
+  `RetryManager`（`retry_engine`）/ `RetryCompositionRoot` / `RetryRuntimeCycleLogger`
+  （`retry_runtime_logging`）、`src/retry_metrics/` / `src/retry_monitoring/` / `src/retry_alert/`
+  はいずれも無改修。本Releaseにおけるproduction codeの変更は、新規パッケージ
+  `src/retry_notification/`の追加のみ
+- 新規Known Issueなし
+
+### Tested
+
+- `tests/test_e2e_v6_6_0_retry_notification_foundation.py`: 20シナリオ・135アサーション・
+  135/135 PASS（終了コード0、警告なし）
+- 既存回帰確認（いずれもベースラインと同一件数、新規差分なし）：
+  - `tests/test_e2e_v5_9_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_0_0_*.py`：43/43 PASS
+  - `tests/test_e2e_v6_1_0_*.py`：44/44 PASS
+  - `tests/test_e2e_v6_2_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_3_0_*.py`：174/174 PASS
+  - `tests/test_e2e_v6_4_0_*.py`：171/171 PASS
+  - `tests/test_e2e_v6_5_0_*.py`：131/131 PASS
+- Regression合計：691/691 PASS。全Suite終了コード0、ベースライン差なし、警告なし
+- 本Releaseによる新規Known Issue：なし。既存最新Known Issueは`[KI-29]`のまま
+
+---
+
 ## [v6.5.0] - 2026-07-14 ★ Retry Alert Foundation
 
 ### Added

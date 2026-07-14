@@ -605,9 +605,49 @@
 - [x] **Retry Metrics Foundation**：v6.3.0で実装済み。新規パッケージ`src/retry_metrics/`（`RetryRuntimeLogRecord` / `RetryRuntimeLogReader` / `RetryMetricsCalculator` / `RetryMetricsSnapshot`）を追加し、v6.2.0が書き込む`.run/retry_runtime_log.jsonl`を読み取って集計値（`RetryMetricsSnapshot`）を計算するだけのRead Only Foundationとした。集計内容は対象サイクル数・記録期間（timestampのmin/max）・dry_run実行サイクル数・各段階（Enqueue/Scheduler/Execution/Removal/Cleanup/TerminalCleanup/History）の合計値・Enqueue段階の成功率（`enqueue_success_ratio`）に限定した。`RetryMetricsSnapshot`はImmutable（frozen dataclass）とし生成後は変更しない。Retry Runtimeへは一切フィードバックを行わない（Retry Queue更新・`RetryManager`等の変更・Retry実行可否判断・Alert判定はいずれも対象外）。`retry_metrics`は他のどの`retry_*`パッケージもimportせず、ファイルパスとJSON Schemaの「形」のみを契約とする疎結合を採用した。`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` / `RetryManager` / `RetryCompositionRoot` / `RetryRuntimeCycleLogger`はいずれも無改修。当初Fast Track Releaseとして着手指示があったが、新規パッケージ追加（Layer変更）に該当するためArchitecture Releaseへ分類を修正した（`docs/design/retry_metrics_foundation.md`）
 - [x] **Retry Monitoring Foundation**：v6.4.0で実装済み。新規パッケージ`src/retry_monitoring/`（`RetryHealthStatus` / `RetryHealthThresholds` / `RetryHealthReport` / `RetryHealthEvaluator`）を追加し、v6.3.0の`RetryMetricsSnapshot`**のみ**を入力として受け取り、閾値（`degraded_below=0.8` / `unhealthy_below=0.5`）に基づいて健全性ステータス（`HEALTHY` / `DEGRADED` / `UNHEALTHY`）を判定するだけのJudgment Only Foundationとした。`RetryHealthThresholds`はConfigではなくMonitoring DomainのDomain Value（Immutable Value Object、frozen dataclass）と位置づけ、Foundationは固定値を保持する責務のみを持つ。`RetryHealthEvaluator`はThresholdを自ら生成せず、外部から受け取るかDefault Thresholdを使用するのみとした。`RetryHealthReport`はRelease 6.4では`status`のみを保持するImmutable（frozen dataclass）な値オブジェクトとし、`RetryHealthEvaluator`はStateless Pure Function（同一Snapshotに対し常に同一Reportを返す）とした。依存方向は`retry_monitoring → retry_metrics`の一方向のみを許可し、`retry_metrics → retry_monitoring`の逆依存・Runtime／Logger／JSONLへの依存はいずれも禁止し、新規E2Eテストのソースコード走査で機械的に保証した。`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` / `RetryManager` / `RetryCompositionRoot` / `RetryRuntimeCycleLogger`および`src/retry_metrics/`はいずれも無改修（`docs/design/retry_monitoring_foundation.md`）
 - [x] **Retry Alert Foundation**：v6.5.0で実装済み。新規パッケージ`src/retry_alert/`（`RetryAlertLevel` / `RetryAlert` / `RetryAlertEvaluator`）を追加し、v6.4.0の`RetryHealthReport`**のみ**を入力として受け取り、固定の対応表（`HEALTHY → NONE` / `DEGRADED → WARNING` / `UNHEALTHY → CRITICAL`）に基づいてアラートの度合い（`RetryAlertLevel`）を判定するだけのJudgment Only Foundationとした。`RetryAlertEvaluator`は閾値判定を行わず、v6.4.0の`RetryHealthEvaluator`が確定済みのStatusを変換するだけである（Design Contract）。`RetryAlertLevel.NONE`は「評価は正常完了・通知対象なし」を表す正常系の明示値とし、評価失敗・データ不足・不明な状態・処理スキップとは明確に区別した。既知の3 Status以外が渡された場合はフォールバックせず`ValueError`を送出する（Fail Fast契約。ChatGPT Architecture Reviewの「条件付きPASS」指摘を反映）。`RetryAlert`はRelease 6.5では`level`のみを保持するImmutable（frozen dataclass）な値オブジェクトとした。依存方向は`retry_alert → retry_monitoring`の一方向のみを許可し、`retry_monitoring → retry_alert`の逆依存・`retry_metrics`／Runtime／JSONLへの依存はいずれも禁止し、新規E2Eテストのソースコード走査で機械的に保証した。Notification（Slack／メール等への実際の通知）は実装していない（将来のRetry Notification Foundationへ切り出し）。`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` / `RetryManager` / `RetryCompositionRoot` / `RetryRuntimeCycleLogger`および`src/retry_metrics/` / `src/retry_monitoring/`はいずれも無改修（`docs/design/retry_alert_foundation.md`）
-- [ ] **Retry Notification Foundation**（次候補）：v6.5.0の`RetryAlert`を入力として受け取り、`level`が`WARNING`／`CRITICAL`の場合にSlack／メール等の外部サービスへ実際に通知する別パッケージ。`level == NONE`の場合は通知を送信してはならない（v6.5.0設計書4.2節）。データフロー（実行順序）は`Alert → Notification`だが、import依存方向はこれと逆向きになり、`retry_notification → retry_alert`（NotificationがAlertの`RetryAlert`型をimportする方向）が**許可される正しい依存**である。禁止するのは逆方向、すなわち`retry_alert`が`retry_notification`をimportすること（`retry_alert → retry_notification`）である（Code Review指摘反映。旧記述「Notification → Alertへの逆依存は禁止する」は誤りだったため訂正、`docs/design/retry_alert_foundation.md` 2.3節）。外部I/O（Slack API等）を伴うため独立したArchitecture Reviewを要する（同設計書7章）
-- [ ] **Retry Alert CLI/Report Wiring Foundation**：`scripts/show_retry_alert.py`等を新設し、`RetryAlert`を人間可読な形式でコンソール表示する。v6.4.0の11.2節と同型のパターン（`docs/design/retry_alert_foundation.md` 7章）
-- [ ] **アラートの抑制／重複排除／レート制限**：v6.5.0の`RetryAlertEvaluator`はStatelessであり、同一の異常状態が続く限り毎回独立した`RetryAlert`を返す。実際に通知を行うRetry Notification Foundation側で抑制・レート制限を実装する必要がある（`docs/design/retry_alert_foundation.md` 7章・10章）
+- [x] **Retry Notification Foundation**：v6.6.0で実装済み。新規パッケージ`src/retry_notification/`
+  （`RetryNotificationStatus` / `RetryNotificationDecision` / `RetryNotificationEvaluator`）を追加し、
+  v6.5.0の`RetryAlert`**のみ**を入力として受け取り、固定の対応表（`NONE → NO_NOTIFICATION` /
+  `WARNING → NOTIFY` / `CRITICAL → NOTIFY`）に基づいて通知要否（`RetryNotificationStatus`）を判定
+  するだけのJudgment Only Foundationとした。`RetryNotificationEvaluator`は閾値判定を行わず、
+  v6.5.0の`RetryAlertEvaluator`が確定済みの`level`を変換するだけである（Design Contract）。
+  `RetryNotificationStatus.NO_NOTIFICATION`は「評価は正常完了・入力された`RetryAlert`が通知対象と
+  なる状態ではない」ことを表す正常系の明示値とし、評価失敗・入力不足・未対応値・処理スキップ・
+  Evaluator未実行とは明確に区別した。既知の3 Level以外が渡された場合はフォールバックせず
+  `ValueError`を送出する（Fail Fast契約）。`RetryNotificationDecision`は`status`のみを保持する
+  Immutable（frozen dataclass）な値オブジェクトとし、`RetryAlert`／`RetryAlertLevel`は保持・複製
+  しない。依存方向は`retry_notification → retry_alert`の一方向のみを許可し、
+  `retry_alert → retry_notification`の逆依存・`retry_monitoring`／`retry_metrics`／Runtime系／
+  外部ライブラリへの依存はいずれも禁止し、新規E2Eテストのソースコード走査（AST解析ベース。
+  level>=2の親パッケージ方向の相対importも検出対象、ChatGPT Code Review指摘反映）で機械的に
+  保証した。実際の通知送信（Slack／メール等）・Message生成・Channel選択・Suppression／
+  重複排除／レート制限は実装していない（将来の後続Foundationへ切り出し）。
+  `RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` /
+  `RetryManager` / `RetryCompositionRoot` / `RetryRuntimeCycleLogger`および`src/retry_metrics/` /
+  `src/retry_monitoring/` / `src/retry_alert/`はいずれも無改修（`docs/design/retry_notification_foundation.md`）
+- [ ] **Retry Notification Message Foundation**（次候補）：v6.6.0の`RetryNotificationDecision`
+  （`status`のみ）を入力として、通知本文（メッセージ）を生成する別パッケージ。
+  `status == NOTIFY`の場合のみメッセージを生成する想定（`docs/design/retry_notification_foundation.md` 21章）
+- [ ] **Retry Notification Channel Foundation**（次候補）：Message Foundationが生成した通知内容を
+  どの通知先（Slack／メール等）へ送るか選択する別パッケージ（同設計書21章）
+- [ ] **Retry Notification Delivery／Sender Foundation**（次候補）：Channel Foundationが選択した
+  送信先へ実際に外部I/Oで送信する別パッケージ。外部I/O（Slack API等）を伴うため独立した
+  Architecture Reviewを要する（同設計書15章・21章）
+- [ ] **Retry Notification Suppression／Deduplication／Rate Limit Foundation**：v6.6.0の
+  `RetryNotificationEvaluator`はStatelessであり、同一の異常状態が続く限り毎回独立した`NOTIFY`
+  判定を返す。実際に通知を行う後続Foundation側で抑制・重複排除・レート制限を実装する必要がある。
+  `RetryNotificationStatus`へ`SUPPRESSED`等の値を追加する拡張とするか、別型
+  （`RetryDeliveryDecision`等）を新設し`RetryNotificationDecision`を入力とする状態付きの追加判定と
+  するかは、本項目を実際に設計するReleaseで要件が明らかになった時点でArchitecture Reviewを経て
+  決定する（本Releaseでは未確定のまま。同設計書21章）
+- [ ] **Retry Alert／Notification CLI Report Wiring Foundation**：`scripts/show_retry_alert.py` /
+  `scripts/show_retry_notification.py`等を新設し、`RetryAlert` / `RetryNotificationDecision`を
+  人間可読な形式でコンソール表示する。v6.4.0の11.2節と同型のパターン
+  （`docs/design/retry_alert_foundation.md` 7章、`docs/design/retry_notification_foundation.md` 15章）
+- [ ] **Runtime／Scheduler Integration**：`Metrics → Monitoring → Alert → Notification`パイプライン
+  全体をRetry Runtimeへ実際に配線し、定期的に評価が回るようにするComposition Root配線。v6.3.0
+  （Metrics）〜v6.6.0（Notification）はいずれも「消費者不在の先行実装」であり、本項目が初めて
+  実際の消費者を作る
 - [ ] **Retry Monitoring CLI/Report Wiring Foundation**：`scripts/show_retry_health.py`等を新設し、`RetryHealthReport`を人間可読な形式でコンソール表示する。v5.3.0/v5.4.0の分離と同型のパターン（`docs/design/retry_monitoring_foundation.md` 11.2節）
 - [ ] **閾値の外部設定化**：`RetryHealthThresholds`（v6.4.0時点ではコード上の固定デフォルト値）を環境変数または設定ファイルから読み込めるようにする。設定ファイルの読み込みは新しい外部I/O・永続化変更に該当する可能性があるため独立したArchitecture Reviewを要する（`docs/design/retry_monitoring_foundation.md` 11.3節）
 - [ ] **複数指標に基づく総合判定**：v6.4.0の`RetryHealthEvaluator`は`enqueue_success_ratio`のみを参照する単一指標判定。`RetryMetricsSnapshot`が保持する他のフィールド（`enqueue_failed_total`等）を組み合わせた総合判定へ拡張するかどうかは、Retry Runtime Log Schema Extensionの進捗と合わせて検討する（`docs/design/retry_monitoring_foundation.md` 11.4節）
