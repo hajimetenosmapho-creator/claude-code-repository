@@ -2592,3 +2592,75 @@ Retry Alert Foundation（`RetryHealthReport`の`status`が`DEGRADED`／`UNHEALTH
 
 詳細は`docs/design/retry_monitoring_foundation.md`
 （Architecture Design・Architecture Review反映事項の経緯を含む）を参照。
+
+---
+
+## Retry Alert Foundation層（`src/retry_alert/`、v6.5.0 追加）
+
+v6.4.0が生成する`RetryHealthReport`**のみ**を入力として受け取り、固定の対応表に基づいて
+アラートの度合い（`RetryAlertLevel`：`NONE` / `WARNING` / `CRITICAL`）を判定するだけの新規独立
+パッケージ`src/retry_alert/`（`RetryAlertLevel` / `RetryAlert` / `RetryAlertEvaluator`）を追加した。
+Judgment Only Foundationであり、Runtime・Logger・JSONL・Metrics・Monitoringのいずれへも一切
+フィードバックを行わない。Notification（Slack／メール等への実際の通知）は実装していない。
+
+```
+RetryHealthReport（v6.4.0が生成した判定結果。本Foundationの唯一の入力）
+        │
+        ▼
+RetryAlertEvaluator.evaluate(report) -> RetryAlert
+        │
+        ▼
+（呼び出し元は本Releaseでは未定。消費者不在の先行実装。将来はNotification Foundationが消費）
+```
+
+### データフローとimport依存方向（区別して記述）
+
+**データフロー（実行順序）**：`Metrics → Monitoring → Alert → Notification`（将来）。処理はこの順で
+実行され、後段は前段の出力を入力として受け取る。
+
+**import依存方向（ソースコードの依存関係）**：データフローとは逆向きになる。`retry_alert`がimportする
+のは`retry_monitoring`（`RetryHealthReport` / `RetryHealthStatus`型の参照のみ）と標準ライブラリ
+（`enum` / `dataclasses`）のみであり、`retry_metrics` / `retry_runtime_logging` /
+`retry_runtime_orchestrator` / `retry_runtime_loop` / `retry_runtime_lock` /
+`retry_runtime_shutdown` / `retry_engine` / `retry_composition`のいずれもimportしない。逆方向
+（`retry_monitoring → retry_alert`）も発生しない。将来のRetry Notification Foundationは`RetryAlert`
+型を参照するために`retry_notification → retry_alert`というimport依存を持つ想定であり、これは
+**許可される正しい方向**である。禁止されるのは逆方向、すなわち`retry_alert`が`retry_notification`を
+importすること（`retry_alert → retry_notification`）である。この契約は新規E2Eテストのソースコード
+走査（import文の検出・`open(`/`pathlib.Path`/`.jsonl`という文字列の不在確認）により機械的に保証する。
+
+### 変換規則（Design Contract）・RetryAlertLevel.NONEの意味
+
+- `RetryAlertEvaluator`は閾値判定を一切行わない。`RetryHealthEvaluator`（v6.4.0）が既に確定した
+  `status`を、以下の固定対応表に従って`RetryAlertLevel`へ変換するだけの単純な写像である。
+  `HEALTHY → NONE` / `DEGRADED → WARNING` / `UNHEALTHY → CRITICAL`
+- `RetryAlertLevel.NONE`は「健康状態の評価は正常に完了したが、通知対象となるAlertは存在しない」
+  ことを表す**正常系の明示値**であり、評価失敗・データ不足・不明な状態・処理スキップのいずれも
+  意味しない。将来のNotification実装は`NONE`の場合に通知を送信してはならない
+- 既知の3 Status（`HEALTHY` / `DEGRADED` / `UNHEALTHY`）以外が渡された場合、`RetryAlertLevel.NONE`
+  等へフォールバックせず`ValueError`を送出する（Fail Fast契約）。未対応のStatusは正常なデータ状態
+  ではなく「`RetryHealthStatus`拡張への追従漏れ」という契約違反として扱う
+
+### RetryAlertの設計判断
+
+- `RetryAlert`はRelease 6.5では`level`のみを保持するImmutable（frozen dataclass）な値オブジェクト
+  とした。`message` / `triggered_at` / `source_report`等は将来拡張の対象とし、本Releaseでは実装
+  しない
+- `RetryAlertEvaluator`はStateless Pure Functionであり、同一の`RetryHealthReport`に対し常に同一の
+  `RetryAlert`（既知Statusの場合）または同一の例外（未対応Statusの場合）を返す
+
+### Runtime Pipeline・retry_metrics・retry_monitoringへ一切手を加えない設計判断
+
+`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` /
+`RetryManager` / `RetryCompositionRoot` / `RetryRuntimeCycleLogger`、`src/retry_metrics/`、
+`src/retry_monitoring/`（`RetryHealthStatus` / `RetryHealthThresholds` / `RetryHealthReport` /
+`RetryHealthEvaluator`）はいずれも無改修。本Foundationからのフィードバックは一切発生しない。
+
+### Future Extension
+
+Retry Notification Foundation（`RetryAlert.level`が`WARNING`／`CRITICAL`の場合にSlack／メール等へ
+実際に通知する別パッケージ。`level == NONE`の場合は通知しない）・Retry Alert CLI/Report Wiring
+Foundation・アラートの抑制／重複排除／レート制限（詳細は`docs/ROADMAP.md`）。
+
+詳細は`docs/design/retry_alert_foundation.md`
+（Architecture Design・Architecture Review「条件付きPASS」反映事項の経緯を含む）を参照。

@@ -361,6 +361,83 @@
 
 ---
 
+## [v6.5.0] - 2026-07-14 ★ Retry Alert Foundation
+
+### Added
+
+- 新規パッケージ`src/retry_alert/`：v6.4.0が生成する`RetryHealthReport`**のみ**を入力として
+  受け取り、アラートの度合い（`RetryAlert`）を判定するだけのJudgment Only Foundation。
+  `RetryAlertLevel`（`NONE` / `WARNING` / `CRITICAL`のEnum）・`RetryAlert`（判定結果、Immutable、
+  `level`のみ保持）・`RetryAlertEvaluator`（判定、Stateless Pure Function）の3コンポーネントで構成
+- 変換規則（Design Contract）：`HEALTHY → NONE` / `DEGRADED → WARNING` / `UNHEALTHY → CRITICAL`の
+  固定対応表に従って変換するのみで、閾値判定は行わない
+- `tests/test_e2e_v6_5_0_retry_alert_foundation.py`新規作成（15テストシナリオ・131アサーション。
+  Code Review指摘反映：既存コンポーネントの無改修確認（Zero Diff、`git diff --quiet`ベース）は
+  恒久的なE2Eテストに含めず、Release Reviewにおいて`git diff --name-status` / `git status --short`
+  で個別に確認する方針へ変更した）
+
+### Note
+
+- **Judgment Only Foundationである。** Runtime・Metrics・Monitoring側へ一切フィードバックを行わない
+  （Retry Queueの更新・`RetryManager`等の変更・Runtime Pipeline各コンポーネントの変更・Schedulerへの
+  通知・Retry実行可否の判断・通知の送信のいずれも行わない、`docs/design/retry_alert_foundation.md`
+  1章）
+- **`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` /
+  `RetryManager`（`retry_engine`）/ `RetryCompositionRoot` / `RetryRuntimeCycleLogger`
+  （`retry_runtime_logging`）および`src/retry_metrics/` / `src/retry_monitoring/`はいずれも無改修。**
+  本Releaseにおけるproduction codeの変更は、新規パッケージ`src/retry_alert/`の追加のみ。既存の
+  `src/`配下のコードは無改修（Code Review指摘反映：ドキュメント・テストファイルの追加/更新は
+  別途`docs/CHANGELOG.md`の他項目・`tests/`欄で記載する）
+- **`retry_alert`が唯一importする自作パッケージは`retry_monitoring`（`RetryHealthReport` /
+  `RetryHealthStatus`型の参照のみ）。** `retry_metrics`・Runtime系パッケージ・Loggerはいずれも
+  importしない。`retry_monitoring`側も`retry_alert`をimportしない（逆依存禁止）。これらの契約は
+  新規E2Eテストのソースコード走査（import文の検出、`open(` / `pathlib.Path` / `.jsonl`という
+  文字列リテラルの不在確認）で機械的に保証した
+- **`RetryAlertLevel.NONE`は「健康状態の評価は正常に完了したが、通知対象となるAlertは存在しない」
+  ことを表す正常系の明示値。** 評価失敗・データ不足・不明な状態・処理スキップのいずれも意味しない。
+  将来のNotification実装は`level == NONE`の場合に通知を送信してはならない（ChatGPT Architecture
+  Review「条件付きPASS」指摘反映、同設計書4.2節）
+- **未対応のStatus（既知の3値以外）はフォールバックせず`ValueError`を送出する（Fail Fast契約）。**
+  `RetryHealthStatus`拡張への追従漏れという契約違反を、あたかも正常系（アラートなし）であるかの
+  ように隠蔽しないための設計判断（ChatGPT Architecture Review「条件付きPASS」指摘反映、同設計書
+  4.3節）
+- **`RetryAlertEvaluator`はStateless Pure Function。** 同一の`RetryHealthReport`を渡した場合、常に
+  同一の`RetryAlert`（既知Statusの場合）または同一の例外（未対応Statusの場合）を返すことを新規
+  E2Eテストで確認した
+- 分類はArchitecture Release。新規パッケージ追加（Layer変更）に加え`retry_monitoring`への新規import
+  （Dependency変更）を伴うため（`docs/design/retry_alert_foundation.md` 表紙）
+- 対象外（今回は未実装）：Notification本体（Slack／メール等への実際の通知）、CLI表示・
+  ダッシュボード化、アラートの抑制・重複排除・レート制限、アラート履歴の永続化、
+  `RetryCompositionRoot`への配線。データフロー（実行順序）は`Alert → Notification`だが、import依存
+  方向はこれと逆向きであり、`retry_notification → retry_alert`（NotificationがAlertの`RetryAlert`型を
+  importする方向）が許可される正しい依存、`retry_alert → retry_notification`（Alertが逆にNotification
+  をimportする方向）が禁止される依存であると設計書で確定済み（Code Review指摘反映、同設計書2.3節）
+- 新規Known Issueなし
+
+### Tested
+
+- `tests/test_e2e_v6_5_0_retry_alert_foundation.py`: 131/131 PASS
+  （`RetryAlertLevel`の3値確認、`RetryAlert`のImmutability・保持フィールドが`level`のみである
+  ことの確認、変換規則の網羅的確認（`HEALTHY→NONE` / `DEGRADED→WARNING` / `UNHEALTHY→CRITICAL`）、
+  未対応Statusに対する`ValueError`送出確認（フォールバックしないことの確認を含む）、
+  `RetryAlertLevel.NONE`がTotal Functionとして返ることの確認、Stateless Pure Function確認
+  （同一Reportへの複数回呼び出し・複数インスタンス間での結果一致）、Dependency Rule確認
+  （`retry_metrics`/Runtime/Logger系パッケージへの非依存・ファイルI/O関連コードの不在・
+  `retry_monitoring`からの逆依存不在）、`RetryRuntimeLogReader` → `RetryMetricsCalculator` →
+  `RetryHealthEvaluator` → `RetryAlertEvaluator`の統合確認。既存コンポーネントの無改修確認
+  （Zero Diff）はCode Review指摘によりE2Eテストから削除し、下記Release Reviewの`git diff
+  --name-status` / `git status --short`で別途確認する
+- 既存回帰確認（いずれもベースラインと同一件数、新規差分なし）：
+  - `tests/test_e2e_v5_9_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_0_0_*.py`：43/43 PASS
+  - `tests/test_e2e_v6_1_0_*.py`：44/44 PASS
+  - `tests/test_e2e_v6_2_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_3_0_*.py`：174/174 PASS
+  - `tests/test_e2e_v6_4_0_*.py`：171/171 PASS
+- 本Releaseによる新規Known Issue：なし
+
+---
+
 ## [v6.4.0] - 2026-07-14 ★ Retry Monitoring Foundation
 
 ### Added
