@@ -361,6 +361,74 @@
 
 ---
 
+## [v6.4.0] - 2026-07-14 ★ Retry Monitoring Foundation
+
+### Added
+
+- 新規パッケージ`src/retry_monitoring/`：v6.3.0が生成する`RetryMetricsSnapshot`**のみ**を入力として
+  受け取り、健全性ステータス（`RetryHealthReport`）を判定するだけのJudgment Only Foundation。
+  `RetryHealthStatus`（`HEALTHY` / `DEGRADED` / `UNHEALTHY`のEnum）・`RetryHealthThresholds`
+  （閾値、Immutable Value Object／Domain Value）・`RetryHealthReport`（判定結果、Immutable）・
+  `RetryHealthEvaluator`（判定、Stateless Pure Function）の4コンポーネントで構成
+- 判定基準：`enqueue_success_ratio`が`unhealthy_below`（デフォルト0.5）未満なら`UNHEALTHY`、
+  `degraded_below`（デフォルト0.8）未満なら`DEGRADED`、それ以外は`HEALTHY`。`ratio`が`None`
+  （対象サイクル0件等で算出不能）の場合は閾値判定を行わず`HEALTHY`を返す
+- `tests/test_e2e_v6_4_0_retry_monitoring_foundation.py`新規作成（20テストシナリオ・171アサーション）
+
+### Note
+
+- **Judgment Only Foundationである。** Runtime・Metrics側へ一切フィードバックを行わない（Retry
+  Queueの更新・`RetryManager`等の変更・Runtime Pipeline各コンポーネントの変更・Schedulerへの通知・
+  Retry実行可否の判断・通知の送信のいずれも行わない、`docs/design/retry_monitoring_foundation.md`
+  4.1節）
+- **`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` /
+  `RetryManager`（`retry_engine`）/ `RetryCompositionRoot` / `RetryRuntimeCycleLogger`
+  （`retry_runtime_logging`）および`src/retry_metrics/`はいずれも無改修。** 本Releaseの変更対象は
+  新規パッケージ`src/retry_monitoring/`のみ
+- **`retry_monitoring`が唯一importする自作パッケージは`retry_metrics`（`RetryMetricsSnapshot`型の
+  参照のみ）。** Runtime系パッケージ・Loggerはいずれもimportせず、`.run/retry_runtime_log.jsonl`
+  というファイルパスの存在自体を一切知らない。`retry_metrics`側も`retry_monitoring`をimportしない
+  （逆依存禁止）。これらの契約は新規E2Eテストのソースコード走査（import文の検出、`open(` /
+  `pathlib.Path` / `.jsonl`という文字列リテラルの不在確認）で機械的に保証した
+- **`RetryHealthThresholds`はConfigではなくDomain Value。** `frozen=True`のdataclassとして実装し、
+  Foundationは固定値を保持する責務のみを持つ。`RetryHealthEvaluator`はThresholdを自ら生成せず、
+  Constructor Injectionで外部から受け取るか未指定時はDefault Thresholdを使用するのみとした
+  （Architecture Review反映、`docs/design/retry_monitoring_foundation.md` 6.5節 Architecture
+  Decision AD-1・AD-2）
+- **`RetryHealthReport`はRelease 6.4では`status`のみを保持する。** `reason` / `warnings` /
+  `details`（または`violations`）等の診断情報は将来拡張の対象とし、本Releaseでは追加実装しない
+  （Architecture Review反映、同設計書11.5節）
+- **`RetryHealthEvaluator`はStateless Pure Function。** 同一の`RetryMetricsSnapshot`を渡した場合、
+  常に同一の`RetryHealthReport`を返すことを新規E2Eテストで確認した（Architecture Review反映）
+- 分類はArchitecture Release。新規パッケージ追加（Layer変更）に加え`retry_metrics`への新規import
+  （Dependency変更）を伴うため（`docs/design/retry_monitoring_foundation.md` 0章）
+- 対象外（今回は未実装）：`scripts/`エントリーポイント・CLI表示、Alert本体（Slack／メール等への
+  通知）、閾値の外部設定化・動的変更、複数指標に基づく総合判定、`RetryHealthReport`への
+  `reason`/`warnings`/`details`追加。Retry Alert Foundationは`Monitoring → Alert`の一方向依存のみを
+  許可する境界を設計書で確定済み（同設計書11.1節）
+- 新規Known Issueなし
+
+### Tested
+
+- `tests/test_e2e_v6_4_0_retry_monitoring_foundation.py`: 171/171 PASS
+  （`RetryHealthStatus`の3値確認、`RetryHealthThresholds`のデフォルト値・Immutability確認、
+  `RetryHealthReport`のImmutability・保持フィールドが`status`のみであることの確認、
+  `RetryHealthEvaluator`の閾値境界値確認（`ratio=None` / 境界値0.8・0.5前後 / カスタム
+  Thresholds / デフォルトThreshold）、Stateless Pure Function確認（同一Snapshotへの複数回呼び出し・
+  複数インスタンス間での結果一致）、Dependency Rule確認（Runtime/Logger系パッケージへの非依存・
+  ファイルI/O関連コードの不在・`retry_metrics`からの逆依存不在）、`RetryRuntimeLogReader` →
+  `RetryMetricsCalculator` → `RetryHealthEvaluator`の統合確認、Runtime Pipeline・`retry_metrics`
+  計9コンポーネントの無改修確認）
+- 既存回帰確認（いずれもベースラインと同一件数、新規差分なし）：
+  - `tests/test_e2e_v5_9_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_0_0_*.py`：43/43 PASS
+  - `tests/test_e2e_v6_1_0_*.py`：44/44 PASS
+  - `tests/test_e2e_v6_2_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_3_0_*.py`：174/174 PASS
+- 本Releaseによる新規Known Issue：なし
+
+---
+
 ## [v6.3.0] - 2026-07-14 ★ Retry Metrics Foundation
 
 ### Added
