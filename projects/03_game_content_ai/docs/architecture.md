@@ -2389,3 +2389,79 @@ Stale Lock Recovery Foundation・Graceful Shutdown Foundation・Windows Service 
 
 詳細は`docs/design/retry_runtime_lock_foundation.md`
 （Architecture Design・Architecture Review・Code Reviewの経緯を含む）を参照。
+
+---
+
+## Graceful Shutdown Foundation層（`src/retry_runtime_shutdown/`、v6.1.0 追加）
+
+`--loop`実行中のRetry Runtimeに対するGraceful Shutdown（実行中サイクルは完了させたうえで、次のサイクルを
+開始せず終了する）のみを行う新規独立パッケージ`src/retry_runtime_shutdown/`（`RetryRuntimeShutdown`）を
+追加した。`scripts/run_retry_runtime.py`の変更のみで配線が完結し、既存15パッケージ
+（`workflow_monitor` 〜 `retry_runtime_lock`）はいずれも無改修。
+
+```
+CLI → argparse（既存、無変更）
+    → RetryRuntimeLock(lock_path).acquire()（v6.0.0、既存）
+         → [--loop の場合のみ] RetryRuntimeShutdown().install()
+              → RetryCompositionRoot.from_env()                    ← 無改修
+              → RetryRuntimeOrchestrator.from_composition_root()   ← 無改修
+              → RetryRuntimeLoop(                                  ← 無改修
+                    run_once_fn=run_cycle,
+                    sleep_fn=shutdown.interruptible_sleep,   ← 差し替え
+                    should_continue_fn=shutdown.should_continue, ← 差し替え
+                    interval_seconds=interval_seconds,
+                 ).run()
+              → シグナル受信 → 実行中サイクルは完了 → 待機を早期終了
+              → should_continue_fn() が False → loop.run() が正常return
+              → shutdown.requested を見て終了メッセージ表示
+         → lock.release()（with文により保証、v6.0.0のまま）
+```
+
+### RetryRuntimeLoopへ一切手を加えない設計判断
+
+`RetryRuntimeLoop`（v5.5.0）は元々`should_continue_fn` / `sleep_fn`という2つのDIシームを持っていた
+（`--loop`配線時点では`lambda: True` / `time.sleep`が渡されていた）。本Releaseはこの2つのシームへ
+`RetryRuntimeShutdown`のメソッドをそのまま渡すだけで、**`RetryRuntimeLoop`自体には一切手を加えていない**。
+`RetryRuntimeLoop`は`RetryRuntimeShutdown`の存在を一切知らず、`RetryRuntimeShutdown`も`RetryRuntimeLoop`の
+存在を一切知らない。両者はDI（Constructor Injectionされた関数参照）のみで接続される。
+
+### サイクル途中で打ち切らない設計
+
+シグナルハンドラ（`_handle()`）はフラグを立てるのみで、例外を送出しない。これにより、Pythonの
+デフォルト動作（SIGINT受信時に非同期で`KeyboardInterrupt`を送出し、`run_once_fn()`実行中を
+中断しうる）を意図的に上書きし、実行中のサイクルを最後まで完了させてから停止する、という
+「Graceful」な停止を実現している。
+
+### 待機の早期終了
+
+`sleep_fn`を`time.sleep`から`RetryRuntimeShutdown.interruptible_sleep`（ポーリング間隔0.5秒単位で
+停止要求を確認する）へ差し替えたことで、シグナル受信からプロセス終了までの間、旧来の
+`interval_seconds`（デフォルト60秒、長時間運用ではさらに長い場合もある）を待たされることがなくなった。
+`should_continue_fn`のみを差し替えて`sleep_fn`を`time.sleep`のままにする代替案も検討したが、
+応答性の悪さ（最大`interval_seconds`の待ち時間）が「Graceful」の趣旨に反するため不採用とした
+（設計書§7 Alternatives Considered 2番）。
+
+### Windowsでの強制終了は対象外（Known Risk）
+
+Windowsの`taskkill /F`・タスクマネージャーの「タスクの終了」は`TerminateProcess`を直接呼び出すため、
+いかなるプロセスもこれを検知・介入することは原理的にできない。本Foundationが確実に対応できるのは、
+フォアグラウンドのCtrl+C（SIGINT）・Ctrl+Break（SIGBREAK、Windows実機での動作を実測確認済み）、
+および同一プロセス内から送出されたシグナルに限られる。SIGTERMハンドラも登録するが、Windowsで
+他プロセスから送出された場合は`TerminateProcess`相当となりハンドラは呼ばれない（POSIX環境への
+移植性のために登録している）。
+
+### 既存テストファイルへの影響（Known Issue）
+
+`--loop`実行時の`sleep_fn`が`time.sleep`から`RetryRuntimeShutdown.interruptible_sleep`へ変わったため、
+`scripts/run_retry_runtime.py`の`time`属性を直接monkeypatchしていた既存テスト
+（`tests/test_e2e_v5_9_0_*.py` / `tests/test_e2e_v6_0_0_*.py`）の一部が実行不能になった
+（`docs/CHANGELOG.md` `[KI-29]`）。本Releaseの新規テストでは、`RetryRuntimeShutdown`クラス自体を
+Fakeへ差し替える方式に切り替えることでこの問題を回避している。
+
+### Future Extension
+
+Stale Lock Recovery Foundation・Windows Service Foundation / 実Daemon化・単発実行時のシグナル処理・
+二重シグナルによる強制終了エスケープハッチ（詳細は`docs/ROADMAP.md`）。
+
+詳細は`docs/design/retry_runtime_graceful_shutdown_foundation.md`
+（Architecture Design・Architecture Review反映事項3件の経緯を含む）を参照。

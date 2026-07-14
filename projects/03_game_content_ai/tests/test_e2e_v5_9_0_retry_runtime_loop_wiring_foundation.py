@@ -1,6 +1,16 @@
 """
 E2E テスト: v5.9.0 Retry Runtime Loop Wiring Foundation
 
+注意（Release 6.1 Regression Test Maintenance対応、2026-07-14）:
+    v6.1.0（Graceful Shutdown Foundation）で、--loop実行時にRetryRuntimeLoopへ渡す
+    sleep_fnがtime.sleep直結からRetryRuntimeShutdown.interruptible_sleep経由へ変更された
+    （docs/CHANGELOG.md [KI-29]）。これに伴い、本テストのrun_main_with_argv()ヘルパーは、
+    run_retry_runtime.time.sleepの直接monkeypatchから、run_retry_runtime.RetryRuntimeShutdown
+    クラス自体をFakeへ差し替える方式へ変更した（Implementation Detailへの追従のみ。
+    テスト意図・カバレッジ・Assertion・テストシナリオは維持している）。テスト13のみ、
+    確認対象の文字列リテラルをsleep_fn=time.sleepからsleep_fn=shutdown.interruptible_sleepへ
+    更新した（本番コードの変更なし）。
+
 テストシナリオ（docs/design/retry_runtime_loop_wiring_foundation.md 対応）:
     ── CLI / argparse ──
     1.  引数なしでは従来どおり単発実行（run_once(dry_run=False)が1回だけ呼ばれる）
@@ -17,7 +27,9 @@ E2E テスト: v5.9.0 Retry Runtime Loop Wiring Foundation
     ── Loop Wiring ──
     11. 既存RetryRuntimeLoop（本番クラス）がそのまま使用される（identity確認）
     12. run_once_fnとして薄いcycle関数が注入される（構造確認）
-    13. sleep_fnとしてtime.sleepが渡される（構造確認・実際の呼び出し確認）
+    13. sleep_fnとしてRetryRuntimeShutdown.interruptible_sleepが渡される（構造確認・実際の呼び出し確認。
+        v6.1.0でtime.sleep直結からRetryRuntimeShutdown.interruptible_sleep経由へ変更されたことに伴い、
+        本テストの期待値をImplementation Detailの変更へ追従させた。docs/CHANGELOG.md [KI-29]参照）
     14. should_continue_fnはLoop継続を可能にする（複数サイクルの実行で確認）
     15. 各サイクルでorchestrator.run_once()が呼ばれる
     16. 各サイクルでformat_summary()が呼ばれる
@@ -173,25 +185,74 @@ def _make_counting_sleep(raise_after=None, raise_exc=None):
     return _sleep
 
 
+class _FakeShutdown:
+    """
+    テスト用Fake：run_retry_runtime.RetryRuntimeShutdownへ差し替える（Release 6.1
+    Regression Test Maintenance）。install()/uninstall()は記録のみのno-op。
+    interruptible_sleep()は、run_main_with_argv()から渡されたsleep_fn（従来どおり
+    _make_counting_sleep()が返す関数）へそのまま委譲する。これにより、v6.1.0で
+    sleep_fnの実体がtime.sleepからRetryRuntimeShutdown.interruptible_sleepへ変わった
+    後も、本ファイルの各テストが使う「sleep呼び出し回数でSentinel例外を送出する」
+    という既存のテスト手法をそのまま流用できる。
+    """
+
+    def __init__(self, poll_interval_seconds: float = 0.5):
+        self.installed = False
+        self.uninstalled = False
+        self.sleep_fn = None
+        self._requested = False
+        self._signal_name = None
+
+    def install(self) -> None:
+        self.installed = True
+
+    def uninstall(self) -> None:
+        self.uninstalled = True
+
+    @property
+    def requested(self) -> bool:
+        return self._requested
+
+    @property
+    def signal_name(self):
+        return self._signal_name
+
+    def should_continue(self) -> bool:
+        return not self._requested
+
+    def interruptible_sleep(self, seconds: float) -> None:
+        if self.sleep_fn is not None:
+            self.sleep_fn(seconds)
+
+
 def run_main_with_argv(argv, sleep_fn=None, raise_on_call=None, raise_exception=None):
     """
-    main()をFakeのCompositionRoot/Orchestratorに差し替えて実行するテストヘルパー。
+    main()をFakeのCompositionRoot/Orchestrator/RetryRuntimeShutdownに差し替えて実行する
+    テストヘルパー。
 
     RetryRuntimeLoop自体はモックしない（本番クラスをそのまま使用する）。sleep_fnを
-    渡した場合のみ run_retry_runtime.time.sleep を差し替え、無限Loopに陥らないよう
-    有限回でSentinel例外を送出させる。
+    渡した場合、_FakeShutdown.interruptible_sleep()がそれをそのまま呼び出す形で、
+    無限Loopに陥らないよう有限回でSentinel例外を送出させる（v6.1.0でsleep_fnの実体が
+    RetryRuntimeShutdown.interruptible_sleepへ変わったことへの追従。本番コードは
+    RetryRuntimeShutdownを直接importして使うが、本ヘルパーはそのクラス参照自体を
+    _FakeShutdownへ差し替える）。
     """
     _FakeOrchestrator.calls = []
     _FakeOrchestrator.raise_on_call = raise_on_call
     _FakeOrchestrator.raise_exception = raise_exception
     original_root = run_retry_runtime.RetryCompositionRoot
     original_orchestrator = run_retry_runtime.RetryRuntimeOrchestrator
-    original_sleep = run_retry_runtime.time.sleep
+    original_shutdown_cls = run_retry_runtime.RetryRuntimeShutdown
     original_argv = sys.argv
+
+    def _shutdown_factory(*factory_args, **factory_kwargs):
+        fake = _FakeShutdown(*factory_args, **factory_kwargs)
+        fake.sleep_fn = sleep_fn
+        return fake
+
     run_retry_runtime.RetryCompositionRoot = _FakeCompositionRoot
     run_retry_runtime.RetryRuntimeOrchestrator = _FakeOrchestrator
-    if sleep_fn is not None:
-        run_retry_runtime.time.sleep = sleep_fn
+    run_retry_runtime.RetryRuntimeShutdown = _shutdown_factory
     sys.argv = ["run_retry_runtime.py"] + argv
     buf = io.StringIO()
     raised = None
@@ -203,7 +264,7 @@ def run_main_with_argv(argv, sleep_fn=None, raise_on_call=None, raise_exception=
     finally:
         run_retry_runtime.RetryCompositionRoot = original_root
         run_retry_runtime.RetryRuntimeOrchestrator = original_orchestrator
-        run_retry_runtime.time.sleep = original_sleep
+        run_retry_runtime.RetryRuntimeShutdown = original_shutdown_cls
         sys.argv = original_argv
     return buf.getvalue(), raised
 
@@ -346,10 +407,13 @@ check_contains("12. run_cycleがformat_summary()を呼ぶ", main_source_12, "for
 print()
 
 
-print("[テスト13] sleep_fnとしてtime.sleepが渡される")
+print("[テスト13] sleep_fnとしてRetryRuntimeShutdown.interruptible_sleepが渡される（v6.1.0追従）")
 
-check_contains("13. RetryRuntimeLoop構築でsleep_fn=time.sleepが指定される", main_source_12, "sleep_fn=time.sleep")
-check("13. 実際にrun_retry_runtime.time.sleep経由でsleepが呼ばれる（テスト5で確認済み）", sleep_5.calls, [60.0])
+check_contains(
+    "13. RetryRuntimeLoop構築でsleep_fn=shutdown.interruptible_sleepが指定される",
+    main_source_12, "sleep_fn=shutdown.interruptible_sleep",
+)
+check("13. 実際にRetryRuntimeShutdown.interruptible_sleep経由でsleepが呼ばれる（テスト5で確認済み）", sleep_5.calls, [60.0])
 print()
 
 

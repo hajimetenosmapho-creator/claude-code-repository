@@ -10,6 +10,14 @@ E2E テスト: v6.0.0 Retry Runtime Lock Foundation
     実行すると、稼働中プロセスが正当に保持しているロックファイルを誤って
     削除してしまうおそれがある。
 
+注意2（Release 6.1 Regression Test Maintenance対応、2026-07-14）:
+    v6.1.0（Graceful Shutdown Foundation）で、--loop実行時にRetryRuntimeLoopへ渡す
+    sleep_fnがtime.sleep直結からRetryRuntimeShutdown.interruptible_sleep経由へ変更された
+    （docs/CHANGELOG.md [KI-29]）。これに伴い、本テストのrun_main_with_argv()ヘルパーは、
+    run_retry_runtime.time.sleepの直接monkeypatchから、run_retry_runtime.RetryRuntimeShutdown
+    クラス自体をFakeへ差し替える方式へ変更した（Implementation Detailへの追従のみ。
+    テスト意図・カバレッジ・Assertion・テストシナリオは維持している。本番コードの変更なし）。
+
 テストシナリオ（docs/design/retry_runtime_lock_foundation.md 対応）:
     ── RetryRuntimeLock 単体 ──
     1.  acquire()でロックファイルが新規作成される
@@ -182,16 +190,64 @@ def _make_counting_sleep(raise_after=None, raise_exc=None):
     return _sleep
 
 
+class _FakeShutdown:
+    """
+    テスト用Fake：run_retry_runtime.RetryRuntimeShutdownへ差し替える（Release 6.1
+    Regression Test Maintenance、docs/CHANGELOG.md [KI-29]）。install()/uninstall()は
+    記録のみのno-op。interruptible_sleep()は、run_main_with_argv()から渡された
+    sleep_fn（従来どおり_make_counting_sleep()が返す関数）へそのまま委譲する。
+    """
+
+    def __init__(self, poll_interval_seconds: float = 0.5):
+        self.installed = False
+        self.uninstalled = False
+        self.sleep_fn = None
+        self._requested = False
+        self._signal_name = None
+
+    def install(self) -> None:
+        self.installed = True
+
+    def uninstall(self) -> None:
+        self.uninstalled = True
+
+    @property
+    def requested(self) -> bool:
+        return self._requested
+
+    @property
+    def signal_name(self):
+        return self._signal_name
+
+    def should_continue(self) -> bool:
+        return not self._requested
+
+    def interruptible_sleep(self, seconds: float) -> None:
+        if self.sleep_fn is not None:
+            self.sleep_fn(seconds)
+
+
 def run_main_with_argv(argv, sleep_fn=None):
+    """
+    v6.1.0（Graceful Shutdown Foundation）で--loop実行時のsleep_fnがtime.sleep直結から
+    RetryRuntimeShutdown.interruptible_sleep経由へ変更されたことに伴い、run_retry_runtime.time.sleep
+    の直接monkeypatchから、run_retry_runtime.RetryRuntimeShutdownクラス自体をFakeへ差し替える
+    方式へ変更した（Implementation Detailへの追従のみ。docs/CHANGELOG.md [KI-29]）。
+    """
     _FakeOrchestrator.calls = []
     original_root = run_retry_runtime.RetryCompositionRoot
     original_orchestrator = run_retry_runtime.RetryRuntimeOrchestrator
-    original_sleep = run_retry_runtime.time.sleep
+    original_shutdown_cls = run_retry_runtime.RetryRuntimeShutdown
     original_argv = sys.argv
+
+    def _shutdown_factory(*factory_args, **factory_kwargs):
+        fake = _FakeShutdown(*factory_args, **factory_kwargs)
+        fake.sleep_fn = sleep_fn
+        return fake
+
     run_retry_runtime.RetryCompositionRoot = _FakeCompositionRoot
     run_retry_runtime.RetryRuntimeOrchestrator = _FakeOrchestrator
-    if sleep_fn is not None:
-        run_retry_runtime.time.sleep = sleep_fn
+    run_retry_runtime.RetryRuntimeShutdown = _shutdown_factory
     sys.argv = ["run_retry_runtime.py"] + argv
     buf = io.StringIO()
     raised = None
@@ -203,7 +259,7 @@ def run_main_with_argv(argv, sleep_fn=None):
     finally:
         run_retry_runtime.RetryCompositionRoot = original_root
         run_retry_runtime.RetryRuntimeOrchestrator = original_orchestrator
-        run_retry_runtime.time.sleep = original_sleep
+        run_retry_runtime.RetryRuntimeShutdown = original_shutdown_cls
         sys.argv = original_argv
     return buf.getvalue(), raised
 

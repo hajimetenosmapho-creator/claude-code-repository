@@ -347,6 +347,85 @@
 - **対応状況**：対応しない。「消費者不在の先行実装」というFoundation Release（v5.5.0）の性質上、後続Releaseで実際に配線されれば本チェックは恒久的に成立しなくなることは`[KI-21]`の前例で確立済みの許容パターンである。`retry_runtime_loop`が正しく配線されていること自体は、v5.9.0の新規テスト（テスト11「既存`RetryRuntimeLoop`（本番クラス）がそのまま使用される」等）で別途確認済み
 - **今後の対応**：不要（本エントリで説明を確定）
 
+### [KI-29] v6.1.0でのGraceful Shutdown Foundationにより、`tests/test_e2e_v5_9_0_*.py`が全面的に、`tests/test_e2e_v6_0_0_*.py`が一部実行不能になる（`[KI-27]`より深刻な既知差分、解消済み）
+
+- **発見日**：2026-07-14（v6.1.0 Graceful Shutdown Foundation Test工程実施時）
+- **対象と症状**：
+  - `tests/test_e2e_v5_9_0_retry_runtime_loop_wiring_foundation.py`：テスト1（最初の`run_main_with_argv([])`呼び出し）の時点で`AttributeError: module 'run_retry_runtime_v590' has no attribute 'time'`が送出され、以降のテストが一切実行されない（0/64相当で停止）
+  - `tests/test_e2e_v6_0_0_retry_runtime_lock_foundation.py`：テスト1〜12（22アサーション）はPASSするが、テスト13（`run_main_with_argv([])`呼び出し）の時点で同じ`AttributeError`が送出され、テスト13〜24（Backward Compatibility確認を含む）が実行されない
+- **原因**：本Releaseで`scripts/run_retry_runtime.py`の`--loop`実行時の`sleep_fn`を`time.sleep`から`RetryRuntimeShutdown.interruptible_sleep`へ差し替えたこと（Architecture Design・Architecture Review承認済み、シグナル受信後に最大`interval_seconds`待たされる問題の解消が目的）に伴い、`time`モジュールを直接使う箇所が`scripts/run_retry_runtime.py`から無くなったため、`import time`を削除した。両テストファイルの`run_main_with_argv()`ヘルパーは、Loop関連のテストか否かに関わらず無条件に`original_sleep = run_retry_runtime.time.sleep`を実行しており、この行で例外が発生する
+- **`[KI-27]`との違い**：`[KI-27]`系列の既知差分は「`git diff`無変更確認テストがFAILする」という、ファイル全体の実行は継続したままの部分的な差分だった。本件は`AttributeError`によりテストスクリプト自体が停止するため、影響範囲がより広い（v5.9.0ファイルは全滅、v6.0.0ファイルは半分弱が未実行）
+- **検討した代替策**：`import time`を削除せず残す案も検討したが、この場合`AttributeError`は回避できるものの、Loop関連テストが注入する`sleep_fn`（`run_retry_runtime.time.sleep`への差し替え）は`RetryRuntimeLoop`が実際に使う`sleep_fn`（`shutdown.interruptible_sleep`）と無関係になり、テストのSentinel例外が送出されずLoopが停止しない（無限ループ・ハング）。即座に失敗する`AttributeError`の方が、ハングよりも安全と判断し`import time`削除を採用した
+- **対応状況**：**解消済み。** Release 6.1 Regression Test Maintenance（2026-07-14、Documentation/テストのみのFast Track、本番コード変更なし）で、`tests/test_e2e_v5_9_0_retry_runtime_loop_wiring_foundation.py` / `tests/test_e2e_v6_0_0_retry_runtime_lock_foundation.py`双方の`run_main_with_argv()`ヘルパーを、`run_retry_runtime.time.sleep`の直接monkeypatchから、`run_retry_runtime.RetryRuntimeShutdown`クラス自体をFake（`_FakeShutdown`）へ差し替える方式へ変更した（本Releaseの新規テストと同じ方式）。`_FakeShutdown.interruptible_sleep()`が従来の`sleep_fn`（`_make_counting_sleep()`が返す関数）へそのまま委譲するため、テスト意図・カバレッジ・Assertion・テストシナリオはいずれも変更していない（v5.9.0テスト13のみ、確認対象の文字列リテラルを`sleep_fn=time.sleep`から`sleep_fn=shutdown.interruptible_sleep`へ実装詳細の変更に追従して更新した）。実測の結果、`tests/test_e2e_v5_9_0_*.py`：**64/64 PASS**（元の記録どおり）、`tests/test_e2e_v6_0_0_*.py`：**43/43 PASS**（元の記録どおり）と、いずれもクラッシュなく完走し、元のPASS件数が回復したことを確認した
+- **今後の対応**：不要（本エントリで解消済み）
+
+---
+
+## [v6.1.0] - 2026-07-14 ★ Graceful Shutdown Foundation
+
+### Added
+
+- 新規パッケージ`src/retry_runtime_shutdown/`（`RetryRuntimeShutdown`）：`--loop`実行中のRetry Runtimeに
+  対するGraceful Shutdown（実行中サイクルは完了させたうえで、次のサイクルを開始せず終了する）を実現する
+  独立コンポーネント。SIGINT・SIGTERM（POSIX）・SIGBREAK（Windows）へのハンドラ登録（`install()`/
+  `uninstall()`、ベストエフォート）、`RetryRuntimeLoop`へそのまま渡せる`should_continue()`（フラグの否定を
+  返す）、`interruptible_sleep()`（ポーリング間隔0.5秒単位で停止要求を確認しながら待機し、要求受信時は
+  早期returnする）を提供する
+- `scripts/run_retry_runtime.py`：`--loop`実行時のみ`RetryRuntimeShutdown`を生成・`install()`し、
+  `RetryRuntimeLoop`への`sleep_fn` / `should_continue_fn`を`shutdown.interruptible_sleep` /
+  `shutdown.should_continue`へ差し替え。既存の`except KeyboardInterrupt`はフェイルセーフとして維持。
+  終了時、シグナルによる停止であれば`shutdown.signal_name`を含む終了メッセージを表示する
+- `docs/design/retry_runtime_graceful_shutdown_foundation.md`新規作成（Architecture Design・
+  Architecture Review反映事項3件（Shutdown State／Signal Registration-Handling分離／DIのみによる
+  接続の明文化）を含む）
+- `tests/test_e2e_v6_1_0_retry_runtime_graceful_shutdown_foundation.py`新規作成（32テストシナリオ・
+  44アサーション。Windows実機でのCtrl+Break（`CTRL_BREAK_EVENT`）送出による実CLIサブプロセスの
+  Graceful Shutdown確認を含む）
+
+### Note
+
+- **`RetryCompositionRoot` / `RetryRuntimeOrchestrator` / `RetryRuntimeLoop` / `RetryManager`
+  （`retry_engine`）/ `RetryRuntimeLock`（v6.0.0）はいずれも無改修。** 本Releaseの変更対象は
+  `src/retry_runtime_shutdown/`（新規）と`scripts/run_retry_runtime.py`の配線のみ
+- **`RetryRuntimeLoop`と`RetryRuntimeShutdown`は互いの存在を一切知らない。** 両者は
+  `RetryRuntimeLoop`が既に持っていた`should_continue_fn` / `sleep_fn`というDIシームのみで接続される
+  （`RetryRuntimeLoop`自体への変更は不要だった）
+- **シグナル受信時、実行中のサイクルを中断しない。** シグナルハンドラはフラグを立てるのみで例外を
+  送出しないため、`run_once_fn()`実行中にシグナルを受けても現在のサイクルは最後まで完了する
+- **待機（`sleep_fn`）はポーリング間隔（既定0.5秒）以内で早期returnする。** これにより、シグナル
+  受信からプロセス終了までの間、旧来の`interval_seconds`（デフォルト60秒）を待たされることがなくなった
+- **`import time`を`scripts/run_retry_runtime.py`から削除した。** `--loop`実行時の待機がすべて
+  `RetryRuntimeShutdown.interruptible_sleep`経由になり、同ファイルが直接`time`モジュールを
+  使用する箇所がなくなったための整理（Code Review対応）
+- **Windowsでの強制終了（`taskkill /F`・タスクマネージャーの「タスクの終了」）は本機構の対象外。**
+  OSの`TerminateProcess`を用いる強制終了はいかなるプロセスも検知・介入できないため、本機構は
+  あくまで協調的な停止要求（Ctrl+C／Ctrl+Break／SIGTERM）への対応に限定される
+- 対象外（今回は未実装）：単発実行時のシグナル処理、二重シグナルによる強制終了エスケープハッチ、
+  Stale Lock Recovery、実際のバックグラウンド分離・Windows Service化（いずれも将来Release候補または
+  対象外。`docs/design/retry_runtime_graceful_shutdown_foundation.md` 6章 Out of Scope）
+- 新規Known Issue：`[KI-29]`（本Releaseの`sleep_fn`差し替えにより、`tests/test_e2e_v5_9_0_*.py` /
+  `tests/test_e2e_v6_0_0_*.py`のLoop関連テストが実行不能になる）
+
+### Tested
+
+- `tests/test_e2e_v6_1_0_retry_runtime_graceful_shutdown_foundation.py`: 44/44 PASS
+  （シグナル受信によるrequested/should_continue/signal_nameの変化、KeyboardInterruptが送出されない
+  ことの確認、SIGBREAK対応、`interruptible_sleep()`の通常時待機・早期return、`install()`の
+  べき等性・メインスレッド以外からのベストエフォート、他retry_*パッケージへの非依存、
+  `RetryRuntimeLoop`とのDIのみによる非依存関係（双方向）、`scripts/run_retry_runtime.py`配線の
+  ソース確認、Fake経由でのLoop正常終了・終了メッセージ確認、単発実行時に`RetryRuntimeShutdown`が
+  生成されないことの確認、**Windows実機でのCtrl+Break送出による実CLIサブプロセスのGraceful
+  Shutdown確認（exit code 0）**、主要コンポーネントの無改修確認（`RetryRuntimeLock`含む）、
+  `format_summary()`公開契約の無変更確認）
+- 既存回帰確認：
+  - `tests/test_e2e_v5_5_0_*.py`：35/37 PASS（既存差分のみ、`[KI-27]`・`[KI-28]`。件数不変）
+  - `tests/test_e2e_v5_6_0_*.py`：44/49 PASS（既存差分のみ。件数不変）
+  - `tests/test_e2e_v5_7_0_*.py`：86/86 PASS（新規差分なし）
+  - `tests/test_e2e_v5_8_0_*.py`：63/64 PASS（既存差分のみ、`[KI-27]`。件数不変）
+  - `tests/test_e2e_v5_9_0_*.py`：実行不能（`[KI-29]`、新規）
+  - `tests/test_e2e_v6_0_0_*.py`：テスト1〜12（22アサーション）PASS、テスト13以降は実行不能（`[KI-29]`、新規）
+- 本Releaseによる新規Known Issue：`[KI-29]`
+
 ---
 
 ## [v6.0.0] - 2026-07-14 ★ Retry Runtime Lock Foundation（Daemon Foundation 前提）

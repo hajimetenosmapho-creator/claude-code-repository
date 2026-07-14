@@ -1,6 +1,6 @@
 """
 Retry Runtime 実行スクリプト（v5.4.0、v5.7.0で--dry-run追加、v5.9.0で--loop追加、
-v6.0.0でRuntime Lock追加）
+v6.0.0でRuntime Lock追加、v6.1.0でGraceful Shutdown追加）
 
 RetryCompositionRoot.from_env() → RetryRuntimeOrchestrator.from_composition_root() →
 run_once() を呼び出すEntry Point。Retry Runtimeの実行順序・組み立てロジックは
@@ -32,11 +32,15 @@ docs/design/retry_runtime_script_entry_point_foundation.md 2.1節・2.2節）。
                         0以下を指定した場合もCLIエラーになる。
 
 Exit Code Policy（docs/design/retry_runtime_script_entry_point_foundation.md 2.4節、
-v5.9.0でKeyboardInterrupt時の扱いを追加）:
+v5.9.0でKeyboardInterrupt時の扱いを追加、v6.1.0でGraceful Shutdown時の扱いを追加）:
     - 正常終了：exit code 0（Python標準の暗黙の0。--dry-run指定時も同様）
     - Loop実行中のKeyboardInterrupt（Ctrl+C）：運用者による意図的な正常停止として扱い、
       短い終了メッセージを表示したうえで exit code 0 とする（docs/design/
       retry_runtime_loop_wiring_foundation.md）
+    - Loop実行中の停止シグナル（SIGINT／SIGTERM／SIGBREAK等、v6.1.0）：上記と同様に
+      意図的な正常停止として扱い、実行中サイクルの完了後に短い終了メッセージを
+      表示したうえで exit code 0 とする（docs/design/
+      retry_runtime_graceful_shutdown_foundation.md）
     - その他の例外発生：Python標準の非0（fail-fastでそのまま伝播させる。独自のtry/exceptで
       握りつぶさない。run_once()自体のDesign Policyと対称的な方針）
     - 独自のExit Code体系（成功/一部失敗/異常等の多段階区分）は導入しない
@@ -53,6 +57,24 @@ Runtime Lock（v6.0.0、docs/design/retry_runtime_lock_foundation.md）:
       ことを確認した上で、ロックファイルを手動削除すること。
     - ロックファイルはランタイム生成物であり、Git管理対象外（.gitignore登録済み）。
 
+Graceful Shutdown（v6.1.0、docs/design/retry_runtime_graceful_shutdown_foundation.md、
+--loop実行時のみ有効）:
+    - --loop実行開始時、RetryRuntimeShutdownがSIGINT（Ctrl+C）・SIGBREAK（Windows、
+      Ctrl+Break）・SIGTERM（POSIX。Windowsでは他プロセスからの送出には効かない
+      点に注意）へハンドラを登録する。以後、これらのシグナルを受信しても
+      run_cycle()実行中のサイクルを中断しない。フラグを立てるのみで、実行中の
+      サイクルは最後まで完了する。
+    - サイクル完了後、次のサイクルを開始する前にshould_continue_fn()がFalseと
+      なり、Loopは正常にreturnする（sleep_fnもポーリング間隔（既定0.5秒）以内で
+      早期returnするため、シグナル受信からプロセス終了までinterval_secondsを
+      待たされることはない）。
+    - 単発実行（--loopなし）はGraceful Shutdownの対象外であり、シグナルに対する
+      挙動はv6.0.0以前と無変更（Python標準のKeyboardInterrupt伝播のまま）。
+    - Windowsでのタスクマネージャー「タスクの終了」・`taskkill /F`によるプロセス
+      強制終了（TerminateProcess）は、いかなるプロセスも検知・介入できないため
+      本機構の対象外。本機構はあくまで協調的な停止要求への対応であり、強制終了
+      への対処ではない。
+
 注意:
     - Gateが無効（RETRY_ENGINE_ENABLED=false等）の場合でもエラーにはならず、
       結果件数がすべて0件として表示される（NullRetryManager等のNull Object
@@ -66,7 +88,6 @@ Runtime Lock（v6.0.0、docs/design/retry_runtime_lock_foundation.md）:
       後から起動した側がエラー終了するため、Retry対象の二重実行は防止される。
 """
 import sys
-import time
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).parent.parent
@@ -80,6 +101,7 @@ from retry_composition import RetryCompositionRoot
 from retry_runtime_lock import RetryRuntimeLock, RetryRuntimeLockError
 from retry_runtime_loop import RetryRuntimeLoop
 from retry_runtime_orchestrator import RetryRuntimeCycleResult, RetryRuntimeOrchestrator
+from retry_runtime_shutdown import RetryRuntimeShutdown
 
 
 def format_summary(result: RetryRuntimeCycleResult) -> str:
@@ -157,16 +179,21 @@ def main() -> None:
                 run_cycle()
                 return
 
+            shutdown = RetryRuntimeShutdown()
+            shutdown.install()
             loop = RetryRuntimeLoop(
                 run_once_fn=run_cycle,
-                sleep_fn=time.sleep,
-                should_continue_fn=lambda: True,
+                sleep_fn=shutdown.interruptible_sleep,
+                should_continue_fn=shutdown.should_continue,
                 interval_seconds=interval_seconds,
             )
             try:
                 loop.run()
             except KeyboardInterrupt:
                 print("Retry runtime loop stopped.")
+                return
+            if shutdown.requested:
+                print(f"Retry runtime loop stopped by signal ({shutdown.signal_name}).")
     except RetryRuntimeLockError as e:
         print(f"[ERROR] {e}")
         sys.exit(1)

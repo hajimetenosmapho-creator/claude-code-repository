@@ -599,8 +599,8 @@
 - [ ] **Summary Formatterクラスへの抽出**：JSON出力・Slack通知等、表示形式の複数化が必要になった時点で、`scripts/run_retry_runtime.py`の`format_summary()`のロジックをクラスへ抽出する（v5.4.0時点では関数による局所化のみ）
 - [x] **Retry Runtime Lock Foundation（Daemon Foundationの前提）**：v6.0.0で実装済み。新規パッケージ`src/retry_runtime_lock/`（`RetryRuntimeLock`）を追加し、`os.open(O_CREAT | O_EXCL)`によるファイル存在ベースの排他制御で、同一Retry Runtimeプロセスの多重起動を防止できるようにした。`scripts/run_retry_runtime.py`は単発実行・`--loop`実行の全体を`with lock:`で包み、ロック取得済みの場合は`RetryCompositionRoot`等を一切構築せず`RetryRuntimeLockError`を専用に捕捉してexit code 1とする。`RetryCompositionRoot` / `RetryRuntimeOrchestrator` / `RetryRuntimeLoop` / `RetryManager`はいずれも無改修。Daemon化そのもの（バックグラウンド常駐・Windows Service化）ではなく、その前提となる最小Foundationと位置づけた（`docs/design/retry_runtime_lock_foundation.md`）
 - [ ] **Stale Lock Recovery Foundation**：プロセスが強制終了（`taskkill /F`・電源断等）した場合にロックファイル（v6.0.0）が残存する問題への対応（PID生存確認、または最終更新時刻に基づくタイムアウト判定）
-- [ ] **Graceful Shutdown Foundation**：SIGTERM相当のシグナルを受けてLoopを安全停止し、Runtime Lock（v6.0.0）を確実に解放する仕組み
-- [ ] **Windows Service Foundation / 実Daemon化**：実際にバックグラウンドプロセスとして常駐させる仕組み（Runtime Lock（v6.0.0）が前提となる）
+- [x] **Graceful Shutdown Foundation**：v6.1.0で実装済み。新規パッケージ`src/retry_runtime_shutdown/`（`RetryRuntimeShutdown`）を追加し、`--loop`実行時のみSIGINT・SIGTERM（POSIX）・SIGBREAK（Windows）へハンドラを登録するようにした。シグナル受信時は実行中サイクルを中断せず、フラグを立てるのみとする（`RetryRuntimeLoop`の既存DIシーム`should_continue_fn` / `sleep_fn`をそのまま利用し、`RetryRuntimeLoop`自体は無改修）。`sleep_fn`を`RetryRuntimeShutdown.interruptible_sleep`（ポーリング間隔0.5秒単位で早期return）に差し替えたことで、シグナル受信からプロセス終了までの間、旧来の`interval_seconds`（デフォルト60秒）を待たされる問題を解消した。Windowsでの強制終了（`taskkill /F`等）は`TerminateProcess`を用いるため本機構でも検知不可能である点は設計時から既知の制約として明記している。`RetryCompositionRoot` / `RetryRuntimeOrchestrator` / `RetryRuntimeLoop` / `RetryManager` / `RetryRuntimeLock`（v6.0.0）はいずれも無改修（`docs/design/retry_runtime_graceful_shutdown_foundation.md`）
+- [ ] **Windows Service Foundation / 実Daemon化**：実際にバックグラウンドプロセスとして常駐させる仕組み（Runtime Lock（v6.0.0）・Graceful Shutdown（v6.1.0）が前提となる）
 - [ ] **Structured Loop Logging Foundation**：ループ実行のサイクル番号・タイムスタンプ・JSON出力等、運用監視のための構造化ログ基盤
 
 ---
