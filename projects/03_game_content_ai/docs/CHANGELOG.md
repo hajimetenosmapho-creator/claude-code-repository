@@ -337,6 +337,7 @@
 - **原因**：v5.9.0（Retry Runtime Loop Wiring Foundation）で`scripts/run_retry_runtime.py`へ`--loop` / `--interval-seconds`引数、`RetryRuntimeLoop`の組み立て・実行、`KeyboardInterrupt`処理を追加した（`docs/design/retry_runtime_loop_wiring_foundation.md`）。上記の各テストは「その時点で`scripts/run_retry_runtime.py`が無改修だった」という当時の事実をArchitecture Guardとして固定していたものであり、`[KI-3]`〜`[KI-26]`と同型の既知差分である
 - **対応状況**：対応しない。v5.9.0のArchitecture Design/Review（GPT-5.6 Sol）・ユーザー承認済みで`scripts/run_retry_runtime.py`単独への変更は正式に承認済みである。本質的な制約（`src/retry_runtime_loop/` / `src/retry_runtime_orchestrator/` / `src/retry_composition/` / `RetryManager`（`retry_engine`）等のゼロ改修、単発実行の後方互換性、`format_summary()`の公開契約無変更）は、v5.9.0の新規テスト（`tests/test_e2e_v5_9_0_retry_runtime_loop_wiring_foundation.py`、64アサーション）で別途構造的に確認済み。既存テストファイル自体は書き換えず、Release間の前提差分として本エントリに記録する方針とした
 - **今後の対応**：不要（本エントリで説明を確定）
+- **2026-07-14追記（v6.0.0 Retry Runtime Lock Foundation Test工程実施時に再確認）**：v6.0.0で`scripts/run_retry_runtime.py`へRuntime Lock（`with lock:`ラップ）を追加したことにより、本項目が対象とする3ファイルへ改めて変更が加わったが、実測の結果FAIL件数・対象は変化していない（`tests/test_e2e_v5_5_0_*.py`：35/37、`tests/test_e2e_v5_6_0_*.py`：44/49、`tests/test_e2e_v5_8_0_*.py`：63/64。いずれもv5.9.0時点の記録と同一件数）。これは`scripts/run_retry_runtime.py`が既にv5.9.0の変更により「無改修」という前提を満たさなくなっており、v6.0.0による追加変更は同じ既知差分の範囲内に留まるため、新規Known Issueの追加は不要と判断した
 
 ### [KI-28] v5.9.0でのRetry Runtime Loop Wiring Foundationにより、`retry_runtime_loop`が初めて実際の消費者を持ったことでv5.5.0の一部Architecture GuardがFAILする（`[KI-21]`と同型の恒久差分）
 
@@ -345,6 +346,61 @@
 - **原因**：v5.9.0で`scripts/run_retry_runtime.py`が`from retry_runtime_loop import RetryRuntimeLoop`を追加し、`retry_runtime_loop`パッケージ（v5.5.0、Foundation Release時点では「消費者不在の先行実装」として意図的に未配線だった）が初めて実際の消費者を持った。v5.5.0テスト16は「本Releaseでは誰からも呼び出されない」という当時の事実を`src/` / `scripts/`双方を対象にした恒久的な静的検査として固定していたものであり、`[KI-21]`（`retry_runtime_orchestrator`がv5.4.0で初めて消費者を持った際の同型差分）と完全に同じパターンである
 - **対応状況**：対応しない。「消費者不在の先行実装」というFoundation Release（v5.5.0）の性質上、後続Releaseで実際に配線されれば本チェックは恒久的に成立しなくなることは`[KI-21]`の前例で確立済みの許容パターンである。`retry_runtime_loop`が正しく配線されていること自体は、v5.9.0の新規テスト（テスト11「既存`RetryRuntimeLoop`（本番クラス）がそのまま使用される」等）で別途確認済み
 - **今後の対応**：不要（本エントリで説明を確定）
+
+---
+
+## [v6.0.0] - 2026-07-14 ★ Retry Runtime Lock Foundation（Daemon Foundation 前提）
+
+### Added
+
+- 新規パッケージ`src/retry_runtime_lock/`（`RetryRuntimeLock` / `RetryRuntimeLockError`）：
+  同一Retry Runtimeプロセスの多重起動を防止するための、ファイル存在ベースの排他制御のみを行う
+  独立コンポーネント。`os.open(O_CREAT | O_EXCL)`によるアトミックなロックファイル生成・
+  自プロセスPIDの書き込み・`with`文（`__enter__` / `__exit__`）による自動解放を提供する
+- `scripts/run_retry_runtime.py`：単発実行・`--loop`実行の全体を`with lock:`で包み、
+  実行開始時に`<project_root>/.run/retry_runtime.lock`のロック取得を試みるよう変更。
+  取得失敗時（＝別プロセスが実行中）は`RetryCompositionRoot`等を一切構築せず、
+  `RetryRuntimeLockError`を専用に捕捉してエラーメッセージ（ロックファイルのパスと
+  対処方法を含む）を表示した上でexit code 1とする
+- `.gitignore`（リポジトリルート）へ`.run/`を追加（ロックファイルはランタイム生成物のためGit管理対象外）
+- `docs/design/retry_runtime_lock_foundation.md`新規作成（Architecture Design・Architecture Review・
+  Code Reviewの経緯を含む）
+- `tests/test_e2e_v6_0_0_retry_runtime_lock_foundation.py`新規作成（24テストシナリオ・43アサーション）
+
+### Note
+
+- **`RetryCompositionRoot` / `RetryRuntimeOrchestrator` / `RetryRuntimeLoop` / `RetryManager`
+  （`retry_engine`）はいずれも無改修。** 本Releaseの変更対象は`src/retry_runtime_lock/`（新規）と
+  `scripts/run_retry_runtime.py`の配線のみ
+- **`RetryRuntimeLock`は他のretry_*パッケージのいずれにも依存しない。** 標準ライブラリ
+  （`os` / `pathlib`）のみで実装し、Retryドメイン・実行順序・ループ・Daemon化のいずれも関知しない
+- **ロック取得失敗時は`RetryCompositionRoot`等を一切構築しない。** Retry業務ロジックへは到達せず、
+  安全側に倒れる設計とした
+- **`acquire()`内で`os.write()`が失敗した場合でも、ロックファイルを残さない。** Code Reviewで
+  発見した「書き込み失敗時にロックファイルだけが残存し恒久的なstale lockになる」経路を修正し、
+  `os.close(fd)` → ロックファイル削除 → 例外再送出という順序を徹底した
+- **stale lockの自動検出・自動復旧（PID生存確認等）は行わない。** プロセスが強制終了した場合、
+  ロックファイルが残存し次回起動がブロックされることがある（手動削除が必要。既知のTrade-off）
+- 対象外（今回は未実装）：実際のバックグラウンド分離（detach）、Windows Service化、
+  Graceful Shutdown（SIGTERM対応）、自動再起動、Process Supervision、Structured Logging、
+  ロックパスの環境変数化（いずれも将来Release候補または対象外。`docs/design/retry_runtime_lock_foundation.md` 10章）
+
+### Tested
+
+- `tests/test_e2e_v6_0_0_retry_runtime_lock_foundation.py`: 43/43 PASS
+  （`acquire()`/`release()`/`with`文の基本動作、取得済みロックへの`acquire()`失敗、
+  エラーメッセージへのパス含有、べき等な`release()`、例外発生時の解放、親ディレクトリ自動作成、
+  `os.write()`失敗時の解放（Code Review対応分）、他retry_*パッケージへの非依存、
+  `scripts/run_retry_runtime.py`配線・専用例外捕捉、単発実行/`--loop`実行それぞれ2回連続実行できる
+  ことによる解放の実証、実CLIでの多重起動拒否・エラーメッセージ内容・CompositionRoot未到達の確認、
+  主要コンポーネントの無改修確認（git diff）、`format_summary()`公開契約の無変更確認）
+- 既存回帰確認：
+  - `tests/test_e2e_v5_9_0_*.py`：64/64 PASS（新規差分なし）
+  - `tests/test_e2e_v5_7_0_*.py`：86/86 PASS（新規差分なし）
+  - `tests/test_e2e_v5_5_0_*.py`：35/37（既存差分のみ、`[KI-27]`・`[KI-28]`。件数不変）
+  - `tests/test_e2e_v5_6_0_*.py`：44/49（既存差分のみ、`[KI-26]`・`[KI-27]`。件数不変）
+  - `tests/test_e2e_v5_8_0_*.py`：63/64（既存差分のみ、`[KI-27]`。件数不変）
+- 本Releaseによる新規Known Issueはなし（`[KI-27]`へ追記のみ）
 
 ---
 

@@ -26,6 +26,9 @@ data/
 logs/
 *.log
 
+# Retry Runtime Lock（v6.0.0、ランタイム生成物。docs/design/retry_runtime_lock_foundation.md 13章）
+.run/
+
 # OS
 .DS_Store
 Thumbs.db

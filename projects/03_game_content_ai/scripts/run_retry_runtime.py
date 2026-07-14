@@ -1,5 +1,6 @@
 """
-Retry Runtime 実行スクリプト（v5.4.0、v5.7.0で--dry-run追加、v5.9.0で--loop追加）
+Retry Runtime 実行スクリプト（v5.4.0、v5.7.0で--dry-run追加、v5.9.0で--loop追加、
+v6.0.0でRuntime Lock追加）
 
 RetryCompositionRoot.from_env() → RetryRuntimeOrchestrator.from_composition_root() →
 run_once() を呼び出すEntry Point。Retry Runtimeの実行順序・組み立てロジックは
@@ -40,28 +41,43 @@ v5.9.0でKeyboardInterrupt時の扱いを追加）:
       握りつぶさない。run_once()自体のDesign Policyと対称的な方針）
     - 独自のExit Code体系（成功/一部失敗/異常等の多段階区分）は導入しない
 
+Runtime Lock（v6.0.0、docs/design/retry_runtime_lock_foundation.md）:
+    - 実行開始時、`<project_root>/.run/retry_runtime.lock` の排他生成を試みる。
+      既に別プロセスが実行中でロックファイルが存在する場合、CompositionRoot等は
+      一切構築せずRetryRuntimeLockErrorを送出し、エラーメッセージを表示した上で
+      exit code 1（非0終了）となる。単発実行・--loop実行の両方に適用される。
+    - 正常終了・異常終了（KeyboardInterrupt含む）のいずれでもロックファイルは
+      確実に解放される。
+    - プロセスが強制終了（taskkill /F・電源断等）した場合、ロックファイルが
+      残存し次回起動がブロックされることがある（stale lock）。二重起動でない
+      ことを確認した上で、ロックファイルを手動削除すること。
+    - ロックファイルはランタイム生成物であり、Git管理対象外（.gitignore登録済み）。
+
 注意:
     - Gateが無効（RETRY_ENGINE_ENABLED=false等）の場合でもエラーにはならず、
       結果件数がすべて0件として表示される（NullRetryManager等のNull Object
       Patternにより安全に処理されるため。本scriptはGateの状態を判定しない）。
     - 他のAgent系script（scripts/run_workflow_engine.py等）と同時実行しないこと
-      （排他制御は対象外。docs/design/retry_runtime_script_entry_point_foundation.md
+      （Runtime Lockは本script自身の多重起動のみを防止し、他scriptとの排他制御は
+      対象外。docs/design/retry_runtime_script_entry_point_foundation.md
       3章「同時実行リスク」）。
     - --loop使用時、同じRetry RuntimeをWindows タスクスケジューラ等の外部スケジューラから
-      重複して定期起動しないこと。内部Loopと外部スケジューラを併用すると、Retry対象の
-      二重実行につながるおそれがある（Runtime Lock・PID Lock等の二重起動防止機構は
-      本Releaseの対象外。docs/design/retry_runtime_loop_wiring_foundation.md）。
+      重複して定期起動しないこと。v6.0.0のRuntime Lockにより、二重起動時は
+      後から起動した側がエラー終了するため、Retry対象の二重実行は防止される。
 """
 import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+_PROJECT_ROOT = Path(__file__).parent.parent
+
+sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
 from dotenv import load_dotenv
-load_dotenv(Path(__file__).parent.parent / ".env")
+load_dotenv(_PROJECT_ROOT / ".env")
 
 from retry_composition import RetryCompositionRoot
+from retry_runtime_lock import RetryRuntimeLock, RetryRuntimeLockError
 from retry_runtime_loop import RetryRuntimeLoop
 from retry_runtime_orchestrator import RetryRuntimeCycleResult, RetryRuntimeOrchestrator
 
@@ -114,40 +130,46 @@ def main() -> None:
     if args.loop:
         interval_seconds = args.interval_seconds if args.interval_seconds is not None else 60.0
 
-    print("=" * 50)
-    if args.loop:
-        print(f"Retry Runtime 開始（Loop実行、interval_seconds={interval_seconds}）")
-    else:
-        print("Retry Runtime 開始（1サイクルのみ実行）")
-    print("=" * 50)
-    print()
-
-    if args.dry_run:
-        print("[DRY RUN MODE]")
-        print()
-
-    root = RetryCompositionRoot.from_env()
-    orchestrator = RetryRuntimeOrchestrator.from_composition_root(root)
-
-    def run_cycle():
-        result = orchestrator.run_once(dry_run=args.dry_run)
-        print(format_summary(result))
-        return result
-
-    if not args.loop:
-        run_cycle()
-        return
-
-    loop = RetryRuntimeLoop(
-        run_once_fn=run_cycle,
-        sleep_fn=time.sleep,
-        should_continue_fn=lambda: True,
-        interval_seconds=interval_seconds,
-    )
+    lock = RetryRuntimeLock(lock_path=_PROJECT_ROOT / ".run" / "retry_runtime.lock")
     try:
-        loop.run()
-    except KeyboardInterrupt:
-        print("Retry runtime loop stopped.")
+        with lock:
+            print("=" * 50)
+            if args.loop:
+                print(f"Retry Runtime 開始（Loop実行、interval_seconds={interval_seconds}）")
+            else:
+                print("Retry Runtime 開始（1サイクルのみ実行）")
+            print("=" * 50)
+            print()
+
+            if args.dry_run:
+                print("[DRY RUN MODE]")
+                print()
+
+            root = RetryCompositionRoot.from_env()
+            orchestrator = RetryRuntimeOrchestrator.from_composition_root(root)
+
+            def run_cycle():
+                result = orchestrator.run_once(dry_run=args.dry_run)
+                print(format_summary(result))
+                return result
+
+            if not args.loop:
+                run_cycle()
+                return
+
+            loop = RetryRuntimeLoop(
+                run_once_fn=run_cycle,
+                sleep_fn=time.sleep,
+                should_continue_fn=lambda: True,
+                interval_seconds=interval_seconds,
+            )
+            try:
+                loop.run()
+            except KeyboardInterrupt:
+                print("Retry runtime loop stopped.")
+    except RetryRuntimeLockError as e:
+        print(f"[ERROR] {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
