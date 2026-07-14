@@ -361,6 +361,64 @@
 
 ---
 
+## [v6.3.0] - 2026-07-14 ★ Retry Metrics Foundation
+
+### Added
+
+- 新規パッケージ`src/retry_metrics/`：`.run/retry_runtime_log.jsonl`（v6.2.0が書き込むJSON Linesログ）
+  を読み取り、集計値（`RetryMetricsSnapshot`）を計算するだけのRead Only Foundation。
+  `RetryRuntimeLogRecord`（1行分の値オブジェクト）・`RetryRuntimeLogReader`（読み取り専用）・
+  `RetryMetricsCalculator`（集計、Stateless）・`RetryMetricsSnapshot`（Immutable、frozen dataclass）
+  の4コンポーネントで構成
+- `RetryMetricsSnapshot`は、対象サイクル数（`cycle_count`）・記録期間（`period_start` /
+  `period_end`、timestampのmin/max）・dry_run実行サイクル数・各段階（Enqueue/Scheduler/Execution/
+  Removal/Cleanup/TerminalCleanup/History）の合計値・Enqueue段階の成功率（`enqueue_success_ratio`
+  = `enqueue_enqueued_total / enqueue_scanned_total`）を保持する
+- `tests/test_e2e_v6_3_0_retry_metrics_foundation.py`新規作成（27テストシナリオ・174アサーション）
+
+### Note
+
+- **Read Only Foundationである。** Retry Runtimeへ一切フィードバックを行わない（Retry Queueの
+  更新・`RetryManager` / `RetryRuntimeOrchestrator` / `RetryRuntimeLoop` / `RetryRuntimeShutdown` /
+  `RetryRuntimeLock`の変更・Schedulerへの通知・Retry実行可否の判断・Alert判定・Monitoring Policyの
+  いずれも行わない、`docs/design/retry_metrics_foundation.md` 4.1節）
+- **`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` /
+  `RetryManager`（`retry_engine`）/ `RetryCompositionRoot` / `RetryRuntimeCycleLogger`
+  （`retry_runtime_logging`）はいずれも無改修。** 本Releaseの変更対象は新規パッケージ
+  `src/retry_metrics/`のみ
+- **`retry_metrics`は他のどの`retry_*`パッケージもimportしない。** `.run/retry_runtime_log.jsonl`の
+  ファイルパスとJSON Schemaの「形」のみを契約として扱う、型参照ではなく契約（shape一致）による
+  疎結合を採用した
+- **`RetryMetricsSnapshot`はImmutable。** 生成後は変更されず、将来のRetry Monitoring Foundationは
+  これを参照するだけで更新しない
+- 分類はArchitecture Release。新規パッケージ追加（Layer変更）に該当するため、当初想定されていた
+  Fast Track Releaseから変更した（`docs/design/retry_metrics_foundation.md` 0章）
+- 対象外（今回は未実装）：`scripts/`エントリーポイント・CLI表示、Retry Monitoring Foundation本体
+  （閾値判定・Alert）、JSON Schema拡張（真の成功率・試行回数分布の算出）、Queue滞留時間の算出
+  （`RetryQueueManager`がenqueue時刻を保持しないため算出不能）。Retry Monitoring Foundationは
+  `Metrics → Monitoring → Alert`の一方向依存のみを許可する境界を設計書で確定済み（`docs/design/
+  retry_metrics_foundation.md` 11.1節）
+- 新規Known Issueなし
+
+### Tested
+
+- `tests/test_e2e_v6_3_0_retry_metrics_foundation.py`: 174/174 PASS
+  （`RetryRuntimeLogRecord` / `RetryMetricsSnapshot`のImmutability確認、存在しないログファイルへの
+  `read()`が空リストを返すことの確認、正常なJSONL・壊れたJSON行・フィールド欠落行・空行それぞれの
+  読み取り挙動確認、ファイル自体が読めない場合に`OSError`を送出すること（fail-fast）の確認、
+  `calculate([])`が`cycle_count=0`のSnapshotを返すことの確認、各合計フィールド・
+  `enqueue_success_ratio`・`period_start`/`period_end`（min/max）・`dry_run_cycle_count`の計算確認、
+  他`retry_*`パッケージへの非依存確認、`RetryRuntimeCycleLogger`が書き込む実際のJSONL形式を
+  読み取り集計まで一貫して行える統合確認、Runtime Pipeline関連8コンポーネントの無改修確認）
+- 既存回帰確認（いずれもベースラインと同一件数、新規差分なし）：
+  - `tests/test_e2e_v5_9_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_0_0_*.py`：43/43 PASS
+  - `tests/test_e2e_v6_1_0_*.py`：44/44 PASS
+  - `tests/test_e2e_v6_2_0_*.py`：64/64 PASS
+- 本Releaseによる新規Known Issue：なし
+
+---
+
 ## [v6.2.0] - 2026-07-14 ★ Structured Loop Logging Foundation
 
 ### Added
