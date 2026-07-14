@@ -361,6 +361,72 @@
 
 ---
 
+## [v6.2.0] - 2026-07-14 ★ Structured Loop Logging Foundation
+
+### Added
+
+- 新規パッケージ`src/retry_runtime_logging/`（`RetryRuntimeCycleLogger`）：Retry Runtimeの1サイクル
+  分の実行結果を、JSON Lines形式で1レコードとしてログファイル（`.run/retry_runtime_log.jsonl`）へ
+  追記するだけの独立コンポーネント。記録内容はサイクル番号・タイムスタンプ（ISO8601、UTC）・
+  `--dry-run`指定有無・`RetryRuntimeCycleResult`由来の各件数（Enqueue/Scheduler/Execution/Removal/
+  Cleanup/TerminalCleanup/History）。ログ書き込みに失敗した場合は例外を送出せず、stderrへ
+  `WARNING: Failed to write runtime log: ...`を出力したうえでRetry Runtime本体の処理を継続する
+  （ベストエフォート、Runtime Failure Policy）
+- `scripts/run_retry_runtime.py`：`RetryRuntimeCycleLogger`を構築し、`run_cycle()`クロージャ内で
+  `orchestrator.run_once()`の結果を得るたびに`log_cycle()`を呼び出す配線を追加。サイクル番号
+  （`cycle_count`）はクロージャのローカル変数として保持し、`RetryRuntimeLoop`のStateless性は
+  維持した
+- `docs/design/retry_runtime_structured_loop_logging_foundation.md`新規作成（Architecture Design・
+  比較検討（Stale Lock Recovery Foundationとの比較）・Architecture Review反映事項（Runtime Failure
+  Policy・JSON Schema固定）を含む）
+- `tests/test_e2e_v6_2_0_structured_loop_logging_foundation.py`新規作成（25テストシナリオ・
+  64アサーション）
+
+### Note
+
+- **`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` /
+  `RetryManager`（`retry_engine`）/ `RetryCompositionRoot`はいずれも無改修。** 本Releaseの変更対象は
+  `src/retry_runtime_logging/`（新規）と`scripts/run_retry_runtime.py`の配線のみ
+- **Runtime Pipeline（CLI → Lock → Shutdown → Loop → Orchestrator → RetryManager）の縦の実行順序は
+  一切変更していない。** ログ出力は`run_cycle()`クロージャ内でのみ発生する横方向の追加であり、
+  `RetryRuntimeLoop`のConstructor Injection（`run_once_fn` / `sleep_fn` / `should_continue_fn`）は
+  無変更
+- **JSON Schemaは本Releaseで固定した。** 将来の変更はフィールド追加のみを基本方針とし、既存
+  フィールドの意味変更は行わない（`docs/design/retry_runtime_structured_loop_logging_foundation.md`
+  1.3節）
+- **ログ書き込み失敗はRetry Runtime本体を停止させない。** ディスク容量不足・権限エラー等の
+  `OSError`は例外を送出せずstderrへWARNINGを出力するのみに留める。Exit Code Policy
+  （`docs/design/retry_runtime_script_entry_point_foundation.md` 2.4節）とは区別する
+- Architecture Design段階で「Stale Lock Recovery Foundation」との比較検討を行った。stale判定が
+  `RetryRuntimeLock`の責務そのものに本質的に食い込み「Lockへの責務追加禁止」制約と構造的に
+  衝突するため見送り、本Foundationを採用した（設計比較の詳細は設計書0.1節）
+- 対象外（今回は未実装）：ログローテーション、Metrics集計・Dashboard化、ログ出力先の環境変数化、
+  Stale Lock Recovery Foundation（いずれも将来Release候補または対象外。`docs/design/
+  retry_runtime_structured_loop_logging_foundation.md` 6章 Out of Scope）
+- 新規Known Issueなし
+
+### Tested
+
+- `tests/test_e2e_v6_2_0_structured_loop_logging_foundation.py`: 64/64 PASS
+  （JSON Lines新規作成・append動作、全行JSONパース可能、必須フィールド網羅確認、cycle_numberの
+  記録確認、dry_run True/False双方の記録確認、`RetryRuntimeCycleResult`由来の各件数の記録確認、
+  書き込み失敗時に例外を送出せずstderrへWARNINGを出力し処理継続することの確認、他retry_*
+  パッケージへの非依存確認、`scripts/run_retry_runtime.py`配線のソース確認、Fake経由での
+  `--loop`実行時cycle_numberの連番確認・単発実行時1回のみ呼び出し確認・`--dry-run`伝播確認、
+  `format_summary()`公開契約の無変更確認・出力内容へのログ関連文言非混入確認、主要コンポーネント
+  の無改修確認）
+- 既存回帰確認（いずれもベースラインと同一件数、新規差分なし）：
+  - `tests/test_e2e_v5_5_0_*.py`：35/37 PASS（既存差分のみ、`[KI-27]`・`[KI-28]`。件数不変）
+  - `tests/test_e2e_v5_6_0_*.py`：44/49 PASS（既存差分のみ。件数不変）
+  - `tests/test_e2e_v5_7_0_*.py`：86/86 PASS（新規差分なし）
+  - `tests/test_e2e_v5_8_0_*.py`：63/64 PASS（既存差分のみ、`[KI-27]`。件数不変）
+  - `tests/test_e2e_v5_9_0_*.py`：64/64 PASS（`[KI-29]`解消後のベースラインを維持）
+  - `tests/test_e2e_v6_0_0_*.py`：43/43 PASS（`[KI-29]`解消後のベースラインを維持）
+  - `tests/test_e2e_v6_1_0_*.py`：44/44 PASS（Windows実機でのCtrl+Break確認含む）
+- 本Releaseによる新規Known Issue：なし
+
+---
+
 ## [v6.1.0] - 2026-07-14 ★ Graceful Shutdown Foundation
 
 ### Added

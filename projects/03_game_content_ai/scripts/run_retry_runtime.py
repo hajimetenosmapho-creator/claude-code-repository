@@ -1,6 +1,7 @@
 """
 Retry Runtime 実行スクリプト（v5.4.0、v5.7.0で--dry-run追加、v5.9.0で--loop追加、
-v6.0.0でRuntime Lock追加、v6.1.0でGraceful Shutdown追加）
+v6.0.0でRuntime Lock追加、v6.1.0でGraceful Shutdown追加、
+v6.2.0でStructured Loop Logging追加）
 
 RetryCompositionRoot.from_env() → RetryRuntimeOrchestrator.from_composition_root() →
 run_once() を呼び出すEntry Point。Retry Runtimeの実行順序・組み立てロジックは
@@ -75,6 +76,19 @@ Graceful Shutdown（v6.1.0、docs/design/retry_runtime_graceful_shutdown_foundat
       本機構の対象外。本機構はあくまで協調的な停止要求への対応であり、強制終了
       への対処ではない。
 
+Structured Loop Logging（v6.2.0、docs/design/retry_runtime_structured_loop_logging_foundation.md）:
+    - 単発実行・--loop実行のいずれでも、1サイクル終了するたびに
+      <project_root>/.run/retry_runtime_log.jsonl へJSON Lines形式で1レコード
+      追記する（RetryRuntimeCycleLogger）。存在しなければ新規作成、存在する
+      場合は追記する。
+    - 記録内容はサイクル番号・タイムスタンプ・--dry-run指定有無・
+      RetryRuntimeCycleResult由来の各件数のみ（コンソール向けformat_summary()の
+      出力形式は本Releaseでも無変更）。
+    - ログ書き込みに失敗しても（ディスク容量不足・権限エラー等）Retry Runtime
+      本体は停止しない。ベストエフォートとし、stderrへWARNINGメッセージを
+      出力したうえで処理を継続する。
+    - ログローテーション・Metrics集計・Dashboard化は本Releaseの対象外。
+
 注意:
     - Gateが無効（RETRY_ENGINE_ENABLED=false等）の場合でもエラーにはならず、
       結果件数がすべて0件として表示される（NullRetryManager等のNull Object
@@ -99,6 +113,7 @@ load_dotenv(_PROJECT_ROOT / ".env")
 
 from retry_composition import RetryCompositionRoot
 from retry_runtime_lock import RetryRuntimeLock, RetryRuntimeLockError
+from retry_runtime_logging import RetryRuntimeCycleLogger
 from retry_runtime_loop import RetryRuntimeLoop
 from retry_runtime_orchestrator import RetryRuntimeCycleResult, RetryRuntimeOrchestrator
 from retry_runtime_shutdown import RetryRuntimeShutdown
@@ -169,10 +184,21 @@ def main() -> None:
 
             root = RetryCompositionRoot.from_env()
             orchestrator = RetryRuntimeOrchestrator.from_composition_root(root)
+            cycle_logger = RetryRuntimeCycleLogger(
+                log_path=_PROJECT_ROOT / ".run" / "retry_runtime_log.jsonl",
+            )
+            cycle_count = 0
 
             def run_cycle():
+                nonlocal cycle_count
+                cycle_count += 1
                 result = orchestrator.run_once(dry_run=args.dry_run)
                 print(format_summary(result))
+                cycle_logger.log_cycle(
+                    cycle_number=cycle_count,
+                    result=result,
+                    dry_run=args.dry_run,
+                )
                 return result
 
             if not args.loop:

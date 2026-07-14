@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-14（v6.2.0 — Structured Loop Logging Foundationを追記。新規パッケージ`src/retry_runtime_logging/`（`RetryRuntimeCycleLogger`）を追加し、Retry Runtimeの1サイクル分の実行結果をJSON Lines形式で`.run/retry_runtime_log.jsonl`へ1レコード追記するだけの独立コンポーネントとしたこと、記録内容はサイクル番号（`scripts/run_retry_runtime.py`の`run_cycle()`クロージャがローカル変数`cycle_count`として保持し`RetryRuntimeLoop`自体は無改修のまま）・タイムスタンプ（ISO8601、UTC）・`--dry-run`指定有無・`RetryRuntimeCycleResult`由来の各件数（Enqueue/Scheduler/Execution/Removal/Cleanup/TerminalCleanup/History）に限定したこと、JSON Schemaは本Releaseで固定し将来の変更はフィールド追加のみを基本方針としたこと、ログ書き込み失敗（`OSError`）時は例外を送出せずstderrへWARNINGを出力したうえでRetry Runtime本体の処理を継続するベストエフォート方針（Exit Code Policyとは区別）としたこと、`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` / `RetryManager` / `RetryCompositionRoot`はいずれも無改修としRuntime Pipelineの縦の実行順序は一切変更せずログ出力を`run_cycle()`クロージャ内の横方向の追加として実現したこと、Architecture Design段階で候補比較したStale Lock Recovery Foundationは、stale判定が`RetryRuntimeLock`の責務に本質的に食い込み「Lockへの責務追加禁止」制約と構造的に衝突するため見送ったこと、ログローテーション・Metrics集計・Dashboard化・ログ出力先の環境変数化はいずれも対象外とし将来のRetry Metrics / Monitoring Foundationの入力データとする位置づけとしたことを明記）
 更新日：2026-07-14（v6.0.0 — Retry Runtime Lock Foundationを追記。新規パッケージ`src/retry_runtime_lock/`（`RetryRuntimeLock` / `RetryRuntimeLockError`）を追加し、`os.open(O_CREAT | O_EXCL)`によるファイル存在ベースの排他制御のみを行う独立コンポーネントとして、同一Retry Runtimeプロセスの多重起動を防止できるようにしたこと、`scripts/run_retry_runtime.py`が単発実行・`--loop`実行の全体を`with lock:`で包み、ロック取得済み（＝別プロセスが実行中）の場合は`RetryCompositionRoot`等を一切構築せず`RetryRuntimeLockError`を専用のtry/exceptで捕捉しエラーメッセージ（ロックファイルのパスと対処方法を含む）を表示した上でexit code 1とするよう変更したこと、`RetryRuntimeLock`は他のretry_*パッケージのいずれにも依存せず標準ライブラリ（`os` / `pathlib`）のみで実装したこと、`RetryCompositionRoot` / `RetryRuntimeOrchestrator` / `RetryRuntimeLoop` / `RetryManager`（`retry_engine`）はいずれも無改修としたこと、Code Reviewで発見した「`acquire()`内で`os.write()`が失敗した場合にロックファイルだけが残存し恒久的なstale lockになる」経路を`os.close(fd)`→ロックファイル削除→例外再送出という順序で修正したこと、stale lockの自動検出・自動復旧（PID生存確認等）は行わずプロセス強制終了時は手動削除が必要な既知のTrade-offとして受け入れたこと、`.gitignore`へ`.run/`を追加しロックファイルをGit管理対象外としたこと、本Foundationは実際のDaemon化（バックグラウンド常駐・Windows Service化）そのものではなくその前提となる最小Foundationと位置づけたことを明記）
 更新日：2026-07-12（v5.9.0 — Retry Runtime Loop Wiring Foundationを追記。`scripts/run_retry_runtime.py`へ`--loop`（`action="store_true"`）・`--interval-seconds`（`type=float`、`default=None`）を追加し、既存`RetryRuntimeLoop`（v5.5.0）を使ったLoop実行に対応したこと、`--loop`省略時（デフォルト）は従来どおり1サイクルのみで終了すること、`--interval-seconds`は`--loop`と併用時のみ有効で`--loop`なしでの指定・0以下の指定はいずれもCLIエラー（`parser.error()`、非0終了）とし`--loop`指定時に省略した場合のデフォルトは60秒としたこと、`main()`内のローカル関数`run_cycle()`（`orchestrator.run_once(dry_run=args.dry_run)` → `print(format_summary(result))`）を`RetryRuntimeLoop`の`run_once_fn`として注入し`sleep_fn=time.sleep` / `should_continue_fn=lambda: True`とあわせて構築したこと（`RetryRuntimeLoop`へdry_run属性・引数は追加せずクロージャで伝播）、Loop実行中の`KeyboardInterrupt`のみを`main()`内で捕捉し短い終了メッセージを表示したうえで正常終了（exit code 0）とする一方それ以外の例外はfail-fastのまま伝播させたこと、`src/retry_runtime_loop/` / `src/retry_runtime_orchestrator/` / `src/retry_composition/` / `RetryManager`（`retry_engine`）はいずれも無改修とし本Releaseの変更対象を`scripts/run_retry_runtime.py`の1ファイルのみに限定したこと、これにより`retry_runtime_loop`（v5.5.0、消費者不在の先行実装）が初めて実際の消費者を持ったこと、`scripts/run_retry_runtime.py`無改修前提の既存Architecture Guard差分を`[KI-27]`として・`retry_runtime_loop`の消費者不在チェックの恒久差分を`[KI-21]`と同型の`[KI-28]`として記録したこと、Documentation Debtとして残っていた`scripts/run_retry_runtime.py`docstring内の「`RetryEnqueueTrigger`はdry_run非対応」という v5.8.0以前の古い記述を削除したことを明記）
 更新日：2026-07-12（v5.8.0 — Retry Enqueue Trigger Dry Run Foundationを追記。`RetryEnqueueTrigger.enqueue_pending_failures()`へ`dry_run: bool = False`を呼び出し時引数として追加し、Monitor走査・History参照・Guard判定・Queue重複確認は`dry_run`の値に関わらず通常どおり実行する一方、Guardを通過しQueue重複も存在しない候補について`dry_run=True`の場合は`RetryQueueManager.enqueue()`を呼び出さず処理を終了するよう変更したこと（`enqueued` / `failed`いずれにも加算しない）、`RetryRuntimeOrchestrator.run_once()`から`trigger.enqueue_pending_failures(max_attempts=self.policy.max_attempts, dry_run=dry_run)`への伝播を追加し`--dry-run`指定時にRetry Queueへの新規enqueueが実際に抑止されるようになったこと（`[KI-23]`解消）、Architecture Review初版では`RetryEnqueueTriggerResult`へ`dry_run_planned`カウンタを追加する案（案A）を提示したが「実際に行われた結果のみを表す」という既存Result Contractの一貫性を優先する方針（案B）へユーザーレビューを経て変更したこと、`RetryEnqueueTriggerResult` / `RetryRuntimeCycleResult` / `format_summary()` / `scripts/run_retry_runtime.py` / `RetryCompositionRoot` / `RetryManager` / `RetryExecutor` / `RetryQueueManager` / `RetryHistoryManager` / `RetryEnqueueGuard` / `RetryRuntimeLoop` / `NullRetryEnqueueTrigger`はいずれも無改修とし本Releaseの変更対象を`src/retry_enqueue_trigger/retry_enqueue_trigger.py` / `src/retry_runtime_orchestrator/retry_runtime_orchestrator.py`の2ファイルのみに限定したこと、dry_run時にGuard通過かつQueue重複なしの候補が既存カウンタのいずれにも加算されないため`scanned == 各カウンタの合計`という暗黙の不変条件が成立しない場合がある点・Queue容量上限のシミュレーションができない点をKnown Limitationとして記録したことを明記）
@@ -2465,3 +2466,66 @@ Stale Lock Recovery Foundation・Windows Service Foundation / 実Daemon化・単
 
 詳細は`docs/design/retry_runtime_graceful_shutdown_foundation.md`
 （Architecture Design・Architecture Review反映事項3件の経緯を含む）を参照。
+
+---
+
+## Structured Loop Logging Foundation層（`src/retry_runtime_logging/`、v6.2.0 追加）
+
+Retry Runtimeの1サイクル分の実行結果を、JSON Lines形式で`.run/retry_runtime_log.jsonl`へ1レコード
+追記するだけの新規独立パッケージ`src/retry_runtime_logging/`（`RetryRuntimeCycleLogger`）を追加した。
+`scripts/run_retry_runtime.py`の変更のみで配線が完結し、既存16パッケージ（`workflow_monitor` 〜
+`retry_runtime_shutdown`）はいずれも無改修。
+
+```
+CLI → argparse（既存、無変更）
+    → RetryRuntimeLock(lock_path).acquire()（v6.0.0、既存）
+         → [--loop の場合のみ] RetryRuntimeShutdown().install()（v6.1.0、既存）
+              → RetryCompositionRoot.from_env()                    ← 無改修
+              → RetryRuntimeOrchestrator.from_composition_root()   ← 無改修
+              → RetryRuntimeCycleLogger(log_path=...)              ← 新規、scripts層で直接構築
+              → RetryRuntimeLoop(                                  ← 無改修
+                    run_once_fn=run_cycle,   ← run_cycle内でcycle_logger.log_cycle()を呼ぶ
+                    sleep_fn=shutdown.interruptible_sleep,
+                    should_continue_fn=shutdown.should_continue,
+                    interval_seconds=interval_seconds,
+                 ).run()
+         → lock.release()（with文により保証、v6.0.0のまま）
+```
+
+### Runtime Pipelineへ一切手を加えない設計判断
+
+`RetryRuntimeCycleLogger`は`RetryRuntimeLoop`のConstructor Injection（`run_once_fn` / `sleep_fn` /
+`should_continue_fn`）には一切登場しない。`scripts/run_retry_runtime.py`の`run_cycle()`クロージャ
+内部で、`orchestrator.run_once()`の結果を受け取った直後に直接呼び出されるのみであり、
+`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop`のいずれも`RetryRuntimeCycleLogger`
+の存在を知らない。Runtime Pipeline（CLI → Lock → Shutdown → Loop → Orchestrator → RetryManager）の
+縦の実行順序は一切変更していない。
+
+### サイクル番号カウントの置き場所
+
+`RetryRuntimeLoop`（v5.5.0）はStateless Wrapperという既存設計を維持するため、サイクル番号の
+カウント責務は`RetryRuntimeLoop`にも`RetryRuntimeCycleLogger`にも持たせず、
+`scripts/run_retry_runtime.py`の`run_cycle()`クロージャ内のローカル変数（`cycle_count`）として
+保持する。
+
+### JSON Schemaの固定
+
+本Releaseでスキーマ（`cycle_number` / `timestamp` / `dry_run` / Enqueue・Scheduler・Execution・
+Removal・Cleanup・TerminalCleanup・History由来の各件数）を固定した。将来の変更はフィールド追加のみを
+基本方針とし、既存フィールドの意味変更は行わない。
+
+### ログ書き込み失敗時のベストエフォート方針（Runtime Failure Policy）
+
+ログ書き込みの失敗（`OSError`）は例外を送出せず、stderrへ`WARNING: Failed to write runtime log: ...`
+を出力したうえでRetry Runtime本体の処理を継続する。Exit Code Policy（`docs/design/
+retry_runtime_script_entry_point_foundation.md` 2.4節）とは意図的に区別される、本Foundation固有の
+方針である。
+
+### Future Extension
+
+Retry Metrics / Monitoring（本Foundationが生成するJSON Linesログを入力データとする）・
+ログローテーション・Dashboard化・ログ出力先の環境変数化・Stale Lock Recovery Foundation
+（詳細は`docs/ROADMAP.md`）。
+
+詳細は`docs/design/retry_runtime_structured_loop_logging_foundation.md`
+（Architecture Design・比較検討・Architecture Review反映事項の経緯を含む）を参照。
