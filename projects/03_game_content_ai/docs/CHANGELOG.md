@@ -361,6 +361,91 @@
 
 ---
 
+## [v6.8.0] - 2026-07-15 ★ Retry Notification CLI Report Wiring Foundation
+
+### Added
+
+- 新規スクリプト`scripts/show_retry_notification.py`：v6.3.0（Metrics）〜v6.7.0（Notification
+  Message）の5パッケージを初めて連続実行し、人間可読なReportとして標準出力へ表示するRead Only
+  CLI。新規`src/`パッケージは追加していない
+  - `RetryNotificationCliReport`（frozen dataclass、`scripts.show_retry_notification`モジュール
+    固有のPublic Model。`metrics` / `health_report` / `alert` / `notification_decision` /
+    `message`の5フィールドのみ、`src/*`のPublic APIには追加しない）
+  - `build_report(log_path: Path) -> RetryNotificationCliReport`：
+    `RetryRuntimeLogReader → RetryMetricsCalculator → RetryHealthEvaluator →
+    RetryAlertEvaluator → RetryNotificationEvaluator → RetryNotificationMessageBuilder`
+    をCLIスクリプト内で直接Composition
+  - `format_report(report) -> str`：Pure Function。固定タイトル・区切り線（`"=" * 50`）・
+    Metrics/Health/Alert/Notification/Messageの5セクション・Metrics4項目
+    （`cycle_count` / `period_start` / `period_end` / `enqueue_success_ratio`）のみを表示
+  - `main(argv: list[str] | None = None) -> int`：`--log-path`のみを独自CLI引数とする
+- `tests/test_e2e_v6_8_0_retry_notification_cli_report_wiring_foundation.py`新規作成
+  （30シナリオ・197アサーション）
+- `docs/design/retry_notification_cli_report_wiring_foundation.md`新規作成：Architecture
+  Design・Test Design（Changes Required×2を経て3回目Approved）・Code Review指摘反映の経緯を含む
+
+### Architecture／Behavior
+
+- CLIスクリプト内直接Composition：5コンポーネントはいずれもStateless（内部状態を持たない）
+  ため、`RetryCompositionRoot`への配線を経ずCLIスクリプトが独自にインスタンスを生成しても
+  状態の重複・不整合は発生しない。将来Runtime Integrationが同じコンポーネントを配線する
+  場合も、独立した呼び出し元として競合しない
+- `RetryNotificationStatus.NOTIFY`の場合のみ`RetryNotificationMessageBuilder.build()`を
+  呼び出し、`NO_NOTIFICATION`の場合はMessage Builderを呼び出さず`message=None`とする。
+  既存`RetryNotificationMessageBuilder`へのNO_NOTIFICATION対応追加は行っていない
+- 未対応の`RetryNotificationStatus`相当値は、既存5パッケージと同型の網羅分岐＋フォールバック
+  禁止パターンに従い`ValueError`を送出する（構造上到達不能な防御的分岐）
+- Exit Code Policy：正常処理（NOTIFY／NO_NOTIFICATION問わず）は0、`OSError`（ログファイル
+  読取不能）／`ValueError`（未対応値）は1、argparse構文エラーは標準のSystemExit 2。
+  `except Exception`は使用せず、想定済みエラー（`OSError` / `ValueError`）のみを`main()`で
+  捕捉しTracebackを表示しない。それ以外の例外は捕捉せずPython標準の伝播に委ねる
+  （`RuntimeError`等が握り潰されないことを新規E2Eで確認済み）
+- Reader由来の`WARNING:`（既存`RetryRuntimeLogReader`契約、行単位のJSONパース失敗時）と
+  CLI由来の`[ERROR]`（`main()`が捕捉した`OSError` / `ValueError`）は明確に区別する
+- `--log-path`のみを独自CLI引数とし、既定値`_DEFAULT_LOG_PATH`はスクリプト位置基準
+  （`_PROJECT_ROOT = Path(__file__).parent.parent`）で、Current Working Directoryに依存しない
+- 分類はArchitecture Release。新規Public API・CLI Entry Pointから5パッケージへの新規依存
+  方向の確立を伴うため
+- 対象外（今回は未実装）：Retry Notification Channel Foundation、Retry Notification
+  Delivery／Sender Foundation、実送信（Slack／メール等）、Network I/O、Runtime／Scheduler
+  Integration、`RetryCompositionRoot`配線、Severity-aware Message、Suppression／
+  Deduplication／Rate Limit、JSON出力、`.env` / `python-dotenv`（同設計書8章）
+- `RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` /
+  `RetryManager`（`retry_engine`）/ `RetryCompositionRoot` / `RetryRuntimeCycleLogger`、
+  `src/retry_metrics/` / `src/retry_monitoring/` / `src/retry_alert/` / `src/retry_notification/` /
+  `src/retry_notification_message/`、`scripts/run_retry_runtime.py`はいずれも無改修。本Release
+  におけるproduction codeの変更は、新規スクリプト`scripts/show_retry_notification.py`の追加のみ
+- 新規Known Issueなし
+
+### Tested
+
+- `tests/test_e2e_v6_8_0_retry_notification_cli_report_wiring_foundation.py`：30シナリオ・
+  197アサーション・197/197 PASS（終了コード0、意図しない警告なし、Tracebackなし）
+- 既存回帰確認（いずれもベースラインと同一件数、新規差分なし）：
+  - `tests/test_e2e_v5_9_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_0_0_*.py`：43/43 PASS
+  - `tests/test_e2e_v6_1_0_*.py`：44/44 PASS
+  - `tests/test_e2e_v6_2_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_3_0_*.py`：174/174 PASS
+  - `tests/test_e2e_v6_4_0_*.py`：171/171 PASS
+  - `tests/test_e2e_v6_5_0_*.py`：131/131 PASS
+  - `tests/test_e2e_v6_6_0_*.py`：135/135 PASS
+  - `tests/test_e2e_v6_7_0_*.py`：117/117 PASS
+- Regression合計：943/943 PASS。全Suite終了コード0、ベースライン差なし、警告なし
+- 新規E2E（197）＋Regression（943）＝1140/1140 PASS
+- Test Review：1回目「Changes Required」（Counter Fakeの可観測性・`main(None)`実行・
+  `sys.modules`未登録・ratio計算式の確認不足・Scenario数の定義不整合）、2回目「Changes
+  Required」（Fake戻り値と正式Message確認の両立不能）、3回目「Approved」。Code Review
+  「Approved」（Output Contractの検証精度・sys.modules復元の堅牢性に関する軽微な指摘を
+  E2E修正で解消、196→197アサーション、production code無改修）
+- 本Releaseによる新規Known Issue：なし。既存最新Known Issueは`[KI-29]`のまま（解消済み）
+
+### Scope
+
+- Runtime Wiringなし・実送信なし・Channel／Senderなし・外部I/Oなし・既存production code無改修
+
+---
+
 ## [v6.7.0] - 2026-07-15 ★ Retry Notification Message Foundation
 
 ### Added

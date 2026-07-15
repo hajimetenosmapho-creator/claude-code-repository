@@ -644,26 +644,52 @@
   合計943/943 PASS）とも完全PASSし、Test Review・Code Reviewともに「Approved」。Runtime Wiring・
   CLI Wiringはいずれも未実装（本Releaseの対象外。他4パッケージと同様「消費者不在の先行実装」の
   まま）（`docs/design/retry_notification_message_foundation.md`）
+- [x] **Retry Notification CLI Report Wiring Foundation**：v6.8.0で実装完了。新規スクリプト
+  `scripts/show_retry_notification.py`を追加し、v6.3.0（Metrics）〜v6.7.0（Notification
+  Message）の5パッケージが初めて実際の消費者を持った。CLIスクリプト内の`build_report()`で
+  `RetryRuntimeLogReader` → `RetryMetricsCalculator` → `RetryHealthEvaluator` →
+  `RetryAlertEvaluator` → `RetryNotificationEvaluator` → `RetryNotificationMessageBuilder`を
+  直接Compositionし、Metrics〜Notification Messageまでの判定過程を人間可読なReportとして
+  標準出力へ表示するRead Only CLIとした。5コンポーネントはいずれもStatelessであるため、
+  `RetryCompositionRoot`への配線を経ずCLIスクリプトが独自にインスタンスを生成しても状態の
+  重複・不整合は発生しない。`RetryNotificationStatus.NOTIFY`の場合のみ
+  `RetryNotificationMessageBuilder.build()`を呼び出し、`NO_NOTIFICATION`の場合はMessage
+  Builderを呼び出さず`message=None`とする（既存Builderへの変更は一切なし）。CLI専用の
+  Public Model`RetryNotificationCliReport`（frozen dataclass、`metrics` / `health_report` /
+  `alert` / `notification_decision` / `message`の5フィールド）を`scripts/show_retry_notification.py`
+  モジュール内に定義し、いずれの`src/*`パッケージの`__all__`へも追加しない。`--log-path`のみを
+  独自CLI引数とし、既定値はスクリプト位置基準の`.run/retry_runtime_log.jsonl`（Current Working
+  Directory非依存）。Exit CodeはCLI処理の成功／失敗のみを表し、通知状態（NOTIFY／
+  NO_NOTIFICATION）はいずれも0、`OSError`／`ValueError`は1、argparse構文エラーは標準の
+  SystemExit 2とする。Runtime Pipeline本体（`RetryRuntimeLock` / `RetryRuntimeShutdown` /
+  `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` / `RetryManager` / `RetryCompositionRoot` /
+  `RetryRuntimeCycleLogger`）・既存5 Foundation・`scripts/run_retry_runtime.py`はいずれも
+  無改修。本Releaseは確認用CLIの追加であり、Runtime／Scheduler Integration（Composition Root
+  への配線）そのものではない。実送信・Channel選択・Suppression／Deduplication／Rate Limitは
+  引き続き未実装（`docs/design/retry_notification_cli_report_wiring_foundation.md`）
 - [ ] **Retry Notification Channel Foundation**（次候補）：Message Foundationが生成した通知内容を
-  どの通知先（Slack／メール等）へ送るか選択する別パッケージ（同設計書21章）
+  どの通知先（Slack／メール等）へ送るか選択する別パッケージ（`docs/design/
+  retry_notification_message_foundation.md` 21章）
 - [ ] **Retry Notification Delivery／Sender Foundation**（次候補）：Channel Foundationが選択した
   送信先へ実際に外部I/Oで送信する別パッケージ。外部I/O（Slack API等）を伴うため独立した
-  Architecture Reviewを要する（同設計書15章・21章）
+  Architecture Reviewを要する（`docs/design/retry_notification_message_foundation.md` 15章・21章）
 - [ ] **Retry Notification Suppression／Deduplication／Rate Limit Foundation**：v6.6.0の
   `RetryNotificationEvaluator`はStatelessであり、同一の異常状態が続く限り毎回独立した`NOTIFY`
   判定を返す。実際に通知を行う後続Foundation側で抑制・重複排除・レート制限を実装する必要がある。
   `RetryNotificationStatus`へ`SUPPRESSED`等の値を追加する拡張とするか、別型
   （`RetryDeliveryDecision`等）を新設し`RetryNotificationDecision`を入力とする状態付きの追加判定と
   するかは、本項目を実際に設計するReleaseで要件が明らかになった時点でArchitecture Reviewを経て
-  決定する（本Releaseでは未確定のまま。同設計書21章）
-- [ ] **Retry Alert／Notification CLI Report Wiring Foundation**：`scripts/show_retry_alert.py` /
-  `scripts/show_retry_notification.py`等を新設し、`RetryAlert` / `RetryNotificationDecision`を
-  人間可読な形式でコンソール表示する。v6.4.0の11.2節と同型のパターン
-  （`docs/design/retry_alert_foundation.md` 7章、`docs/design/retry_notification_foundation.md` 15章）
+  決定する（本Releaseでは未確定のまま。`docs/design/retry_notification_message_foundation.md` 21章）
+- [ ] **Retry Alert CLI Report Wiring Foundation**：`scripts/show_retry_alert.py`を新設し、
+  `RetryAlert`を人間可読な形式でコンソール表示する。v6.4.0の11.2節と同型のパターン
+  （`docs/design/retry_alert_foundation.md` 7章）。`RetryNotificationDecision`側は
+  `scripts/show_retry_notification.py`としてv6.8.0で実装済み（上記「Retry Notification CLI
+  Report Wiring Foundation」参照、`docs/design/retry_notification_foundation.md` 15章）
 - [ ] **Runtime／Scheduler Integration**：`Metrics → Monitoring → Alert → Notification`パイプライン
   全体をRetry Runtimeへ実際に配線し、定期的に評価が回るようにするComposition Root配線。v6.3.0
-  （Metrics）〜v6.6.0（Notification）はいずれも「消費者不在の先行実装」であり、本項目が初めて
-  実際の消費者を作る
+  （Metrics）〜v6.7.0（Notification Message）はいずれも「消費者不在の先行実装」のままであり
+  （v6.8.0のCLI Report Wiringは確認用の消費者に留まる）、本項目が初めてRuntime本体の実際の
+  消費者を作る
 - [ ] **Retry Monitoring CLI/Report Wiring Foundation**：`scripts/show_retry_health.py`等を新設し、`RetryHealthReport`を人間可読な形式でコンソール表示する。v5.3.0/v5.4.0の分離と同型のパターン（`docs/design/retry_monitoring_foundation.md` 11.2節）
 - [ ] **閾値の外部設定化**：`RetryHealthThresholds`（v6.4.0時点ではコード上の固定デフォルト値）を環境変数または設定ファイルから読み込めるようにする。設定ファイルの読み込みは新しい外部I/O・永続化変更に該当する可能性があるため独立したArchitecture Reviewを要する（`docs/design/retry_monitoring_foundation.md` 11.3節）
 - [ ] **複数指標に基づく総合判定**：v6.4.0の`RetryHealthEvaluator`は`enqueue_success_ratio`のみを参照する単一指標判定。`RetryMetricsSnapshot`が保持する他のフィールド（`enqueue_failed_total`等）を組み合わせた総合判定へ拡張するかどうかは、Retry Runtime Log Schema Extensionの進捗と合わせて検討する（`docs/design/retry_monitoring_foundation.md` 11.4節）
