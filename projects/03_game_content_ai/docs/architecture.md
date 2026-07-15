@@ -1,6 +1,28 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-15（v6.9.0 — WordPress Media Upload Foundationを追記。新規独立package
+`src/wordpress_media/`（`MediaUploadResult` / `WordPressMediaUploadError` / `WordPressMediaUploader`）を
+追加し、画像bytesをWordPress Media REST API（`POST /wp-json/wp/v2/media`）へアップロードし
+`media_id`を取得するだけのConsumer-less Foundationとしたこと。既存`WordPressOutput`
+（`src/outputs/wordpress_output.py`）とは独立し、`image_resolver.py` / `ArticleData` / 既存記事投稿
+Pipeline / Workflow / Scheduler / Retry Runtimeのいずれへも依存・配線しないこと。入力は
+`image_bytes: bytes` / `filename: str` / `mime_type: str`の3つに限定し、`filename`は正規表現
+`^[A-Za-z0-9][A-Za-z0-9._-]*$`でASCII安全文字のみを許可（Path／URL入力・自動サニタイズは
+Out of Scope）、`mime_type`は前後空白・制御文字を拒否し自動stripしないこと。成功時のみ
+`MediaUploadResult`（`media_id` / `source_url` / `mime_type`の3フィールドのみ、frozen dataclass）を
+返し、失敗は入力不正＝`ValueError`、通信・HTTP・レスポンス不正＝`WordPressMediaUploadError`の
+1種類に統一したこと。HTTP成功判定は`200 <= status_code < 300`（`response.ok`非依存）、Non-2xx時は
+`code`/`message`を型確認・制御文字正規化・長さ制限（100/200文字）の順で個別採用する安全な
+エラーメッセージ契約とし、`response.text` / `response.content` / 認証情報 / 画像bytesはいずれも
+例外へ含めないこと。Architecture Review（1回目Changes Required、2回目Approved）・Test Review
+（1・2回目Changes Required、3回目Approved）・Code Review（Approved。E2EのDependency Guard
+（DEP-1）を単純文字列検索からAST `Import`/`ImportFrom`解析へ改善し336→331アサーションへ整理）を
+経て、新規E2E（48シナリオ・331アサーション・331/331 PASS）・既存Regression（`test_e2e_v1_11_0_
+save_result.py` 43/43、v5.9.0〜v6.8.0 1140/1140、合計1183/1183 PASS、新規E2E込み合計1514/1514
+PASS）とも完全PASSしたこと。AI画像生成・`featured_media`設定・`image_resolver.py` /
+`WordPressOutput` / `ArticleData`／既存Pipelineへのwiringはいずれも本Releaseの対象外
+（Future Extension）であることを明記）
 更新日：2026-07-15（v6.8.0 — Retry Notification CLI Report Wiring Foundationを追記。v6.3.0〜v6.7.0で完成した5つの「消費者不在の先行実装」（`retry_metrics` / `retry_monitoring` / `retry_alert` / `retry_notification` / `retry_notification_message`）を、新規スクリプト`scripts/show_retry_notification.py`から初めて連続実行し、人間可読なReportとして標準出力へ表示するRead Only CLIを追加したこと。CLIスクリプト内の`build_report()`で`RetryRuntimeLogReader` → `RetryMetricsCalculator` → `RetryHealthEvaluator` → `RetryAlertEvaluator` → `RetryNotificationEvaluator` → `RetryNotificationMessageBuilder`を直接Compositionし、新規`src/`パッケージは追加せず`RetryCompositionRoot`への配線も行わないこと（Runtime Pipelineへの本組み込みではない。5コンポーネントはいずれもStateless（内部状態を持たない）ため、CLIスクリプトが独自にインスタンスを生成しても状態の重複・不整合は発生せず、将来のRuntime Integrationが同じコンポーネントを配線する場合も競合しないこと）、CLI専用のPublic Model`RetryNotificationCliReport`（frozen dataclass、`metrics` / `health_report` / `alert` / `notification_decision` / `message`の5フィールド）を`scripts/show_retry_notification.py`モジュール直下に定義し`src/*`いずれのPublic APIにも追加しないこと、`RetryNotificationStatus.NOTIFY`の場合のみ`RetryNotificationMessageBuilder.build()`を呼び出し`NO_NOTIFICATION`の場合はMessage Builderを呼び出さず`message=None`とすること（既存Builderは無改修）、出力Reportはタイトル固定・区切り線50文字・Metrics/Health/Alert/Notification/Messageの5セクション固定順・Metrics4項目（`cycle_count` / `period_start` / `period_end` / `enqueue_success_ratio`）限定表示とすること、Exit CodeはCLI処理の成功／失敗のみを表し通知状態（NOTIFY／NO_NOTIFICATION）はいずれも0・`OSError`／`ValueError`は1・argparse構文エラーは標準のSystemExit 2とすること、`--log-path`のみを独自CLI引数としデフォルト値`_DEFAULT_LOG_PATH`はスクリプト位置基準でCurrent Working Directoryに依存しないこと、Network I/O・外部サービスI/O・ファイル書き込み・`.env`読み込みはいずれも行わないRead Only CLIであること、`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` / `RetryManager` / `RetryCompositionRoot` / `RetryRuntimeCycleLogger`および既存5パッケージ・`scripts/run_retry_runtime.py`はいずれも無改修であること、Channel選択・実送信（Sender）・Runtime／Scheduler Integration・Severity-aware Message・Suppression／Deduplication／Rate Limitはいずれも対象外とし将来の後続候補へ切り出したこと、新規E2E（30シナリオ・197アサーション・197/197 PASS）・既存Regression（v5.9.0〜v6.7.0、943/943 PASS、合計1140/1140 PASS）とも終了コード0・警告なしで完全PASSし、Test Review（3回目「Approved」、1・2回目「Changes Required」）・Code Review「Approved」を経たことを明記）
 更新日：2026-07-15（v6.7.0 — Retry Notification Message Foundationを追記。v6.6.0が生成する`RetryNotificationDecision`（`status`のみ）**のみ**を入力として受け取り、固定の通知Message Value Object（`RetryNotificationMessage`）を構築するだけの新規独立パッケージ`src/retry_notification_message/`（`RetryNotificationMessage` / `RetryNotificationMessageBuilder`）を追加したこと。判定（Judgment）ではなくValue Buildingを担当すること、`RetryNotificationMessage`は`body`のみを保持するImmutable（frozen dataclass）とし`level`等の重大度情報は保持しないこと（重大度が必要な将来の消費者は呼び出し元が保持する元の`RetryAlert`を参照する、というv6.6.0のTechnical Debt方針を継続）、依存方向は`retry_notification_message → retry_notification`の一方向のみを許可し`retry_alert`／`retry_monitoring`／`retry_metrics`への直接依存・`retry_notification → retry_notification_message`の逆依存はいずれも禁止しこの契約を新規E2Eテストのソースコード走査（AST解析）で機械的に保証したこと、`RetryNotificationStatus.NOTIFY`は固定Messageへ変換し`NO_NOTIFICATION`および未対応値はいずれも`ValueError`でFail Fastとしたこと、`RetryAlertLevel.WARNING`／`CRITICAL`はいずれも`NOTIFY`へ収束するため区別せず共通Messageを生成すること（重大度別MessageはFuture Candidate）、Architecture Reviewの1回目「Changes Required」を経て入力を`RetryAlert`単独から`RetryNotificationDecision`単独へ・Domain Modelを`level`保持から`body`のみへ・Dependencyを`retry_alert`直接依存から`retry_notification`のみへ、それぞれ修正し2回目「Approved」でDesign Freezeへ至ったこと、Channel選択・実送信（Sender）・Suppression／Deduplication／Rate Limit・Runtime／Composition Root配線・CLI表示はいずれも対象外とし将来の後続Foundationへ切り出したこと、`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` / `RetryManager` / `RetryCompositionRoot` / `RetryRuntimeCycleLogger`および`src/retry_metrics/` / `src/retry_monitoring/` / `src/retry_alert/` / `src/retry_notification/`はいずれも無改修としたことを明記。新規E2E（21シナリオ・117アサーション・117/117 PASS）・既存Regression（v5.9.0〜v6.6.0、826/826 PASS、合計943/943 PASS）とも終了コード0・警告なしで完全PASSし、Test Review「Approved」・Code Review「Approved」を経たこと、**Runtime Wiring・CLI Wiringはいずれも未実装（本Releaseの対象外）**であり4パッケージ（Metrics/Monitoring/Alert/Notification）と同様「消費者不在の先行実装」のままであることを明記）
 更新日：2026-07-14（v6.4.0 — Retry Monitoring Foundationを追記。v6.3.0が生成する`RetryMetricsSnapshot`のみを入力として受け取る新規パッケージ`src/retry_monitoring/`（`RetryHealthStatus` / `RetryHealthThresholds` / `RetryHealthReport` / `RetryHealthEvaluator`）を追加し、あらかじめ定義した閾値（`degraded_below=0.8` / `unhealthy_below=0.5`）に基づいて健全性ステータス（`HEALTHY` / `DEGRADED` / `UNHEALTHY`）を判定するだけのJudgment Only Foundationとしたこと、`RetryHealthThresholds`はConfigではなくMonitoring DomainのDomain Value（Immutable Value Object、frozen dataclass）と位置づけFoundationは固定値を保持する責務のみを持つとしたこと、`RetryHealthEvaluator`はThresholdを自ら生成せず外部から受け取るかDefault Thresholdを使用するのみとしたこと、`RetryHealthReport`はRelease 6.4では`status`のみを保持しreason／warnings／details（またはviolations）は将来拡張として切り出したこと、`RetryHealthEvaluator`はStateless Pure Functionとして同一Snapshotに対し常に同一Reportを返すこと、依存方向は`retry_monitoring → retry_metrics`の一方向のみを許可し`retry_metrics → retry_monitoring`の逆依存・Runtime／Logger／JSONLへの依存はいずれも禁止しこの契約を新規E2Eテストのソースコード走査で機械的に保証したこと、`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` / `RetryManager` / `RetryCompositionRoot` / `RetryRuntimeCycleLogger`および`src/retry_metrics/`はいずれも無改修としたこと、CLI表示・Alert通知（Slack／メール等）はいずれも対象外とし将来のRetry Alert Foundation／CLI/Report Wiring Foundationへ切り出したことを明記）
@@ -2916,4 +2938,137 @@ Retry Notification Channel Foundation・Retry Notification Delivery／Sender Fou
 Retry Notification Channel Foundation・Retry Notification Delivery／Sender Foundation・Retry Alert CLI Report Wiring Foundation（`scripts/show_retry_alert.py`）・Retry Metrics／Monitoring CLI Report Wiring Foundation・Runtime／Scheduler Integration・Severity-aware Message Foundation・Suppression／Deduplication／Rate Limiting（順序は確定事項として固定しない。詳細は`docs/ROADMAP.md`）。
 
 詳細は`docs/design/retry_notification_cli_report_wiring_foundation.md`
+（Architecture Design・Test Design（Changes Required×2を経て確定）・Code Review指摘反映の経緯を含む）を参照。
+
+---
+
+## WordPress Media Upload Foundation層（`src/wordpress_media/`、v6.9.0 実装完了）
+
+> **本節は実装完了時点の記録である。2026-07-15時点で新規E2E（48シナリオ・331アサーション・331/331 PASS）・既存Regression（`test_e2e_v1_11_0_save_result.py` 43/43、v5.9.0〜v6.8.0 1140/1140、合計1183/1183 PASS、新規E2E込み合計1514/1514 PASS）とも完全PASSし、Architecture Review（2回目「Approved」）・Test Review（3回目「Approved」）・Code Review「Approved」・Release Review「Approved」を経ている。**
+
+### Purpose
+
+WordPress REST API（`POST /wp-json/wp/v2/media`）へ画像バイナリをアップロードし、`media_id`を取得するだけの独立Foundationを追加する。将来のAI画像生成・アイキャッチWiring Releaseが`upload()`を呼び出すだけで済む状態を先に確立することが目的であり、本Release自体はいずれの既存Pipelineへも接続しない**Consumer-less Foundation**である。
+
+```
+image_bytes + filename + mime_type
+        │
+        ▼
+WordPressMediaUploader.upload()
+        │
+        ▼
+POST /wp-json/wp/v2/media（生bytes body・Basic認証）
+        │
+        ▼
+MediaUploadResult（media_id / source_url / mime_type）
+```
+
+### Package Boundary
+
+新規独立package`src/wordpress_media/`（`src/outputs/`配下ではない）。
+
+```
+src/wordpress_media/
+├── __init__.py
+├── media_upload_result.py       # MediaUploadResult（frozen dataclass）
+└── wordpress_media_uploader.py  # WordPressMediaUploader + WordPressMediaUploadError
+```
+
+`src/outputs/`へ配置しなかった理由：WordPress記事投稿（`WordPressOutput`）とは別のMedia Upload責務であること、将来のAI画像生成・`featured_media` Wiringから独立させること、既存`WordPressOutput`への依存・逆依存を防ぐこと。`WordPressMediaUploadError`は独立ファイルへ分けず`wordpress_media_uploader.py`内に定義する（唯一の送出元であり、不要なファイル分割を避けるため）。
+
+### Public API
+
+`src/wordpress_media/__init__.py`が公開するのは次の3つのみ。
+
+```python
+MediaUploadResult
+WordPressMediaUploadError
+WordPressMediaUploader
+```
+
+`WordPressMediaUploader.__init__(site_url, username, app_password)` / `from_env()` / `upload(image_bytes, filename, mime_type) -> MediaUploadResult`のみをPublic APIとする。`requests.Response`はPublic APIへ一切露出しない。
+
+### Dependency Direction
+
+```
+許可：wordpress_media → standard library, requests
+禁止：wordpress_media → WordPressOutput / image_resolver / ArticleData / Workflow / Scheduler / Retry Runtime
+```
+
+既存側から`wordpress_media`へのWiringも本Releaseでは行わない（消費者不在の先行実装）。
+
+### Input Contract
+
+`image_bytes: bytes`（非空必須、`str` / `bytearray` / `memoryview` / `None`はいずれも拒否・暗黙変換なし）、`filename: str`（正規表現`^[A-Za-z0-9][A-Za-z0-9._-]*$`によるASCII安全文字限定。slash／backslash／path traversal／二重引用符／CR・LF・NUL／Unicode／先頭underscore・hyphenをいずれも拒否し、自動サニタイズ・basename抽出は行わない）、`mime_type: str`（非空・前後空白拒否・制御文字拒否、自動stripしない）。すべてHTTP通信前に検証し、不正時は`ValueError`を送出して`requests.post()`を呼び出さない。
+
+### Constructor／from_env
+
+Constructorは`site_url` / `username` / `app_password`の型・非空・空白のみをfail-fast検証する。`site_url`のみ`strip().rstrip("/")`で正規化し（正規化後に空となる場合も`ValueError`）、`username` / `app_password`は自動stripしない（呼び出し元が渡した値をそのまま保持）。`from_env()`は既存環境変数`WP_SITE_URL` / `WP_USERNAME` / `WP_APP_PASSWORD`（新規追加なし）を読み取り、不足・空・空白のみの変数名のみを例外に含め値は含めない。プロジェクト全体を横断調査した結果、「`from_env()`が不足値を検出して例外を送出する」という本Foundationの方針は既存precedent（`WordPressOutput.from_env()`はNull許容方式）への整合ではなく、本Foundation固有の新規Architecture Decisionであることを確認済み。
+
+### HTTP Request Contract
+
+```python
+requests.post(
+    f"{self.site_url}/wp-json/wp/v2/media",
+    data=image_bytes,
+    headers={
+        "Content-Type": mime_type,
+        "Content-Disposition": f'attachment; filename="{filename}"',
+    },
+    auth=(self.username, self.app_password),
+    timeout=30,
+)
+```
+
+既存`WordPressOutput.save()`は`json=payload`でJSON送信するが、WordPress Media APIは画像の生バイナリを直接ボディに乗せる別形式であるため流用できない（認証（`auth=`タプル）・`timeout=30`のみ既存踏襲）。`json=` / `files=`（multipart） / Base64 / URL入力は使用しない。成功判定は`200 <= response.status_code < 300`（`response.ok`には依存しない）。
+
+### Success Response Contract
+
+`response.json()`がdictであることを確認し、`id`（`bool`を除く`int`・1以上）／`source_url`（キー必須・`str`または`None`）／`mime_type`（同左）を検証してから`MediaUploadResult`を生成する。追加のレスポンス項目は無視する。`source_url` / `mime_type`は「キー欠落（異常）」と「値が`None`（正常）」を`"key" not in data`で明確に区別する。
+
+### Failure Contract
+
+入力不正は`ValueError`。それ以外（`requests.RequestException`・非2xx・レスポンスJSON不正）はすべて`WordPressMediaUploadError`（この1種類のみ）へ統一する。`RequestException`は固定文言「WordPress Media APIへの通信に失敗しました」＋`from exc`で例外チェーンのみ保持し元例外全文は連結しない。非2xxはHTTP statusを必須で含め、`code` / `message`はそれぞれ独立に`str`型か判定して個別採用し（片方のみ有効な場合は有効な方だけを採用）、制御文字を空白へ正規化した後に`code`は100文字・`message`は200文字へ切り詰める。
+
+### Security Contract
+
+`username` / `app_password` / `auth`タプル / `image_bytes` / `response.text` / `response.content` / 不正レスポンス値そのもの / JSON全体のreprは、いずれも例外・ログ・Resultへ含めない。本Foundationは`print()` / `logging`のいずれも行わない。
+
+### Side Effect Contract
+
+許可される外部I/Oは`requests.post()`によるHTTP通信のみ。ファイル読込・書込・Path操作・一時ファイル・URLダウンロード・画像加工・標準出力・標準エラー出力・`subprocess`はいずれも行わない。
+
+### Consumer-less Contract
+
+次はいずれも本Releaseでは未実装・未配線である。
+
+```
+AI Image Generation
+featured_media
+image_resolver
+ArticleData
+WordPressOutput
+記事投稿Pipeline
+Workflow
+Scheduler
+Retry
+```
+
+### Backward Compatibility
+
+既存`WordPressOutput` / `image_resolver.py` / `ArticleData` / 記事生成Pipeline / Workflow / Scheduler / Retry Runtime、および既存テスト一式はいずれも無改修。新規独立packageの追加のみであり、既存の呼び出し元（現状ゼロ）にも影響しない。
+
+### Out of Scope
+
+AI画像生成・画像生成プロンプト・Path入力・URL入力・画像ダウンロード・画像ファイル保存・画像リサイズ／圧縮／形式変換・EXIF処理・`featured_media`設定・`ArticleData`/`image_resolver.py`/`WordPressOutput`変更・既存投稿Pipeline変更・Workflow／Scheduler／Retry統合・Rate Limit・Deduplication・Cache・実WordPress E2E・Media削除／更新・Alt text／Caption／Description設定・SNS画像・Unicode filename・RFC 5987 `filename*`・filename自動サニタイズ・MIME許可リスト・Magic Number検査。
+
+### Future Extensions
+
+AI Image Generation Foundation・Generated Image → WordPress Media Upload Wiring・Article → `featured_media` Wiring（`image_resolver.resolve_media_id()`の拡張）（順序は確定事項として固定しない。詳細は`docs/ROADMAP.md`）。
+
+### Test Review・Code Review・Release Reviewの実績
+
+新規E2E（`tests/test_e2e_v6_9_0_wordpress_media_upload_foundation.py`）は48シナリオ・331アサーション・331/331 PASS（終了コード0、意図しない警告なし、Tracebackなし）。既存Regression（`tests/test_e2e_v1_11_0_save_result.py` 43/43、v5.9.0〜v6.8.0 1140/1140）とあわせた総確認数は1183/1183 PASS、新規E2E込みの合計は1514/1514 PASS。Architecture Reviewは1回目「Changes Required」（Header値の安全性・Constructor Validation・Runtime Type Validation・Safe Error Message Contract）を経て2回目「Approved」。Test Reviewは1・2回目「Changes Required」（Scenario／Case／Test Point混在・Test Runner未確定・Mock Patch target不明確・JSON Decode例外型依存・Non-2xx個別採用不足・sanitize/truncate順序・Security Scenario重複・Compatibility/Regression混在、およびDEP-2のNetwork Contract・SRF系Safe Failure・import形式のContract化）を経て3回目「Approved」。Code Reviewでは、E2EのDEP-1（禁止import Contract）が単純文字列検索であるためproduction codeのdocstring中の自然文（`image_resolver` / `ArticleData`）を誤検知する構造的脆弱性を発見し、AST（`ast.Import` / `ast.ImportFrom`）解析への置き換え（336→331アサーション、production code自体は無修正）で解消した。
+
+詳細は`docs/design/wordpress_media_upload_foundation.md`
 （Architecture Design・Test Design（Changes Required×2を経て確定）・Code Review指摘反映の経緯を含む）を参照。

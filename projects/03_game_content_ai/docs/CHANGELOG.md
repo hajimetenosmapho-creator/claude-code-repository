@@ -361,6 +361,91 @@
 
 ---
 
+## [v6.9.0] - 2026-07-15 ★ WordPress Media Upload Foundation
+
+### Added
+
+- 新規独立package`src/wordpress_media/`：WordPress Media REST API（`POST /wp-json/wp/v2/media`）へ
+  画像bytesをアップロードし`media_id`を取得するだけのConsumer-less Foundation
+  - `src/wordpress_media/__init__.py`：package rootから`MediaUploadResult` /
+    `WordPressMediaUploadError` / `WordPressMediaUploader`の3つのみを公開
+  - `src/wordpress_media/media_upload_result.py`：`MediaUploadResult`（frozen dataclass、
+    `media_id` / `source_url` / `mime_type`の3フィールドのみ、成功時のみ生成）
+  - `src/wordpress_media/wordpress_media_uploader.py`：`WordPressMediaUploader`
+    （`__init__` / `from_env` / `upload`）・`WordPressMediaUploadError`（`RuntimeError`、
+    専用例外1種類のみ）
+- `tests/test_e2e_v6_9_0_wordpress_media_upload_foundation.py`新規作成（48シナリオ・331アサーション）
+- `docs/design/wordpress_media_upload_foundation.md`新規作成：Architecture Design・Test Design
+  （Changes Required×2を経て3回目Approved）・Code Review指摘反映の経緯を含む
+
+### Architecture／Behavior
+
+- 入力は`image_bytes: bytes` / `filename: str` / `mime_type: str`の3つに限定（Path／URL入力は
+  対象外）。`filename`は正規表現`^[A-Za-z0-9][A-Za-z0-9._-]*$`でASCII安全文字のみを許可し、
+  slash／backslash／path traversal／二重引用符／CR・LF・NUL／Unicode／先頭underscore・hyphenを
+  いずれも拒否（自動サニタイズ・basename抽出は行わない）。`mime_type`は非空・前後空白拒否・
+  制御文字拒否とし自動stripしない
+- HTTP Requestは`requests.post(endpoint, data=image_bytes, headers={...}, auth=(...), timeout=30)`。
+  既存`WordPressOutput`のJSON送信パターン（`json=payload`）とは異なりWordPress Media APIは
+  生バイナリボディを要求するため、認証（`auth=`タプル）・`timeout=30`のみ既存踏襲とした。
+  成功判定は`200 <= response.status_code < 300`（`response.ok`非依存）
+- 成功時のみ`MediaUploadResult`を返し、失敗は入力不正＝`ValueError`、それ以外（通信・HTTP・
+  レスポンス不正）＝`WordPressMediaUploadError`の1種類に統一する Failure Contract
+- Non-2xx時は`code` / `message`をそれぞれ独立に`str`型か判定して個別採用し（片方のみ有効な
+  場合は有効な方だけを採用）、制御文字を空白へ正規化した後に`code`は100文字・`message`は
+  200文字へ切り詰める Safe Error Message Contract。`response.text` / `response.content` /
+  認証情報 / 画像bytesはいずれも例外へ含めない
+- `from_env()`は既存環境変数`WP_SITE_URL` / `WP_USERNAME` / `WP_APP_PASSWORD`（新規追加なし）を
+  読み取り、不足・空・空白のみの変数名のみを例外へ含め値は含めない。プロジェクト内に
+  「`from_env()`が不足値を検出して例外を送出する」既存precedentが無いことを確認した上での
+  本Foundation固有の新規Architecture Decision
+- 分類はArchitecture Release。新規独立package・新規Public API・新規Dependency方向の確立を伴うため
+- 対象外（今回は未実装）：AI画像生成、`featured_media`設定、`image_resolver.py` / `ArticleData` /
+  `WordPressOutput`変更、既存投稿Pipeline・Workflow・Scheduler・Retry統合、Rate Limit、
+  Deduplication、Cache、実WordPress E2E、Unicode filename、filename自動サニタイズ、
+  MIME許可リスト（同設計書24章）
+- 既存`WordPressOutput` / `image_resolver.py` / `ArticleData` / 記事生成Pipeline / Workflow /
+  Scheduler / Retry Runtimeはいずれも無改修。既存側から`wordpress_media`へのWiringも本Releaseでは
+  行わない（消費者不在の先行実装）
+- 新規Known Issueなし
+
+### Tested
+
+- `tests/test_e2e_v6_9_0_wordpress_media_upload_foundation.py`：48シナリオ・331アサーション・
+  331/331 PASS（終了コード0、意図しない警告なし、Tracebackなし）
+- 既存回帰確認（いずれもベースラインと同一件数、新規差分なし）：
+  - `tests/test_e2e_v1_11_0_save_result.py`：43/43 PASS
+  - `tests/test_e2e_v5_9_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_0_0_*.py`：43/43 PASS
+  - `tests/test_e2e_v6_1_0_*.py`：44/44 PASS
+  - `tests/test_e2e_v6_2_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_3_0_*.py`：174/174 PASS
+  - `tests/test_e2e_v6_4_0_*.py`：171/171 PASS
+  - `tests/test_e2e_v6_5_0_*.py`：131/131 PASS
+  - `tests/test_e2e_v6_6_0_*.py`：135/135 PASS
+  - `tests/test_e2e_v6_7_0_*.py`：117/117 PASS
+  - `tests/test_e2e_v6_8_0_*.py`：197/197 PASS
+- Regression合計：1183/1183 PASS（v1.11.0 43/43＋v5.9.0〜v6.8.0 1140/1140）。全Suite終了コード0、
+  ベースライン差なし、実異常の警告なし
+- 新規E2E（331）＋Regression（1183）＝1514/1514 PASS
+- Architecture Review：1回目「Changes Required」（Header値の安全性・Constructor Validation・
+  Runtime Type Validation・Safe Error Message Contract）、2回目「Approved」
+- Test Review：1回目「Changes Required」（Scenario／Case／Test Point混在・Test Runner未確定・
+  Mock Patch target不明確・JSON Decode例外型依存・Non-2xx個別採用不足・sanitize/truncate順序・
+  Security Scenario重複・Compatibility/Regression混在）、2回目「Changes Required」（DEP-2の
+  Network Contract・SRF系Safe Failure不足・import形式のContract化）、3回目「Approved」
+- Code Review：「Approved」（E2EのDEP-1が単純文字列検索でproduction codeのdocstring中の自然文を
+  誤検知する構造的脆弱性を発見し、AST `Import`/`ImportFrom`解析への置き換えで解消。
+  336→331アサーション、production code自体への追加修正なし）
+- 本Releaseによる新規Known Issue：なし
+
+### Scope
+
+- Consumer-less Foundation・既存production code無改修・既存test無改修・既存Pipeline非配線・
+  実WordPress通信なし・AI画像生成なし・`featured_media`なし
+
+---
+
 ## [v6.8.0] - 2026-07-15 ★ Retry Notification CLI Report Wiring Foundation
 
 ### Added

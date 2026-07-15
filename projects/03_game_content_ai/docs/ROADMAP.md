@@ -667,6 +667,31 @@
   無改修。本Releaseは確認用CLIの追加であり、Runtime／Scheduler Integration（Composition Root
   への配線）そのものではない。実送信・Channel選択・Suppression／Deduplication／Rate Limitは
   引き続き未実装（`docs/design/retry_notification_cli_report_wiring_foundation.md`）
+- [x] **WordPress Media Upload Foundation**：v6.9.0で実装完了。新規独立package`src/wordpress_media/`
+  （`MediaUploadResult` / `WordPressMediaUploadError` / `WordPressMediaUploader`）を追加し、画像bytesを
+  WordPress Media REST API（`POST /wp-json/wp/v2/media`）へアップロードし`media_id`を取得するだけの
+  Consumer-less Foundationとした。入力は`image_bytes: bytes` / `filename: str` / `mime_type: str`の
+  3つに限定し、`filename`は正規表現`^[A-Za-z0-9][A-Za-z0-9._-]*$`でASCII安全文字のみを許可（Path／
+  URL入力・自動サニタイズは対象外）、`mime_type`は前後空白・制御文字を拒否し自動stripしない。成功時
+  のみ`MediaUploadResult`（`media_id` / `source_url` / `mime_type`の3フィールドのみ）を返し、失敗は
+  入力不正＝`ValueError`、通信・HTTP・レスポンス不正＝`WordPressMediaUploadError`の1種類に統一した。
+  既存`WordPressOutput` / `image_resolver.py` / `ArticleData` / 既存記事投稿Pipeline / Workflow /
+  Scheduler / Retry Runtimeのいずれへも依存・配線しない（消費者不在の先行実装）。Architecture Review
+  （1回目Changes Required、2回目Approved）・Test Review（1・2回目Changes Required、3回目Approved）・
+  Code Review（Approved。E2EのDEP-1をAST import解析へ改善）・Release Review（Approved）を経て、
+  新規E2E（48シナリオ・331アサーション・331/331 PASS）・既存Regression（`test_e2e_v1_11_0_save_result.py`
+  43/43、v5.9.0〜v6.8.0 1140/1140、合計1183/1183 PASS、新規E2E込み合計1514/1514 PASS）とも完全PASSした
+  （`docs/design/wordpress_media_upload_foundation.md`）
+- [ ] **AI Image Generation Foundation**（次候補・未着手）：記事用アイキャッチ画像をAI生成する新規
+  Foundation。画像生成APIの費用・レート制限・プロンプト設計を伴うため独立したArchitecture Reviewを
+  要する
+- [ ] **Generated Image → WordPress Media Upload Wiring**（次候補・未着手）：AI Image Generation
+  Foundationが生成した画像bytesを、v6.9.0の`WordPressMediaUploader.upload()`へ実際に渡す配線。
+  両Foundationが完了した後に着手する
+- [ ] **Article → featured_media Wiring**（次候補・未着手）：v6.9.0で取得した`media_id`を
+  `image_resolver.resolve_media_id()` / `ArticleData.featured_media_id` / `WordPressOutput`経由で
+  実際の記事投稿へ反映する配線。`image_resolver.py` / `ArticleData` / `WordPressOutput`への変更を
+  伴うため独立したArchitecture Reviewを要する
 - [ ] **Retry Notification Channel Foundation**（次候補）：Message Foundationが生成した通知内容を
   どの通知先（Slack／メール等）へ送るか選択する別パッケージ（`docs/design/
   retry_notification_message_foundation.md` 21章）
