@@ -546,13 +546,21 @@ Release 6.6の実装は、このDesign Freezeされた設計に従う。
 
 ## Status
 
+> **2026-07-15追記（Release 6.7 Documentation Updateにて是正）**：本Status章は、Release 6.6の
+> 実装・テスト・commit完了後も未更新のまま「実装着手（未着手）」以下が`[ ]`のまま残っていた
+> ドキュメント記載漏れであることが判明した。`docs/CHANGELOG.md`「[v6.6.0]」セクションに、
+> 新規E2E135/135 PASS・既存Regression691/691 PASS・commit `7c77eef`（`feat(v6.6.0): add Retry
+> Notification Foundation`、mainへpush済み）という完了実績が既に記録されている。以下は、この
+> **Release 6.6完了実績に基づくStatus記載漏れの是正**である。Release 6.6の設計内容・Public API・
+> 責務・Technical Debtはいずれも変更していない。新規Known Issueの追加もない。
+
 - [x] Architecture Designドラフト作成（Claude Code）
 - [x] ChatGPT Architecture Review 1回目「Request Changes」・指摘反映（`SKIP`→`NO_NOTIFICATION`改名、Enum採用理由修正、Architecture Test方針修正、テスト戦略修正、Definition of Done修正）
 - [x] ChatGPT Architecture Review 2回目「Approve with Minor Corrections」・指摘反映（Evaluator保証範囲の限定、NO_NOTIFICATIONの意味の最終確定）
 - [x] Design Freeze確定（本文書）
-- [ ] 実装着手（未着手）
-- [ ] Test Review
-- [ ] CHANGELOG／ROADMAP／architecture.md反映
-- [ ] Code Review
-- [ ] Release Review
-- [ ] commit／push
+- [x] 実装着手（`src/retry_notification/`実装完了。記載漏れの是正）
+- [x] Test Review（記載漏れの是正）
+- [x] CHANGELOG／ROADMAP／architecture.md反映（`docs/CHANGELOG.md` [v6.6.0]セクション等に反映済み。記載漏れの是正）
+- [x] Code Review（記載漏れの是正）
+- [x] Release Review（記載漏れの是正）
+- [x] commit／push（commit `7c77eef`としてmainへpush済み。記載漏れの是正）

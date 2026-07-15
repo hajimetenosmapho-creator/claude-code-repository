@@ -625,9 +625,25 @@
   `RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` /
   `RetryManager` / `RetryCompositionRoot` / `RetryRuntimeCycleLogger`および`src/retry_metrics/` /
   `src/retry_monitoring/` / `src/retry_alert/`はいずれも無改修（`docs/design/retry_notification_foundation.md`）
-- [ ] **Retry Notification Message Foundation**（次候補）：v6.6.0の`RetryNotificationDecision`
-  （`status`のみ）を入力として、通知本文（メッセージ）を生成する別パッケージ。
-  `status == NOTIFY`の場合のみメッセージを生成する想定（`docs/design/retry_notification_foundation.md` 21章）
+- [x] **Retry Notification Message Foundation**：v6.7.0で実装完了。v6.6.0の
+  `RetryNotificationDecision`**のみ**を入力として受け取り、固定の通知Message Value Object
+  （`RetryNotificationMessage`）を構築するだけの新規独立パッケージ`src/retry_notification_message/`
+  （`RetryNotificationMessage` / `RetryNotificationMessageBuilder`）を追加した。
+  `RetryNotificationMessage`は`body`のみを保持するImmutable（frozen dataclass）とし、重大度
+  （`RetryAlertLevel`）は保持しない（重大度が必要な将来の消費者は呼び出し元が保持する元の
+  `RetryAlert`を参照する、というv6.6.0のTechnical Debt方針を継続）。依存方向は
+  `retry_notification_message → retry_notification`の一方向のみを許可し、`retry_alert` /
+  `retry_monitoring` / `retry_metrics`への直接依存・`retry_notification`からの逆依存はいずれも
+  禁止した。`RetryNotificationStatus.NOTIFY`は固定Messageへ変換し、`NO_NOTIFICATION`・未対応値は
+  いずれも`ValueError`でFail Fastとする。`RetryAlertLevel.WARNING`／`CRITICAL`はいずれも`NOTIFY`へ
+  収束するため区別せず共通Messageを生成する（重大度別MessageはFuture Candidate）。Architecture
+  Reviewの1回目「Changes Required」を経て、入力を`RetryAlert`単独から`RetryNotificationDecision`
+  単独へ・Domain Modelを`level`保持から`body`のみへ・Dependencyを`retry_alert`直接依存から
+  `retry_notification`のみへ、それぞれ修正し2回目「Approved」でDesign Freezeへ至った。新規E2E
+  （21シナリオ・117アサーション・117/117 PASS）・既存Regression（v5.9.0〜v6.6.0、826/826 PASS、
+  合計943/943 PASS）とも完全PASSし、Test Review・Code Reviewともに「Approved」。Runtime Wiring・
+  CLI Wiringはいずれも未実装（本Releaseの対象外。他4パッケージと同様「消費者不在の先行実装」の
+  まま）（`docs/design/retry_notification_message_foundation.md`）
 - [ ] **Retry Notification Channel Foundation**（次候補）：Message Foundationが生成した通知内容を
   どの通知先（Slack／メール等）へ送るか選択する別パッケージ（同設計書21章）
 - [ ] **Retry Notification Delivery／Sender Foundation**（次候補）：Channel Foundationが選択した

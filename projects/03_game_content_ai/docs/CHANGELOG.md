@@ -361,6 +361,82 @@
 
 ---
 
+## [v6.7.0] - 2026-07-15 ★ Retry Notification Message Foundation
+
+### Added
+
+- 新規パッケージ`src/retry_notification_message/`：v6.6.0が生成する`RetryNotificationDecision`
+  **のみ**を入力として受け取り、固定の通知Message Value Object（`RetryNotificationMessage`）を
+  構築するだけのValue Building Only Foundation。判定（Judgment）は一切行わない。
+  `RetryNotificationMessage`（frozen dataclass、`body`のみ保持）・`RetryNotificationMessageBuilder`
+  （`build(decision) -> RetryNotificationMessage`、Stateless）の2コンポーネントで構成
+  - `src/retry_notification_message/__init__.py`
+  - `src/retry_notification_message/retry_notification_message.py`
+  - `src/retry_notification_message/retry_notification_message_builder.py`
+- 固定対応表（Design Contract）：`NOTIFY → RetryNotificationMessage(body="Retry Runtimeで通知対象の
+  状態が検出されました。詳細を確認してください。")` / `NO_NOTIFICATION → ValueError`（Message生成
+  契約への違反として明示的に失敗させる。「評価失敗」とは異なる） / 未対応Status相当値 → `ValueError`
+- `tests/test_e2e_v6_7_0_retry_notification_message_foundation.py`新規作成（21シナリオ・
+  117アサーション）
+- `docs/design/retry_notification_message_foundation.md`新規作成：Architecture Design・ChatGPT
+  Architecture Review（1回目「Changes Required」・指摘反映・2回目「Approved」）・Design Freeze・
+  Test Review・Code Reviewの経緯を含む
+
+### Architecture／Behavior
+
+- `RetryNotificationMessage`は`body`のみを保持するImmutable（frozen dataclass）。`RetryAlert` /
+  `RetryAlertLevel` / `RetryNotificationDecision` / `RetryNotificationStatus` / `title` / `channel` /
+  `timestamp` / `reason`はいずれも保持・複製しない。重大度（WARNING/CRITICAL）が必要な将来の消費者
+  は、呼び出し元が保持する元の`RetryAlert`を参照する（v6.6.0のTechnical Debt方針を継続）
+- `RetryNotificationMessageBuilder`は`RetryNotificationDecision`のみを入力とするStateless Pure
+  Function。`RetryAlert` / `RetryAlertLevel`は一切参照しない。`RetryAlertLevel.WARNING` /
+  `CRITICAL`はいずれも`NOTIFY`へ収束するため区別できず、共通の固定Messageを生成する
+- `retry_notification_message`が唯一importする自作パッケージは`retry_notification`のみ。
+  `retry_alert` / `retry_monitoring` / `retry_metrics` / Runtime系 / `RetryManager` / Logger /
+  CLI（`scripts/`） / 外部ライブラリはいずれもimportしない。`retry_notification`側（`__init__.py`
+  含む全productionモジュール）も`retry_notification_message`をimportしない（逆依存禁止）。これら
+  の契約は新規E2Eテストのソースコード走査（AST解析）で機械的に保証した
+- 分類はArchitecture Release。新規パッケージ追加（Layer変更）に加え`retry_notification`への新規
+  import（Dependency変更）を伴うため
+- **Architecture Reviewの経緯**：初版では入力を`RetryAlert`単独・Domain Modelを`level`保持・
+  Dependencyを`retry_alert`直接依存として提示したが、1回目のArchitecture Review「Changes
+  Required」で「Message層がNotification Decisionを迂回する」「重大度非保持の責務境界を実質的に
+  変更する」「直前Layerだけへ依存する既存Architectureの一貫性を崩す」との指摘を受け、入力を
+  `RetryNotificationDecision`単独・Domain Modelを`body`のみ・Dependencyを`retry_notification`
+  のみへそれぞれ修正し、2回目のArchitecture Reviewで「Approved」となった
+- 対象外（今回は未実装）：実際の通知送信（Slack／メール等）、チャネル選択、Suppression／重複排除／
+  レート制限、Recovery通知、履歴・永続化、Runtime Wiring、Composition Root Wiring、CLI表示、
+  WARNING／CRITICAL別Message（同設計書19章・20章）
+- `RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` /
+  `RetryManager`（`retry_engine`）/ `RetryCompositionRoot` / `RetryRuntimeCycleLogger`
+  （`retry_runtime_logging`）、`src/retry_metrics/` / `src/retry_monitoring/` / `src/retry_alert/` /
+  `src/retry_notification/`はいずれも無改修。本Releaseにおけるproduction codeの変更は、新規
+  パッケージ`src/retry_notification_message/`の追加のみ
+- 新規Known Issueなし
+
+### Tested
+
+- `tests/test_e2e_v6_7_0_retry_notification_message_foundation.py`：21シナリオ・117アサーション・
+  117/117 PASS（終了コード0、警告なし）
+- 既存回帰確認（いずれもベースラインと同一件数、新規差分なし）：
+  - `tests/test_e2e_v5_9_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_0_0_*.py`：43/43 PASS
+  - `tests/test_e2e_v6_1_0_*.py`：44/44 PASS
+  - `tests/test_e2e_v6_2_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_3_0_*.py`：174/174 PASS
+  - `tests/test_e2e_v6_4_0_*.py`：171/171 PASS
+  - `tests/test_e2e_v6_5_0_*.py`：131/131 PASS
+  - `tests/test_e2e_v6_6_0_*.py`：135/135 PASS
+- Regression合計：826/826 PASS。全Suite終了コード0、ベースライン差なし、警告なし
+- 新規E2E（117）＋Regression（826）＝943/943 PASS
+- 本Releaseによる新規Known Issue：なし。既存最新Known Issueは`[KI-29]`のまま（解消済み）
+
+### Scope
+
+- Runtime Wiringなし・CLI Wiringなし・Channel／Senderなし・外部I/Oなし・既存production code無改修
+
+---
+
 ## [v6.6.0] - 2026-07-15 ★ Retry Notification Foundation
 
 ### Added

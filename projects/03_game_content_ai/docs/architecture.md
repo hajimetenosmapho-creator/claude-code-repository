@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-07-15（v6.7.0 — Retry Notification Message Foundationを追記。v6.6.0が生成する`RetryNotificationDecision`（`status`のみ）**のみ**を入力として受け取り、固定の通知Message Value Object（`RetryNotificationMessage`）を構築するだけの新規独立パッケージ`src/retry_notification_message/`（`RetryNotificationMessage` / `RetryNotificationMessageBuilder`）を追加したこと。判定（Judgment）ではなくValue Buildingを担当すること、`RetryNotificationMessage`は`body`のみを保持するImmutable（frozen dataclass）とし`level`等の重大度情報は保持しないこと（重大度が必要な将来の消費者は呼び出し元が保持する元の`RetryAlert`を参照する、というv6.6.0のTechnical Debt方針を継続）、依存方向は`retry_notification_message → retry_notification`の一方向のみを許可し`retry_alert`／`retry_monitoring`／`retry_metrics`への直接依存・`retry_notification → retry_notification_message`の逆依存はいずれも禁止しこの契約を新規E2Eテストのソースコード走査（AST解析）で機械的に保証したこと、`RetryNotificationStatus.NOTIFY`は固定Messageへ変換し`NO_NOTIFICATION`および未対応値はいずれも`ValueError`でFail Fastとしたこと、`RetryAlertLevel.WARNING`／`CRITICAL`はいずれも`NOTIFY`へ収束するため区別せず共通Messageを生成すること（重大度別MessageはFuture Candidate）、Architecture Reviewの1回目「Changes Required」を経て入力を`RetryAlert`単独から`RetryNotificationDecision`単独へ・Domain Modelを`level`保持から`body`のみへ・Dependencyを`retry_alert`直接依存から`retry_notification`のみへ、それぞれ修正し2回目「Approved」でDesign Freezeへ至ったこと、Channel選択・実送信（Sender）・Suppression／Deduplication／Rate Limit・Runtime／Composition Root配線・CLI表示はいずれも対象外とし将来の後続Foundationへ切り出したこと、`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` / `RetryManager` / `RetryCompositionRoot` / `RetryRuntimeCycleLogger`および`src/retry_metrics/` / `src/retry_monitoring/` / `src/retry_alert/` / `src/retry_notification/`はいずれも無改修としたことを明記。新規E2E（21シナリオ・117アサーション・117/117 PASS）・既存Regression（v5.9.0〜v6.6.0、826/826 PASS、合計943/943 PASS）とも終了コード0・警告なしで完全PASSし、Test Review「Approved」・Code Review「Approved」を経たこと、**Runtime Wiring・CLI Wiringはいずれも未実装（本Releaseの対象外）**であり4パッケージ（Metrics/Monitoring/Alert/Notification）と同様「消費者不在の先行実装」のままであることを明記）
 更新日：2026-07-14（v6.4.0 — Retry Monitoring Foundationを追記。v6.3.0が生成する`RetryMetricsSnapshot`のみを入力として受け取る新規パッケージ`src/retry_monitoring/`（`RetryHealthStatus` / `RetryHealthThresholds` / `RetryHealthReport` / `RetryHealthEvaluator`）を追加し、あらかじめ定義した閾値（`degraded_below=0.8` / `unhealthy_below=0.5`）に基づいて健全性ステータス（`HEALTHY` / `DEGRADED` / `UNHEALTHY`）を判定するだけのJudgment Only Foundationとしたこと、`RetryHealthThresholds`はConfigではなくMonitoring DomainのDomain Value（Immutable Value Object、frozen dataclass）と位置づけFoundationは固定値を保持する責務のみを持つとしたこと、`RetryHealthEvaluator`はThresholdを自ら生成せず外部から受け取るかDefault Thresholdを使用するのみとしたこと、`RetryHealthReport`はRelease 6.4では`status`のみを保持しreason／warnings／details（またはviolations）は将来拡張として切り出したこと、`RetryHealthEvaluator`はStateless Pure Functionとして同一Snapshotに対し常に同一Reportを返すこと、依存方向は`retry_monitoring → retry_metrics`の一方向のみを許可し`retry_metrics → retry_monitoring`の逆依存・Runtime／Logger／JSONLへの依存はいずれも禁止しこの契約を新規E2Eテストのソースコード走査で機械的に保証したこと、`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` / `RetryManager` / `RetryCompositionRoot` / `RetryRuntimeCycleLogger`および`src/retry_metrics/`はいずれも無改修としたこと、CLI表示・Alert通知（Slack／メール等）はいずれも対象外とし将来のRetry Alert Foundation／CLI/Report Wiring Foundationへ切り出したことを明記）
 更新日：2026-07-14（v6.3.0 — Retry Metrics Foundationを追記。新規パッケージ`src/retry_metrics/`（`RetryRuntimeLogRecord` / `RetryRuntimeLogReader` / `RetryMetricsCalculator` / `RetryMetricsSnapshot`）を追加し、v6.2.0が書き込む`.run/retry_runtime_log.jsonl`を読み取り集計値を計算するだけのRead Only Foundationとしたこと、`RetryMetricsSnapshot`は対象サイクル数・記録期間（timestampのmin/max）・dry_run実行サイクル数・各段階（Enqueue/Scheduler/Execution/Removal/Cleanup/TerminalCleanup/History）の合計値・Enqueue段階の成功率（`enqueue_success_ratio`）を保持するImmutable（frozen dataclass）な値オブジェクトとし生成後は変更しないこと、Retry Runtimeへは一切フィードバックを行わない（Retry Queueの更新・`RetryManager`等の変更・Retry実行可否の判断・Alert判定はいずれも行わない）Read Only Foundationと位置づけたこと、`retry_metrics`は他のどの`retry_*`パッケージもimportせずファイルパスとJSON Schemaの「形」のみを契約として扱う疎結合を採用したこと、`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` / `RetryManager` / `RetryCompositionRoot` / `RetryRuntimeCycleLogger`はいずれも無改修としたこと、真の成功率（RetryOutcome別内訳）・試行回数分布・Queue滞留時間は現行の固定JSON Schemaだけでは算出不能なため対象外とし将来のRetry Runtime Log Schema Extensionへ申し送ったこと、Retry Monitoring Foundationは本Foundationの出力（`RetryMetricsSnapshot`）を入力として健全性を判定するだけの別パッケージとして`Metrics → Monitoring → Alert`の一方向依存で設計する方針を確定し（逆依存禁止）今回は対象外としたこと、当初Fast Track Releaseとして着手指示があったが新規パッケージ追加（Layer変更）に該当するためArchitecture Releaseへ分類を修正したことを明記）
 更新日：2026-07-14（v6.2.0 — Structured Loop Logging Foundationを追記。新規パッケージ`src/retry_runtime_logging/`（`RetryRuntimeCycleLogger`）を追加し、Retry Runtimeの1サイクル分の実行結果をJSON Lines形式で`.run/retry_runtime_log.jsonl`へ1レコード追記するだけの独立コンポーネントとしたこと、記録内容はサイクル番号（`scripts/run_retry_runtime.py`の`run_cycle()`クロージャがローカル変数`cycle_count`として保持し`RetryRuntimeLoop`自体は無改修のまま）・タイムスタンプ（ISO8601、UTC）・`--dry-run`指定有無・`RetryRuntimeCycleResult`由来の各件数（Enqueue/Scheduler/Execution/Removal/Cleanup/TerminalCleanup/History）に限定したこと、JSON Schemaは本Releaseで固定し将来の変更はフィールド追加のみを基本方針としたこと、ログ書き込み失敗（`OSError`）時は例外を送出せずstderrへWARNINGを出力したうえでRetry Runtime本体の処理を継続するベストエフォート方針（Exit Code Policyとは区別）としたこと、`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` / `RetryManager` / `RetryCompositionRoot`はいずれも無改修としRuntime Pipelineの縦の実行順序は一切変更せずログ出力を`run_cycle()`クロージャ内の横方向の追加として実現したこと、Architecture Design段階で候補比較したStale Lock Recovery Foundationは、stale判定が`RetryRuntimeLock`の責務に本質的に食い込み「Lockへの責務追加禁止」制約と構造的に衝突するため見送ったこと、ログローテーション・Metrics集計・Dashboard化・ログ出力先の環境変数化はいずれも対象外とし将来のRetry Metrics / Monitoring Foundationの入力データとする位置づけとしたことを明記）
@@ -2761,4 +2762,77 @@ Retry Alert／Notification CLI Report Wiring Foundation・Runtime／Scheduler In
 `docs/ROADMAP.md`）。
 
 詳細は`docs/design/retry_notification_foundation.md`
+（Architecture Design・ChatGPT Architecture Review2回の経緯・Design Freezeを含む）を参照。
+
+---
+
+## Retry Notification Message Foundation層（`src/retry_notification_message/`、v6.7.0 実装完了）
+
+> **本節は実装完了時点の記録である。2026-07-15時点で新規E2E（21シナリオ・117アサーション・117/117 PASS）・既存Regression（v5.9.0〜v6.6.0、826/826 PASS、合計943/943 PASS）とも完全PASSし、Test Review「Approved」・Code Review「Approved」を経ている。ただしRuntime Wiring・CLI Wiringはいずれも未実装（本Releaseの対象外）であり、他4パッケージと同様「消費者不在の先行実装」のままである。**
+
+v6.6.0が生成する`RetryNotificationDecision`**のみ**を入力として受け取り、固定の通知Message Value Object（`RetryNotificationMessage`）を構築するだけの新規独立パッケージ`src/retry_notification_message/`（`RetryNotificationMessage` / `RetryNotificationMessageBuilder`）を追加した。判定（Judgment）ではなくValue Buildingを担当し、Runtime・Logger・JSONL・Channel・Senderのいずれへも一切フィードバックを行わない。
+
+```
+RetryNotificationDecision（v6.6.0が生成した判定結果。本Foundationの唯一の入力）
+        │
+        ▼
+RetryNotificationMessageBuilder.build(decision) -> RetryNotificationMessage
+        │
+        ▼
+（呼び出し元は本Releaseでは未定。消費者不在の先行実装。将来はChannel/Sender Foundationが消費）
+```
+
+### データフローとimport依存方向（区別して記述）
+
+**データフロー（実行順序）**：`Metrics → Monitoring → Alert → Notification → Notification Message`。Message FoundationはNotification Decisionの直接の後続Layerである。
+
+**import依存方向（ソースコードの依存関係）**：データフローとは逆向きになる。
+
+```
+retry_notification_message
+    ↓
+retry_notification
+    ↓
+retry_alert
+    ↓
+retry_monitoring
+    ↓
+retry_metrics
+```
+
+`retry_notification_message`がimportするのは`retry_notification`（`RetryNotificationDecision` / `RetryNotificationStatus`型の参照のみ）と標準ライブラリのみであり、`retry_alert` / `retry_monitoring` / `retry_metrics` / Runtime系 / `RetryCompositionRoot` / Logger / `scripts/`（CLI） / 外部ライブラリのいずれもimportしない。逆方向（`retry_notification → retry_notification_message`）も発生しない。この契約は新規E2Eテストのソースコード走査（AST解析、相対importの`level>=2`検出を含む）により機械的に保証されており、Code Reviewで`__all__`の集合検査のみでは名前空間全体の想定外露出まで保証できない点が指摘され、`hasattr()`による直接検査を追加した。
+
+### Architecture Reviewの経緯（入力設計・Dependency方向の修正）
+
+初版のArchitecture Designでは`build(alert: RetryAlert) -> RetryNotificationMessage`という入力設計・`retry_notification_message → retry_alert`という直接依存を提示したが、ChatGPT Architecture Review（1回目「Changes Required」）で「Message層がNotification Decisionを迂回する」「AlertからNotificationとMessageが分岐する構造になる」「直前Layerだけへ依存する既存Architectureの一貫性を崩す」との指摘を受けた。修正の結果、入力を`build(decision: RetryNotificationDecision) -> RetryNotificationMessage`へ、Dependencyを`retry_notification_message → retry_notification`のみへ変更し、2回目のArchitecture Reviewで「Approved」となった。
+
+### 変換規則（Design Contract）とMessageの意味契約
+
+- `RetryNotificationMessageBuilder`は閾値判定・通知要否判定を一切行わない。`RetryNotificationEvaluator`（v6.6.0）が既に確定した`status`を、以下の固定対応表に従って`RetryNotificationMessage`へ変換するだけの単純な写像である。`NOTIFY → RetryNotificationMessage(body=<固定通知文言>)`
+- `RetryNotificationStatus.NO_NOTIFICATION`をBuilderへ渡すことは契約違反として扱い、`ValueError`を送出する（Fail Fast）。「評価の正常結果として通知対象ではない」ことと「Messageを生成できる」ことは異なる概念であり、混同しない
+- 既知の2 Status（`NO_NOTIFICATION` / `NOTIFY`）以外が渡された場合も同様に`ValueError`を送出する
+- `RetryAlertLevel.WARNING`／`CRITICAL`はいずれも`NOTIFY`へ収束するため、Builderは両者を区別できず区別しない。共通の固定Messageを生成する。Message本文は「通知対象状態の存在を伝える」ことのみを目的とし、重大度・原因・時刻・対象・対応手順は表現しない
+
+### RetryNotificationMessageの設計判断
+
+- `RetryNotificationMessage`はRelease 6.7では`body`のみを保持するImmutable（frozen dataclass）な値オブジェクトとした。初版では`level: RetryAlertLevel`の保持を検討したが、Architecture Reviewで「将来Channel要件の先読みになる」「v6.6.0で意図的に残した重大度非保持の責務境界を実質的に変更する」との指摘を受け、`body`のみへ縮小した。重大度が必要な将来の消費者は、v6.6.0のTechnical Debt方針どおり、呼び出し元が保持する元の`RetryAlert`を別途参照する
+- `RetryNotificationMessageBuilder`はStateless Pure Functionであり、同一の`RetryNotificationDecision`に対し常に同一の`RetryNotificationMessage`（`NOTIFY`の場合）または同一の例外（`NO_NOTIFICATION`・未対応値の場合）を返す
+
+### Runtime Pipeline・既存4パッケージへ一切手を加えない設計判断
+
+`RetryRuntimeLock` / `RetryRuntimeShutdown` / `RetryRuntimeLoop` / `RetryRuntimeOrchestrator` / `RetryManager` / `RetryCompositionRoot` / `RetryRuntimeCycleLogger`、`src/retry_metrics/`、`src/retry_monitoring/`、`src/retry_alert/`、`src/retry_notification/`はいずれも無改修。本Foundationからのフィードバックは一切発生しない。
+
+### Test Review・Code Review・Regressionの実績
+
+新規E2E（`tests/test_e2e_v6_7_0_retry_notification_message_foundation.py`）は21シナリオ・117アサーション・117/117 PASS（終了コード0、警告なし）。既存Regression Suite（v5.9.0〜v6.6.0、826/826 PASS）とあわせた総確認数は943/943 PASS。Test Review・Code Reviewともに「Approved」。Code Reviewで発見した唯一の指摘（Public API検査が`__all__`の集合一致のみでは名前空間全体の想定外露出を保証できない点）は、E2Eテストへの`hasattr()`検査追加（production code無改修）で解消した。
+
+### 責務境界（Out of Scope）
+
+`RetryAlert`入力・`RetryAlertLevel`のMessage保持・WARNING／CRITICAL別Message・チャネル選択・実送信（Slack／メール／Webhook等）・Suppression／重複排除／レート制限・Recovery通知・履歴の永続化・Runtime Wiring・Composition Root Wiring・CLI表示は、いずれも本Releaseの対象外である。
+
+### Future Extension
+
+Retry Notification Channel Foundation・Retry Notification Delivery／Sender Foundation・Retry Alert／Notification Message CLI Report Wiring Foundation・Severity-aware Message Foundation・Message Template Foundation・Localization・Runtime／Scheduler Integration・Suppression／Deduplication／Rate Limiting（順序は確定事項として固定しない。詳細は`docs/ROADMAP.md`）。
+
+詳細は`docs/design/retry_notification_message_foundation.md`
 （Architecture Design・ChatGPT Architecture Review2回の経緯・Design Freezeを含む）を参照。
