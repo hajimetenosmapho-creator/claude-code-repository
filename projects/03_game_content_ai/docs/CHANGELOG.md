@@ -361,6 +361,121 @@
 
 ---
 
+## [v6.11.0] - 2026-07-17 ★ OpenAI Image Generation Adapter Foundation
+
+### Added
+
+- 新規独立package`src/openai_image_generation/`：v6.10.0の`AIImageGenerator` Protocolを実装する
+  最初の具象Provider。OpenAI公式Python SDK経由でOpenAI Images API（`gpt-image-2`）を呼び出す
+  - `src/openai_image_generation/__init__.py`：package rootから`OpenAIImageGenerator` /
+    `OpenAIImageGenerationError` / `OpenAIImageGenerationErrorReason`の3つのみを公開
+  - `src/openai_image_generation/openai_image_generator.py`：`OpenAIImageGenerator`
+    （`__init__` / `from_env` / `generate`）・`OpenAIImageGenerationError`（`RuntimeError`、
+    専用例外1種類のみ、`reason`属性を保持）・`OpenAIImageGenerationErrorReason`（Enum、9種）
+- `tests/test_e2e_v6_11_0_openai_image_generation_adapter_foundation.py`新規作成
+  （123シナリオ・163ケース・248アサーション）
+- `docs/design/openai_image_generation_adapter_foundation.md`新規作成：Architecture Design・
+  Architecture Review 1〜5・Test Review 1〜6・Implementation・Code Review 1指摘反映の経緯を含む
+
+### Public API
+
+- `OpenAIImageGenerator`：`__init__(api_key, *, model, size, quality, output_format,
+  timeout_seconds, client)` / `from_env()` / `generate(prompt: str) -> GeneratedImage`
+- `OpenAIImageGenerationError`：`RuntimeError`。`reason: OpenAIImageGenerationErrorReason`のみ保持
+- `OpenAIImageGenerationErrorReason`：`AUTHENTICATION` / `PERMISSION_DENIED` / `RATE_LIMIT` /
+  `TIMEOUT` / `CONNECTION` / `REQUEST_REJECTED` / `SERVER_ERROR` / `INVALID_RESPONSE` / `UNKNOWN`
+  の9メンバー
+
+### Architecture／Behavior
+
+- `size`は代表7値（`1024x1024` / `1536x1024` / `1024x1536` / `2048x2048` / `2048x1152` /
+  `3840x2160` / `2160x3840`）の閉じたallowlistのみを許可する。OpenAI Provider自体は
+  最大辺3840px以下・幅と高さがともに16pxの倍数・長辺短辺比3:1以内・総ピクセル数655,360以上
+  8,294,400以下（いずれも境界値含む）を満たす任意のWIDTHxHEIGHTをサポートするが、v6.11.0
+  Adapterは予測可能性・入力Contractの固定・Testabilityを優先し、Provider Capabilityの全域を
+  そのまま公開しない。`auto`・任意custom WIDTHxHEIGHTはいずれも不採用
+- `quality`（`low`/`medium`/`high`、デフォルト`medium`）・`output_format`（`png`/`jpeg`/`webp`、
+  デフォルト`png`）もallowlist化。`n=1`固定・`background="opaque"`固定
+- Timeoutはconstructor引数（デフォルト180秒、公式ガイド「Complex prompts may take up to 2
+  minutes to process」に対し50%のマージン）＋任意環境変数`OPENAI_IMAGE_TIMEOUT_SECONDS`。
+  Client Injection・自己生成いずれの経路でも、API使用直前に必ず
+  `client.with_options(timeout=..., max_retries=0)`を経由させ、SDK既定の暗黙Retry
+  （デフォルト2回）を無効化する
+- Base64は`base64.b64decode(value, validate=True)`によるstrict decode。Response構造異常・
+  Base64異常はいずれも単一の安全な専用例外`OpenAIImageGenerationError`（秘密情報を含まない
+  `reason` Enum付き）へ変換する。Provider例外の判定は`AuthenticationError` →
+  `PermissionDeniedError` → `RateLimitError` → `APITimeoutError`（`APIConnectionError`の
+  subclassのため先に判定） → `APIConnectionError` → `BadRequestError`等 → `InternalServerError`
+  → `APIError` catch-allの順で行う純粋関数`_classify_api_error()`が担う
+- Exception Chainingはclassifyーthenーraiseーoutsideーexceptパターン（except節内では固定
+  message・reasonのみを変数へ格納し、except節を抜けた後に`raise ... from None`）を採用し、
+  `__cause__`・`__context__`双方からProvider例外オブジェクト（Authorizationヘッダーを含みうる）
+  へ到達できないようにする
+- 実HTTP・実課金防止はRuntime Guard（`openai.OpenAI`をpatchし、無許可の実Client構築を
+  `AssertionError`で即座に検出する主防御）＋AST自己検査（補助防御）の二重防御で構造的に保証する
+- 分類はArchitecture Release。新規独立package・新規Public API・新規外部dependency
+  （`openai`）・新規外部I/Oの確立を伴うため
+- 対象外（今回は未実装）：`WordPressMediaUploader`との接続、Generated Image → WordPress Media
+  Upload Wiring、`featured_media`設定、既存記事生成Pipeline・Workflow・Scheduler・Retry
+  Runtimeへの統合、自動Retry、複数画像生成（n>1）、画像編集API、Responses API、透明背景、
+  画像ファイル保存・リサイズ、Pillow導入、Prompt Builder、著作権・商標判定、任意custom
+  WIDTHxHEIGHTの受理（同設計書37章）
+- 既存`ai_image_generation` / `wordpress_media` / `WordPressOutput` / `image_resolver.py` /
+  `ArticleData` / 記事生成Pipeline / Workflow / Scheduler / Retry Runtimeはいずれも無改修。
+  既存側から`openai_image_generation`へのWiringも本Releaseでは行わない（消費者不在の先行実装）
+- **Implementation中に発見・解消した設計文書の不整合（IMP-DESIGN-1）**：production codeの
+  `_ALLOWED_SIZES`実装照合中、size allowlistの実体（7値）に対し設計書の複数箇所
+  （ADR-6・AD-7・Constructor検証Contract・Test Inventory根拠）が「8値」と誤って記載していた
+  ことを発見した。7値（既存frozenset literal、OpenAI公式一次情報とも一致）を正式Contractとして
+  確定し、8個目の値は追加しなかった。この訂正は独立したFocused Architecture Review（4回目
+  「Changes Required」→Provider CapabilityとAdapter Contractの区別明記等を経て5回目
+  「Approved」）およびFocused Test Review（訂正後の正式Test Inventory 123 Scenario／163 Case／
+  248 Assertionとして6回目「Approved」）で再承認済みであり、未解決の問題ではない
+- 新規Known Issueなし
+
+### Tested
+
+- `tests/test_e2e_v6_11_0_openai_image_generation_adapter_foundation.py`：123シナリオ・
+  163ケース・248アサーション・248/248 PASS（終了コード0、意図しない警告なし、Tracebackなし）
+- 既存回帰確認（`docs/CHANGELOG.md` v6.10.0 Testedセクション記載の正式13ファイル、いずれも
+  ベースラインと同一件数、新規差分なし）：
+  - `tests/test_e2e_v1_11_0_save_result.py`：43/43 PASS
+  - `tests/test_e2e_v5_9_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_0_0_*.py`：43/43 PASS
+  - `tests/test_e2e_v6_1_0_*.py`：44/44 PASS
+  - `tests/test_e2e_v6_2_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_3_0_*.py`：174/174 PASS
+  - `tests/test_e2e_v6_4_0_*.py`：171/171 PASS
+  - `tests/test_e2e_v6_5_0_*.py`：131/131 PASS
+  - `tests/test_e2e_v6_6_0_*.py`：135/135 PASS
+  - `tests/test_e2e_v6_7_0_*.py`：117/117 PASS
+  - `tests/test_e2e_v6_8_0_*.py`：197/197 PASS
+  - `tests/test_e2e_v6_9_0_*.py`：331/331 PASS
+  - `tests/test_e2e_v6_10_0_*.py`：78/78 PASS
+- Regression合計：1592/1592 PASS（v1.11.0・v5.9.0〜v6.10.0）。全Suite終了コード0、
+  ベースライン差なし、実異常の警告なし
+- 新規E2E（248）＋Regression（1592）＝1840/1840 PASS
+- Architecture Review：1回目「Changes Required」（Blocking B-1：Client Injection経路で
+  max_retries=0／timeout保証が及ばない、Major M-1〜M-5、Minor m-1〜m-3）、2回目「Changes
+  Required」（Major R2-M-1：Timeout Contract表の記述不整合、Minor R2-m-1）、3回目「Approved」。
+  Implementation中発見のIMP-DESIGN-1を受けた4回目「Changes Required」（Minor AR4-m-1：
+  Provider Capability説明の条件数不足）、5回目「Approved」
+- Test Review：1回目「Changes Required」（Major FIND-1・FIND-2、Minor FIND-3〜FIND-5）、
+  2回目「Changes Required」（Major TR2-M-1、Minor TR2-m-1）、3回目「Changes Required」
+  （Minor TR3-m-1）、4回目「Changes Required」（Minor TR4-m-1・TR4-m-2）、5回目「Approved」。
+  IMP-DESIGN-1による正式Test Inventory訂正（123 Scenario／164→163 Case／249→248 Assertion）
+  を受けた6回目「Approved」
+- Code Review：1回目「Approved」（Blocking／Major／Minor Findingsなし）
+- 本Releaseによる新規Known Issueなし。IMP-DESIGN-1はArchitecture Review 5・Test Review 6で
+  再承認済みの解消済みFindingであり、Known Issueとしては追加しない
+
+### Scope
+
+- Consumer-less Foundation・既存production code無改修・既存test無改修・既存Pipeline非配線・
+  実HTTP通信なし・実課金なし・size 7値allowlist・任意custom size不採用
+
+---
+
 ## [v6.10.0] - 2026-07-17 ★ AI Image Generation Contract Foundation
 
 ### Added

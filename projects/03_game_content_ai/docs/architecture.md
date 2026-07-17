@@ -3201,3 +3201,135 @@ OpenAI Image Generation Adapter Foundation・Generated Image → WordPress Media
 
 詳細は`docs/design/ai_image_generation_contract_foundation.md`
 （Architecture Design・Test Design・Code Review指摘反映の経緯を含む）を参照。
+
+---
+
+## OpenAI Image Generation Adapter Foundation層（`src/openai_image_generation/`、v6.11.0 実装完了）
+
+> **本節は実装完了時点の記録である。新規E2E（123シナリオ・163ケース・248アサーション・248/248 PASS）・既存Regression（`docs/CHANGELOG.md` v6.10.0 Testedセクション記載の正式13ファイル、1592/1592 PASS、新規E2E込み合計1840/1840 PASS）とも完全PASSし、Architecture Review（5回目「Approved」。Implementation中発見のsize allowlist件数の文書不整合IMP-DESIGN-1を受けた4回目「Changes Required」を含む）・Test Review（6回目「Approved」。IMP-DESIGN-1によるTest Inventory訂正を受けた再承認を含む）・Code Review（1回目「Approved」）を経ている。**
+
+### Purpose
+
+v6.10.0の`AIImageGenerator` Protocolを実装する最初の具象Providerを追加する。OpenAI公式Python SDK（`openai`）経由でOpenAI Images API（`gpt-image-2`）を呼び出し、単一の`prompt: str`から単一の`GeneratedImage`を生成する。WordPress Media Upload・記事投稿Pipelineへの配線は行わない**Consumer-less Foundation**である。
+
+```
+prompt: str
+        │
+        ▼
+prompt validation（18章）
+        │
+        ▼
+client取得（Constructor Injection or 遅延生成）
+        │
+        ▼
+with_options(timeout=self._timeout_seconds, max_retries=0)
+        │
+        ▼
+client.images.generate(model / prompt / n=1 / size / quality / output_format / background=opaque)
+        │
+        ▼
+Response Contract検証（response.data[0].b64_json）
+        │
+        ▼
+strict Base64 decode（validate=True）
+        │
+        ▼
+GeneratedImage（image_bytes / mime_type）
+```
+
+### Package Boundary
+
+新規独立package`src/openai_image_generation/`。
+
+```
+src/openai_image_generation/
+├── __init__.py                  # Public API export
+└── openai_image_generator.py    # OpenAIImageGenerator + OpenAIImageGenerationError + Reason
+```
+
+### Public API
+
+`src/openai_image_generation/__init__.py`が公開するのは次の3つのみ。
+
+```python
+OpenAIImageGenerator
+OpenAIImageGenerationError
+OpenAIImageGenerationErrorReason
+```
+
+Provider別の例外subclass・production Fake・Null Object・`retryable`属性はいずれも導入していない。
+
+### 既存Contractとの関係
+
+`ai_image_generation.AIImageGenerator`（v6.10.0、`typing.Protocol`）を明示継承せず、構造的部分型のみで満たす。戻り値は`ai_image_generation.GeneratedImage`をそのまま再利用し、複製・拡張はしていない。`ai_image_generation`パッケージ自体はv6.11.0でも無改修であり、`openai_image_generation`は`GeneratedImage`のみをimportする（`AIImageGenerator`はimportしない）。
+
+### 依存関係
+
+```
+openai>=2.46.0,<3.0.0
+```
+
+`httpx`はOpenAI SDKのコア必須依存であり、production codeは`httpx`を直接importしない（Test-onlyでのみ使用）。`openai`パッケージへの依存は`openai_image_generation`モジュール内に閉じ込め、メソッド内遅延importとする。
+
+### Request Contract
+
+```
+model：gpt-image-2-2026-04-21（固定スナップショット、上書き可）
+n：1（固定、constructor引数・環境変数いずれからも変更不可）
+background：opaque（固定、gpt-image-2は透明背景非対応）
+size：代表7値の閉じたallowlist（下記参照）
+quality：low／medium／high（allowlist、デフォルトmedium）
+output_format：png／jpeg／webp（allowlist、デフォルトpng）
+timeout：constructor引数（デフォルト180秒）＋任意環境変数OPENAI_IMAGE_TIMEOUT_SECONDS
+SDK retry：with_options(max_retries=0)により、Client Injection・自己生成いずれの経路でも
+    使用直前に強制的に0へ上書き
+```
+
+`response_format` / `moderation` / `stream` / `partial_images` / `user` / `style` / `output_compression`はいずれもリクエストへ含めない。
+
+### sizeの区別（Provider Capability と v6.11.0 Adapter Contract）
+
+```
+Provider Capability：
+    OpenAI Providerは、最大辺3840px以下・幅と高さがともに16pxの倍数・
+    長辺短辺比3:1以内・総ピクセル数655,360以上8,294,400以下（いずれも境界値含む）を
+    すべて満たす任意のWIDTHxHEIGHTをサポートする。
+
+v6.11.0 Adapter Contract：
+    Provider Capabilityの全域は公開せず、公式ドキュメントに代表例として
+    列挙された7値（1024x1024 / 1536x1024 / 1024x1536 / 2048x2048 / 2048x1152 /
+    3840x2160 / 2160x3840）のみを閉じたallowlistとして許可する。
+
+auto：不採用（非決定的コストのため）
+任意custom WIDTHxHEIGHT：不採用（v6.11.0では代表7値以外を受け付けない）
+```
+
+### Error／Security Contract
+
+```
+単一例外：OpenAIImageGenerationError（RuntimeError）
+reason Enum：9種（AUTHENTICATION / PERMISSION_DENIED / RATE_LIMIT / TIMEOUT /
+    CONNECTION / REQUEST_REJECTED / SERVER_ERROR / INVALID_RESPONSE / UNKNOWN）
+Provider message／response body／API key／Authorization header／prompt／
+    Base64文字列／image bytes：いずれも例外・repr・print・logへ含めない
+Exception Chaining：classify-then-raise-outside-exceptパターンにより、
+    __cause__（from None）・__context__（except節外でのraise）双方を到達不能化
+KeyboardInterrupt／SystemExit：変換しない（BaseException直系のため対象外）
+Runtime Guard：openai.OpenAIをpatchし、無許可の実Client構築をAssertionErrorで
+    即座に検出する二重防御。実HTTP・実課金は構造的に発生しない
+```
+
+### Backward Compatibility
+
+既存`ai_image_generation` / `wordpress_media` / `WordPressOutput` / `image_resolver.py` / `ArticleData` / 記事生成Pipeline / Workflow / Scheduler / Retry Runtime、および既存テスト一式はいずれも無改修。新規独立packageの追加のみであり、既存の呼び出し元（現状ゼロ）にも影響しない。
+
+### Out of Scope
+
+`WordPressMediaUploader`との接続、Generated Image → WordPress Media Upload Wiring、`featured_media`設定、`image_resolver.py` / `WordPressOutput`変更、既存記事生成Pipeline・Workflow・Scheduler・Retry Runtimeへの統合、自動Retry、sleep／Backoff、複数画像生成（n>1）、画像編集（Image Edit API）、Responses API、ストリーミング、透明背景、画像ファイル保存・リサイズ・圧縮後処理、Pillow導入、Prompt Builder、著作権・商標判定、月額費用上限管理、API残高取得、実OpenAI APIを使用するE2E、Null Object Pattern、任意custom WIDTHxHEIGHTの受理（詳細は`docs/design/openai_image_generation_adapter_foundation.md` 37章）。
+
+### Test Review・Code Review・Release Reviewの実績
+
+新規E2E（`tests/test_e2e_v6_11_0_openai_image_generation_adapter_foundation.py`）は123シナリオ・163ケース・248アサーション・248/248 PASS（終了コード0、意図しない警告なし、Tracebackなし）。既存Regression（`docs/CHANGELOG.md` v6.10.0 Testedセクション記載の正式13ファイル、1592/1592 PASS）とあわせた新規E2E込みの合計は1840/1840 PASS。Architecture Reviewは1・2回目「Changes Required」を経て3回目「Approved」。Implementation中にsize allowlistの実体（7値）と設計書複数箇所の記載（8値）との不一致（IMP-DESIGN-1）を発見し、7値を正式Contractとして確定のうえProvider CapabilityとAdapter Contractの区別を明記する4回目Architecture Review「Changes Required」（Provider Capability説明の条件数不足を指摘したAR4-m-1）を経て5回目「Approved」。Test Reviewは1〜4回目「Changes Required」を経て5回目「Approved」の後、IMP-DESIGN-1によるTest Inventory訂正（123 Scenario／164→163 Case／249→248 Assertion）を受けた6回目「Approved」。Code Reviewは1回目「Approved」。
+
+詳細は`docs/design/openai_image_generation_adapter_foundation.md`
+（Architecture Design・Architecture Review 1〜5・Test Review 1〜6・Implementation・IMP-DESIGN-1・Code Review 1指摘反映の経緯を含む）を参照。

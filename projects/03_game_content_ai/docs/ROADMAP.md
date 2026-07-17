@@ -701,10 +701,33 @@
   70ケース・78アサーション・78/78 PASS）・既存Regression（v1.11.0〜v6.9.0 1514/1514、新規E2E込み
   合計1592/1592 PASS）とも完全PASSし、Release Review（Approved）を経て完了した
   （`docs/design/ai_image_generation_contract_foundation.md`）
-- [ ] **OpenAI Image Generation Adapter Foundation**（次候補・未着手）：v6.10.0の
-  `AIImageGenerator` Protocolを実装する最初の具象Provider。OpenAI Images API等の外部API呼び出し・
-  API key・費用・レート制限・実際のFailure Contract（`AIImageGenerationError`等の要否を含む）を
-  伴うため独立したArchitecture Reviewを要する
+- [x] **OpenAI Image Generation Adapter Foundation**：v6.11.0で実装完了。v6.10.0の
+  `AIImageGenerator` Protocolを実装する最初の具象Provider。新規独立package`src/openai_image_generation/`
+  （`OpenAIImageGenerator` / `OpenAIImageGenerationError` / `OpenAIImageGenerationErrorReason`の
+  3つのみを公開）を追加し、OpenAI公式Python SDK（`openai>=2.46.0,<3.0.0`）経由でOpenAI Images API
+  （`POST /v1/images/generations`、固定スナップショット`gpt-image-2-2026-04-21`）を呼び出し、単一の
+  `prompt: str`から単一の`GeneratedImage`（v6.10.0既存Contractをそのまま再利用）を生成する。
+  `size`は代表7値（`1024x1024` / `1536x1024` / `1024x1536` / `2048x2048` / `2048x1152` /
+  `3840x2160` / `2160x3840`）の閉じたallowlistのみを許可し、Provider自体が対応する任意の
+  `WIDTHxHEIGHT`（公式4条件を満たす範囲）とv6.11.0 Adapterが許可する範囲を区別した（`auto`・
+  任意custom sizeはいずれも不採用）。`quality`（`low`/`medium`/`high`）・`output_format`
+  （`png`/`jpeg`/`webp`）もallowlist化し、`n=1`固定・`background="opaque"`固定・
+  timeout（default 180秒）・`with_options(max_retries=0)`による暗黙SDK Retryの無効化（Client
+  Injection経路にも一律適用）で費用暴発とハングを防止する。Base64は`validate=True`のstrict decode、
+  Provider例外は単一の専用例外`OpenAIImageGenerationError`＋秘密情報を含まない`reason` Enum
+  （9種）へ変換し、`classify-then-raise-outside-except`パターンで`__cause__`・`__context__`双方を
+  到達不能化する。`openai.OpenAI`をRuntime patchしAssertionErrorで実Client構築を検出する二重防御
+  （Runtime Guard）を採用し、実HTTP・実課金の可能性を構造的に排除した。既存`wordpress_media` /
+  `WordPressOutput` / `image_resolver.py` / `ArticleData` / 記事生成Pipeline / Workflow /
+  Scheduler / Retry Runtimeのいずれへも依存・配線しない（消費者不在の先行実装）。Architecture
+  Review（1回目・2回目Changes Required、3回目Approved。Implementation中に発見したsize
+  allowlist件数の文書不整合（IMP-DESIGN-1）を受けた4回目Changes Required、5回目Approved）・
+  Test Review（1〜4回目Changes Required、5回目Approved。IMP-DESIGN-1によるTest Inventory訂正
+  （123 Scenario／164→163 Case／249→248 Assertion）を受けた6回目Approved）・Code Review
+  （1回目Approved）を経て、新規E2E（123シナリオ・163ケース・248アサーション・248/248 PASS）・
+  既存Regression（`docs/CHANGELOG.md` v6.10.0 Testedセクション記載の正式13ファイル、
+  1592/1592 PASS、新規E2E込み合計1840/1840 PASS）とも完全PASSした
+  （`docs/design/openai_image_generation_adapter_foundation.md`）
 - [ ] **Generated Image → WordPress Media Upload Wiring**（次候補・未着手）：OpenAI Image
   Generation Adapter Foundationが生成した`GeneratedImage.image_bytes`を、v6.9.0の
   `WordPressMediaUploader.upload()`へ実際に渡す配線。Adapter Foundationが完了した後に着手する
