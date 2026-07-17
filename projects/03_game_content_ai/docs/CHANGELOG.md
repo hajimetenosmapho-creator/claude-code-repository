@@ -361,6 +361,87 @@
 
 ---
 
+## [v6.10.0] - 2026-07-17 ★ AI Image Generation Contract Foundation
+
+### Added
+
+- 新規独立package`src/ai_image_generation/`：外部API・外部I/Oを一切呼び出さない、Provider非依存の
+  画像生成Contract（要求・結果）のみを定義するConsumer-less Foundation
+  - `src/ai_image_generation/__init__.py`：package rootから`GeneratedImage` /
+    `AIImageGenerator`の2つのみを公開
+  - `src/ai_image_generation/generated_image.py`：`GeneratedImage`（frozen dataclass、
+    `image_bytes` / `mime_type`の2フィールドのみ）
+  - `src/ai_image_generation/ai_image_generator.py`：`AIImageGenerator`（`typing.Protocol`、
+    `generate(self, prompt: str) -> GeneratedImage`）
+- `tests/test_e2e_v6_10_0_ai_image_generation_contract_foundation.py`新規作成
+  （37シナリオ・70ケース・78アサーション）
+- `docs/design/ai_image_generation_contract_foundation.md`新規作成：Architecture Design・
+  Test Design・Code Review指摘反映の経緯を含む
+
+### Public API
+
+- `GeneratedImage`：frozen dataclass。`image_bytes: bytes` / `mime_type: str`の2フィールドのみ
+- `AIImageGenerator`：`typing.Protocol`。`generate(self, prompt: str) -> GeneratedImage`
+
+### Architecture／Behavior
+
+- `GeneratedImage`はfrozen dataclass。`image_bytes`は`type(value) is bytes`による厳密な型検証
+  （`bytes`のsubclassも拒否）・非空必須・`field(repr=False)`によるrepr非表示（Security Contract）。
+  `mime_type`はcanonical MIME正規表現`^image/[A-Za-z0-9][A-Za-z0-9._+-]*$`の`fullmatch()`で検証し、
+  自動strip・自動小文字化はいずれも行わない。個別形式（png/jpeg/webp等）の許可リストは固定しない
+- `AIImageGenerator`は`typing.Protocol`による構造的Contractのみを表現し、`@runtime_checkable`・
+  `ABC`・具象Generator・promptの実行時validationはいずれも含まない
+- 外部APIなし・外部dependencyなし（標準ライブラリのみ）・外部I/Oなし
+- 分類はArchitecture Release。新規独立package・新規Public APIの確立を伴うため
+- 対象外（今回は未実装）：`ImageGenerationRequest`、`AIImageGenerationError`、OpenAI SDK、
+  OpenAI Images API、具象Generator、promptの実行時validation、`WordPressMediaUploader`呼び出し、
+  Generated Image → WordPress Media Upload Wiring、Article → `featured_media` Wiring、
+  既存Pipeline Integration（同設計書21章）
+- 既存`wordpress_media` / `WordPressOutput` / `image_resolver.py` / `ArticleData` / 記事生成
+  Pipeline / Workflow / Scheduler / Retry Runtimeはいずれも無改修。既存側から
+  `ai_image_generation`へのWiringも本Releaseでは行わない（消費者不在の先行実装）
+- Code Review 1指摘反映：「image_bytesは厳密にbytes型」というContractへ合わせ、`isinstance()`から
+  `type(value) is bytes`へ修正し、bytes subclass拒否E2Eを追加
+- 新規Known Issueなし
+
+### Tested
+
+- `tests/test_e2e_v6_10_0_ai_image_generation_contract_foundation.py`：37シナリオ・70ケース・
+  78アサーション・78/78 PASS（終了コード0、意図しない警告なし、Tracebackなし）
+- 既存回帰確認（いずれもベースラインと同一件数、新規差分なし）：
+  - `tests/test_e2e_v1_11_0_save_result.py`：43/43 PASS
+  - `tests/test_e2e_v5_9_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_0_0_*.py`：43/43 PASS
+  - `tests/test_e2e_v6_1_0_*.py`：44/44 PASS
+  - `tests/test_e2e_v6_2_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_3_0_*.py`：174/174 PASS
+  - `tests/test_e2e_v6_4_0_*.py`：171/171 PASS
+  - `tests/test_e2e_v6_5_0_*.py`：131/131 PASS
+  - `tests/test_e2e_v6_6_0_*.py`：135/135 PASS
+  - `tests/test_e2e_v6_7_0_*.py`：117/117 PASS
+  - `tests/test_e2e_v6_8_0_*.py`：197/197 PASS
+  - `tests/test_e2e_v6_9_0_*.py`：331/331 PASS
+- Regression合計：1514/1514 PASS（v1.11.0〜v6.9.0）。全Suite終了コード0、ベースライン差なし、
+  実異常の警告なし
+- 新規E2E（78）＋Regression（1514）＝1592/1592 PASS
+- Architecture Review：1回目「Changes Required」（チャットベース初期提案：Public API縮小・
+  設計案確定・Prompt Contract分離等）、2回目「Changes Required」（Test Designで発見された
+  Architecture Issue AI-1〜AI-5：repr Security Contract・MIME正規表現の未確定等）、
+  3回目「Approved」
+- Test Review：1回目「Changes Required」（Architecture Issue未反映）、2回目「Approved」
+  （37シナリオ・70ケース・78アサーション見積り承認）
+- Code Review：1回目「Changes Required」（「image_bytesは厳密にbytes型」というContractに対し
+  `isinstance()`がbytesのsubclassを許可していた不整合）、2回目「Approved」
+  （`type(value) is bytes`への修正・bytes subclass拒否E2E追加で解消）
+- 本Releaseによる新規Known Issue：なし
+
+### Scope
+
+- Consumer-less Foundation・既存production code無改修・既存test無改修・既存Pipeline非配線・
+  外部API呼び出しなし・外部I/Oなし
+
+---
+
 ## [v6.9.0] - 2026-07-15 ★ WordPress Media Upload Foundation
 
 ### Added

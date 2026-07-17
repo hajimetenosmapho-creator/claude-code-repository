@@ -682,16 +682,37 @@
   新規E2E（48シナリオ・331アサーション・331/331 PASS）・既存Regression（`test_e2e_v1_11_0_save_result.py`
   43/43、v5.9.0〜v6.8.0 1140/1140、合計1183/1183 PASS、新規E2E込み合計1514/1514 PASS）とも完全PASSした
   （`docs/design/wordpress_media_upload_foundation.md`）
-- [ ] **AI Image Generation Foundation**（次候補・未着手）：記事用アイキャッチ画像をAI生成する新規
-  Foundation。画像生成APIの費用・レート制限・プロンプト設計を伴うため独立したArchitecture Reviewを
-  要する
-- [ ] **Generated Image → WordPress Media Upload Wiring**（次候補・未着手）：AI Image Generation
-  Foundationが生成した画像bytesを、v6.9.0の`WordPressMediaUploader.upload()`へ実際に渡す配線。
-  両Foundationが完了した後に着手する
-- [ ] **Article → featured_media Wiring**（次候補・未着手）：v6.9.0で取得した`media_id`を
-  `image_resolver.resolve_media_id()` / `ArticleData.featured_media_id` / `WordPressOutput`経由で
-  実際の記事投稿へ反映する配線。`image_resolver.py` / `ArticleData` / `WordPressOutput`への変更を
+- [x] **AI Image Generation Contract Foundation**：v6.10.0で実装完了。外部API・外部I/Oを一切
+  呼び出さない、新規独立package`src/ai_image_generation/`（`GeneratedImage` / `AIImageGenerator`）を
+  追加した。`GeneratedImage`はfrozen dataclass（`image_bytes: bytes` / `mime_type: str`）で、
+  `image_bytes`は`type(value) is bytes`による厳密な型検証（`bytes`のsubclassも拒否）・非空必須・
+  `field(repr=False)`によるrepr非表示、`mime_type`はcanonical MIME正規表現
+  `^image/[A-Za-z0-9][A-Za-z0-9._+-]*$`（個別形式の許可リスト固定なし、既知3形式に限定しない）で
+  検証する。`AIImageGenerator`は`typing.Protocol`（`generate(self, prompt: str) -> GeneratedImage`）
+  による構造的Contractのみを表現し、`@runtime_checkable`・`ABC`・具象Generator・promptの実行時
+  validationはいずれも含まない。`ImageGenerationRequest` / `AIImageGenerationError`はいずれも
+  導入せず、複数入力Request Object・独自例外は将来のOpenAI Image Generation Adapter Foundationへ
+  委ねる。既存`wordpress_media` / `WordPressOutput` / `image_resolver.py` / `ArticleData` /
+  記事生成Pipeline / Workflow / Scheduler / Retry Runtimeのいずれへも依存・配線しない（消費者不在の
+  先行実装）。Architecture Review（1回目Changes Required、2回目Changes Required、3回目Approved）・
+  Test Review（1回目Changes Required、2回目Approved）・Code Review（1回目Changes Required。
+  「image_bytesは厳密にbytes型」というContractに対し`isinstance()`がbytes subclassを許可していた
+  不整合を`type(value) is bytes`へ修正し解消、2回目Approved）を経て、新規E2E（37シナリオ・
+  70ケース・78アサーション・78/78 PASS）・既存Regression（v1.11.0〜v6.9.0 1514/1514、新規E2E込み
+  合計1592/1592 PASS）とも完全PASSし、Release Review（Approved）を経て完了した
+  （`docs/design/ai_image_generation_contract_foundation.md`）
+- [ ] **OpenAI Image Generation Adapter Foundation**（次候補・未着手）：v6.10.0の
+  `AIImageGenerator` Protocolを実装する最初の具象Provider。OpenAI Images API等の外部API呼び出し・
+  API key・費用・レート制限・実際のFailure Contract（`AIImageGenerationError`等の要否を含む）を
   伴うため独立したArchitecture Reviewを要する
+- [ ] **Generated Image → WordPress Media Upload Wiring**（次候補・未着手）：OpenAI Image
+  Generation Adapter Foundationが生成した`GeneratedImage.image_bytes`を、v6.9.0の
+  `WordPressMediaUploader.upload()`へ実際に渡す配線。Adapter Foundationが完了した後に着手する
+- [ ] **Article → featured_media Wiring**（次候補・未着手）：Generated Image → WordPress Media
+  Upload Wiringで取得した`media_id`を`image_resolver.resolve_media_id()` /
+  `ArticleData.featured_media_id` / `WordPressOutput`経由で実際の記事投稿へ反映する配線。
+  `image_resolver.py` / `ArticleData` / `WordPressOutput`への変更を伴うため独立したArchitecture
+  Reviewを要する
 - [ ] **Retry Notification Channel Foundation**（次候補）：Message Foundationが生成した通知内容を
   どの通知先（Slack／メール等）へ送るか選択する別パッケージ（`docs/design/
   retry_notification_message_foundation.md` 21章）

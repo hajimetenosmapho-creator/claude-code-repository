@@ -3072,3 +3072,132 @@ AI Image Generation Foundation・Generated Image → WordPress Media Upload Wiri
 
 詳細は`docs/design/wordpress_media_upload_foundation.md`
 （Architecture Design・Test Design（Changes Required×2を経て確定）・Code Review指摘反映の経緯を含む）を参照。
+
+## AI Image Generation Contract Foundation層（`src/ai_image_generation/`、v6.10.0 実装完了）
+
+> **本節は実装完了時点の記録である。新規E2E（37シナリオ・70ケース・78アサーション・78/78 PASS）・既存Regression（v1.11.0〜v6.9.0 1514/1514 PASS、新規E2E込み合計1592/1592 PASS）とも完全PASSし、Architecture Review（3回目「Approved」）・Test Review（2回目「Approved」）・Code Review（2回目「Approved」）・Release Review（Approved）を経ている。**
+
+### Purpose
+
+外部API・外部I/Oを一切呼び出さない、Provider非依存の画像生成Contract（要求・結果）のみを定義する独立Foundationを追加する。将来のOpenAI Image Generation Adapter Foundationが本Contractを実装するだけで済む状態を先に確立することが目的であり、本Release自体はいずれの既存Pipelineへも接続しない**Consumer-less Foundation**である。
+
+```
+prompt: str
+        │
+        ▼
+AIImageGenerator Protocol（typing.Protocol、promptの実行時検証は行わない）
+        │
+        ▼
+GeneratedImage（image_bytes / mime_type）
+```
+
+`AIImageGenerator.generate()`は型・メソッドシグネチャのContractのみを表現し、`prompt`が空文字・空白のみ・NUL文字を含む場合の拒否等の実行時validationはこのProtocol自体では行わない（具象Adapterを実装する後続Releaseの責務）。
+
+### Package Boundary
+
+新規独立package`src/ai_image_generation/`（`src/wordpress_media/` / `src/outputs/`配下ではない）。
+
+```
+src/ai_image_generation/
+├── __init__.py
+├── generated_image.py       # GeneratedImage（frozen dataclass）
+└── ai_image_generator.py    # AIImageGenerator（typing.Protocol）
+```
+
+### Public API
+
+`src/ai_image_generation/__init__.py`が公開するのは次の2つのみ。
+
+```python
+GeneratedImage
+AIImageGenerator
+```
+
+`ImageGenerationRequest` / `AIImageGenerationError`はいずれも導入していない。複数入力を要するRequest Objectは現時点でいずれの消費者にも必要とされておらず、独自例外は具象Generatorの送出元が存在しないため、実際の外部API失敗を踏まえて設計する後続のOpenAI Image Generation Adapter Foundationへ委ねる。
+
+### GeneratedImage
+
+```python
+@dataclass(frozen=True)
+class GeneratedImage:
+    image_bytes: bytes = field(repr=False)
+    mime_type: str
+```
+
+- `image_bytes`：`type(value) is bytes`による厳密な型検証（`bytes`のsubclassも拒否。`isinstance()`はsubclassを許可してしまうため不採用）、非空必須、`field(repr=False)`によりdataclass標準reprから除外（Security Contract）
+- `mime_type`：canonical MIME正規表現`^image/[A-Za-z0-9][A-Za-z0-9._+-]*$`の`fullmatch()`で検証。非空・前後空白なし・ASCII限定・小文字`image`固定・slash1個・subtype非空・parameter非許可を1本の正規表現へ集約し、自動strip・自動小文字化はいずれも行わない。個別形式（png/jpeg/webp等）の許可リストは固定せず、canonical構文を満たす未知のsubtype（例：`image/x-custom-format`）も許可する
+- 両フィールドとも違反時は`ValueError`
+
+`filename` / `filename_extension` / `width` / `height` / `provider` / `model` / `usage` / `revised_prompt` / `size` / `quality` / `output_format` / `metadata` / `provider_options`はいずれも含めない。`filename`はWordPress固有の語彙であり、後続のMedia Upload Wiring側の責務として分離している。
+
+### Dependency Direction
+
+```
+許可：ai_image_generation → Python standard library only
+禁止：ai_image_generation → wordpress_media / outputs / image_resolver / ArticleData /
+      Workflow / Scheduler / Retry Runtime / requests / openai / anthropic / Pillow
+```
+
+既存側から`ai_image_generation`へのWiringも本Releaseでは行わない（消費者不在の先行実装）。
+
+### No External I/O
+
+HTTP通信・環境変数・ファイルI/O・`logging`・`print`・`subprocess`のいずれも行わない。本Foundationの外部I/Oは構造的にゼロであり、E2EのDependency Guard・Side Effect GuardともにAST（`ast.Import` / `ast.ImportFrom` / `ast.Call`）解析で検証している。
+
+### Security Contract
+
+`GeneratedImage`は`image_bytes`を保持するが、`field(repr=False)`によりreprへは含めない。独自`__repr__`は実装しない。`logging` / `print`はいずれも実装せず、`ValueError`の例外メッセージへ`image_bytes`の実際の値を含めない。将来Adapter向け設計ガイダンスとして、prompt全文・`image_bytes`・Base64画像・API key・認証情報・provider response全体を将来の例外・Result・ログへ含めないことを設計書へ記録している。
+
+### Consumer-less Contract
+
+次はいずれも本Releaseでは未実装・未配線である。
+
+```
+OpenAI Image Generation Adapter
+外部画像生成API
+API key
+具象Generator
+ImageGenerationRequest
+AIImageGenerationError
+promptの実行時validation
+Generated Image → WordPress Media Upload Wiring
+Article → featured_media Wiring
+既存Pipeline Integration
+```
+
+### Backward Compatibility
+
+既存`wordpress_media` / `WordPressOutput` / `image_resolver.py` / `ArticleData` / 記事生成Pipeline / Workflow / Scheduler / Retry Runtime、および既存テスト一式はいずれも無改修。新規独立packageの追加のみであり、既存の呼び出し元（現状ゼロ）にも影響しない。
+
+### Out of Scope
+
+`ImageGenerationRequest`・`AIImageGenerationError`・OpenAI SDK・OpenAI Images API・HTTP通信・API key・モデル名・料金計算・Rate Limit・Retry・Timeout・Base64解析・URL download・一時ファイル・ファイル保存・Pillow・画像リサイズ／圧縮／形式変換・複数画像生成・画像選択・再生成ループ・prompt自動生成・記事本文からのprompt生成・Moderation API・著作権判定・商標判定・`WordPressMediaUploader`呼び出し・Media Library upload・`ArticleData`変更・`image_resolver.py`変更・`WordPressOutput`変更・`featured_media`設定・既存投稿Pipeline変更・Workflow／Scheduler／Retry Runtime統合・SNS Integration・promptの実行時`ValueError`検証。
+
+### Future Wiring
+
+将来構成のイメージであり、現在実装済みのものではない。
+
+```
+OpenAI Image Generation Adapter
+        │
+        ▼
+GeneratedImage
+        │
+        ▼
+WordPressMediaUploader.upload()
+        │
+        ▼
+MediaUploadResult.media_id
+        │
+        ▼
+Article featured_media
+```
+
+OpenAI Image Generation Adapter Foundation・Generated Image → WordPress Media Upload Wiring・Article → `featured_media` Wiringの3段階（順序は確定事項として固定しない。詳細は`docs/ROADMAP.md`）。
+
+### Test Review・Code Review・Release Reviewの実績
+
+新規E2E（`tests/test_e2e_v6_10_0_ai_image_generation_contract_foundation.py`）は37シナリオ・70ケース・78アサーション・78/78 PASS（終了コード0、意図しない警告なし、Tracebackなし）。既存Regression（v1.11.0〜v6.9.0、1514/1514 PASS）とあわせた新規E2E込みの合計は1592/1592 PASS。Architecture Reviewは1回目「Changes Required」（チャットベース初期提案：Public API縮小・設計案確定・Prompt Contract分離等）、2回目「Changes Required」（Test Designで発見されたAI-1〜AI-5：repr Security Contract未確定・MIME正規表現未確定等）を経て3回目「Approved」。Test Reviewは1回目「Changes Required」（Architecture Issue未反映）を経て2回目「Approved」（37シナリオ・70ケース・78アサーション見積り承認）。Code Reviewでは、「image_bytesは厳密にbytes型」という承認済みContractに対し`isinstance()`実装がbytesのsubclassを許可してしまう不整合を1回目「Changes Required」として指摘し、`type(value) is bytes`への修正とbytes subclass拒否E2E追加で解消して2回目「Approved」。
+
+詳細は`docs/design/ai_image_generation_contract_foundation.md`
+（Architecture Design・Test Design・Code Review指摘反映の経緯を含む）を参照。
