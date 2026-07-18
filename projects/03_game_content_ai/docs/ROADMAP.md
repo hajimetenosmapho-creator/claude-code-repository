@@ -776,14 +776,66 @@
   新規E2E（24シナリオ・Validation 13ケース・123アサーション・123/123 PASS）・既存Regression
   （`docs/CHANGELOG.md` v6.12.0 Testedセクション記載の正式15ファイル、1931/1931 PASS、新規E2E
   込み合計2054/2054 PASS）とも完全PASSした（`docs/design/article_featured_media_binding_foundation.md`）
-- [ ] **Article Featured Media Runtime Wiring**（次候補・未着手。v6.13.0 Article Featured Media
-  Binding Foundationの完了により前提条件を充足）：AI画像生成（`OpenAIImageGenerator.generate()`）
-  の実行、生成画像のMedia Upload（`GeneratedImageWordPressMediaUploader.upload()`）の実行、および
-  v6.13.0の`bind_featured_media()`を実際に呼び出すComposition Root／Pipeline接続を、記事生成
-  Pipeline（`main.py` / `image_resolver.py`）へ組み込む後続Wiring。一括のReleaseとするか複数
-  Releaseへ分割するか、`image_resolver.py` / `main.py`への変更内容、Upload成功後の記事投稿失敗時の
-  整合性・Retry時の重複Upload対策・既存media ID再利用・未使用Media cleanup・fallback方針はいずれも
-  未確定であり、独立したArchitecture Reviewを要する
+- [x] **Article Featured Media Orchestration Foundation**：v6.14.0で実装完了（Release Review
+  Approved、Release Completed）。v6.9.0〜v6.13.0で追加された4つのConsumer-less
+  Foundation（`AIImageGenerator` Protocol・`GeneratedImage`→Media Upload capability・
+  `bind_featured_media()`）を、`generate → upload → bind`という固定順序で呼び出す単一責務の
+  stateless Orchestratorとして、新規独立package`src/article_featured_media_orchestration/`
+  （`ArticleFeaturedMediaOrchestrator`・`GeneratedImageUploadCapability`の2つのみを公開）を
+  追加した。`ArticleFeaturedMediaOrchestrator.__init__(image_generator: AIImageGenerator,
+  media_uploader: GeneratedImageUploadCapability)`はConstructor時点で両dependencyのcapability
+  検証（`callable(getattr(...))`、不適合は固定messageの`TypeError`）を行い、Validationに成功
+  する前に片方だけをselfへ保存しない。`apply(article: ArticleData, prompt: str, filename: str)
+  -> ArticleData`はarticle型→prompt型/空白→filename型/空白の順でValidation（不適合は固定message
+  の`ValueError`）したうえで、`image_generator.generate(prompt)` →
+  `media_uploader.upload(generated_image, filename)` →
+  `bind_featured_media(article, media_result)`を各1回だけ呼び出し、v6.13.0の
+  `bind_featured_media()`へ完全委譲することでArticleData不変性のSingle Source of Truthを維持
+  する。Media Upload依存は、既存`generated_image_wordpress_media.GeneratedImageWordPressMediaUploader`
+  具象classへは依存せず、本Release新設の最小Capability Protocol
+  （`GeneratedImageUploadCapability`）経由とすることで、`AIImageGenerator`側と対称な
+  Dependency Inversionを維持した（`OpenAIImageGenerator`・`GeneratedImageWordPressMediaUploader`
+  いずれも直接依存しない）。prompt／filenameはCallerから引数として受け取るのみで、生成・正規化・
+  拡張子付与は行わない。dependency例外はいずれも無変換伝播し、fallback・自動retryは持たない。
+  既存`ai_image_generation` / `openai_image_generation` / `wordpress_media` /
+  `generated_image_wordpress_media` / `article_featured_media` / `outputs` / 記事生成Pipeline /
+  Workflow / Scheduler / Retry Runtime / `main.py` / `image_resolver.py`のいずれも無改修・
+  未配線（消費者不在の先行実装、Consumer-less Foundation）。Architecture Review（Approved、
+  Blocking Issueなし。初回Changes Required：Minor 9件・Suggestion 1件、いずれもNon-Blocking
+  Finding修正工程で反映済み）・Code Review（Approved with Suggestions、Blocking Issueなし。
+  Suggestion 1件：正式設計書21章と22章のReverse Dependency Guard対象package数の記載差、
+  Production／E2E／Approved Contractへの影響なし、Non-Blockingのまま維持）を経て、新規E2E
+  （34シナリオ・Validation展開25ケース・217アサーション・217/217 PASS）・既存Regression
+  （`docs/CHANGELOG.md` v6.13.0 Testedセクション記載の正式16ファイル、2054/2054 PASS、新規E2E
+  込み合計2271/2271 PASS）とも完全PASSした。Release Review（Approved、Blocking Issueなし。
+  初回Changes Required：Minor 2件、いずれも設計書内の文書表記staleness、Production／E2E／
+  Contractへの影響なし、Non-Blocking Finding修正工程で反映済み）を経て、Release 6.14として
+  完了した（`docs/design/article_featured_media_orchestration_foundation.md`）
+- [ ] **Article Featured Media Runtime Wiring**（次候補・未着手。v6.14.0 Article Featured Media
+  Orchestration Foundationの完了により前提条件を充足）：v6.14.0の
+  `ArticleFeaturedMediaOrchestrator.apply()`を、実際に`main.py` / `image_resolver.py`等の
+  Production Runtimeへ接続する後続Wiring。一括のReleaseとするか複数Releaseへ分割するか、
+  `image_resolver.py` / `main.py`への変更内容、Configuration First有効化フラグの要否、
+  OpenAI／WordPress credential取得経路、Upload成功後の記事投稿失敗時の整合性・Retry時の重複
+  Upload対策・既存media ID再利用・未使用Media cleanup・fallback方針はいずれも未確定であり、
+  独立したArchitecture Reviewを要する
+- [ ] **Publish Composition Root Foundation**（次候補）：記事生成→WordPress投稿の一連の生成・配線を
+  専用に担う、`RetryCompositionRoot`と対をなすComposition Rootの新設。Article Featured Media
+  Runtime Wiringの前提として検討されうる
+- [ ] **Image Generation Configuration Gate**（次候補）：画像生成機能の有効／無効を切り替える
+  Configuration First方式の環境変数ゲートの新設。既存`AI_AGENT_ENABLED`等のprecedentに倣う
+- [ ] **Article Image Prompt Construction Foundation**（次候補）：記事タイトル・本文・SEO情報から
+  promptを構築する専用Foundation
+- [ ] **Generated Image Filename Policy Foundation**（次候補）：filenameの命名規則・拡張子決定方針を
+  確立する専用Foundation
+- [ ] **Image Generation Fallback Policy**（次候補）：画像生成・Upload失敗時に記事投稿を継続するか
+  中止するかの業務判断を確立するFoundation
+- [ ] **Media Upload Retry／Idempotency Foundation**（次候補）：Retry Queueのmedia_id保持field
+  拡張、重複Upload防止、idempotency keyの確立。既存`RetryQueueItem`にmedia_id相当のfieldが
+  存在しないことを踏まえ独立検討する
+- [ ] **WordPress Unused Media Cleanup Foundation**（次候補）：Upload成功後の記事投稿失敗時に残る
+  未使用WordPress Mediaの検出・削除方針。`WordPressMediaUploader`に削除APIが現状存在しないことを
+  踏まえ独立検討する
 - [ ] **Retry Notification Channel Foundation**（次候補）：Message Foundationが生成した通知内容を
   どの通知先（Slack／メール等）へ送るか選択する別パッケージ（`docs/design/
   retry_notification_message_foundation.md` 21章）

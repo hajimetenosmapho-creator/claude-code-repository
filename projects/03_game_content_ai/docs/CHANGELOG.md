@@ -361,6 +361,125 @@
 
 ---
 
+## [v6.14.0] - 2026-07-18 ★ Article Featured Media Orchestration Foundation
+
+> **本Entryの時点でのRelease状態**：Architecture Design Completed／Architecture Review
+> Approved／Production Implementation Completed／New E2E PASS／Code Review Approved with
+> Suggestions／Formal Regression PASS／Documentation Integration Completed／**Release
+> Review Approved**（Blocking Issueなし。初回Changes Required：Minor 2件、いずれも正式
+> 設計書内の文書表記stalenessでありProduction／E2E／Contractへの影響なし）。**Release：
+> Completed**。
+
+### Added
+
+- 新規独立package`src/article_featured_media_orchestration/`：v6.9.0〜v6.13.0で追加された
+  4つのConsumer-less Foundation（`AIImageGenerator` Protocol・`GeneratedImage`→Media Upload
+  capability・`bind_featured_media()`）を、`generate → upload → bind`という固定順序で呼び出す
+  単一責務のstateless Orchestrator
+  - `src/article_featured_media_orchestration/__init__.py`：package rootから
+    `ArticleFeaturedMediaOrchestrator` / `GeneratedImageUploadCapability`の2つのみを公開
+  - `src/article_featured_media_orchestration/article_featured_media_orchestrator.py`：
+    `ArticleFeaturedMediaOrchestrator`（`__init__` / `apply`）・
+    `GeneratedImageUploadCapability`（Protocol）
+- `tests/test_e2e_v6_14_0_article_featured_media_orchestration_foundation.py`新規作成
+  （34シナリオ・Validation展開25ケース・217アサーション）
+- `docs/design/article_featured_media_orchestration_foundation.md`新規作成：Architecture
+  Design・Architecture Review（初回Changes Required→Non-Blocking Finding修正→再Review
+  Approved）・Production Implementation・Code Review（Approved with Suggestions）・
+  Formal Regressionの経緯を含む
+
+### Public API
+
+- `ArticleFeaturedMediaOrchestrator.__init__(image_generator: AIImageGenerator,
+  media_uploader: GeneratedImageUploadCapability) -> None`
+- `ArticleFeaturedMediaOrchestrator.apply(article: ArticleData, prompt: str, filename: str)
+  -> ArticleData`
+- `GeneratedImageUploadCapability.upload(image: GeneratedImage, filename: str)
+  -> MediaUploadResult`（Protocol、実装を持たない）
+
+### Architecture／Behavior
+
+- `__init__()`は、①`image_generator`のgenerate capability検証（不適合は固定message
+  `"image_generator must provide a callable generate method"`の`TypeError`）、②
+  `media_uploader`のupload capability検証（不適合は固定message
+  `"media_uploader must provide a callable upload method"`の`TypeError`）、③④
+  `self._image_generator` / `self._media_uploader`への代入、の順で処理する。Validationに
+  成功する前に片方のdependencyだけをselfへ保存しない
+- `apply()`は、①article型検証、②prompt型検証、③prompt空白検証、④filename型検証、⑤filename
+  空白検証（いずれも不適合は固定messageの`ValueError`）、⑥`generate(prompt)`、⑦
+  `upload(generated_image, filename)`、⑧`bind_featured_media(article, media_result)`、⑨
+  返却、の順で処理する。各dependencyは正常系で正確に1回だけ呼ばれ、途中失敗時は後続を呼ばない
+- promptとfilenameはstrip()を空白判定にのみ使用し、dependencyへは元のobjectをそのまま渡す
+  （正規化・拡張子付与・str subclassの通常str化はいずれも行わない）
+- Media Upload依存は、既存`generated_image_wordpress_media.GeneratedImageWordPressMediaUploader`
+  具象classへは依存せず、本Release新設の最小Capability Protocol
+  （`GeneratedImageUploadCapability`）経由とする（Option B採用）。`AIImageGenerator`側と
+  対称なDependency Inversionを維持し、`OpenAIImageGenerator` / `GeneratedImageWordPressMediaUploader`
+  いずれの具象classへも直接依存しない
+- `ArticleData`の複製は`bind_featured_media()`（v6.13.0）へ完全委譲し、本Orchestrator自身は
+  `dataclasses.replace()`を呼ばない・`ArticleData`を再構築しない（Single Source of Truth
+  維持）
+- Constructor Injectionされた`_image_generator` / `_media_uploader`の2参照以外、インスタンス
+  状態を一切保持しない（request単位のstate非保持）
+- 分類はArchitecture Release。新規独立package・新規Public API・新規Dependency方向の確立を
+  伴うため
+- 対象外（今回は未実装）：`main.py` / `image_resolver.py`変更、Runtime Wiring、WordPress記事
+  投稿、画像prompt生成、filename自動生成、Configuration First有効化フラグ、Environment
+  Variable読込、fallback Policy、Retry Runtime接続、重複Upload対策、既存media ID再利用、
+  未使用Media cleanup、Logging（詳細は同設計書7章）
+- 既存`ai_image_generation` / `openai_image_generation` / `wordpress_media` /
+  `generated_image_wordpress_media` / `article_featured_media` / `outputs` / 記事生成
+  Pipeline / Workflow / Scheduler / Retry Runtime / `main.py` / `image_resolver.py`は
+  いずれも無改修。既存側から`article_featured_media_orchestration`へのWiringも本Releaseでは
+  行わない（消費者不在の先行実装）
+- **Architecture Review Non-Blocking Finding（Minor 9件：AR14-m-1〜AR14-m-9、Suggestion
+  1件：AR14-S-1）**：内部章参照誤り・曖昧な章参照・Formal Regression baseline内訳の数値
+  不整合・Risk記述と実装範囲の章間矛盾・Constructor capability validationのproperty例外時の
+  扱い未記載・新設Protocolの`@runtime_checkable`非付与理由の説明不足・self属性代入Guardの
+  対象構文列挙不足・loop禁止Guardのcomprehension非言及・Risk記述の曖昧な表現、いずれも
+  Non-Blocking Finding修正工程で正式設計書へ反映済み
+- **Code Review Suggestion（1件：CR14-S-1）**：正式設計書21章「Dependency Direction」の
+  逆依存禁止リスト（6package）と22章「Reverse Dependency Guard」（E2E化対象、4package）の
+  対象範囲差。22章に対象を4packageへ限定する設計理由が明記されており、Production実装・新規
+  E2E（DEP-2）は22章が定める最終Approved scopeと完全に一致するため、Production／E2Eへの
+  影響はない。Non-Blockingのまま維持し、本Releaseでは修正しない
+- 新規Known Issueなし
+
+### Tested
+
+- `tests/test_e2e_v6_14_0_article_featured_media_orchestration_foundation.py`：
+  34シナリオ・Validation展開25ケース・217アサーション・217/217 PASS（終了コード0、
+  意図しない警告なし、Tracebackなし）
+- Formal Regression（既存16ファイル＋新規v6.14.0 E2E、計17ファイルを個別実行）：
+  - 既存16ファイル（`docs/CHANGELOG.md` v6.13.0 Testedセクション記載の正式対象、
+    v1.11.0〜v6.13.0）：2054/2054 PASS（ベースライン維持、新規差分なし）
+  - 新規v6.14.0 E2E：217/217 PASS
+  - 総合：2271/2271 PASS。全17ファイル終了コード0、Warning 0、Traceback 0、重複実行なし
+- Architecture Review：初回「Changes Required」（Blocking Issueなし、Minor 9件・
+  Suggestion 1件、いずれもNon-Blocking）→Non-Blocking Finding修正→再Review「Approved」
+  （Critical/Major/Minor/Suggestionいずれも0件、Blocking Issueなし）
+- Code Review：「Approved with Suggestions」（Blocking Issueなし、Critical 0件・Major 0件・
+  Minor 0件・Suggestion 1件：CR14-S-1、Non-Blocking）
+- Formal Regression：PASS（既存16ファイル2054/2054 PASS＋新規E2E 217/217 PASS＝総合
+  2271/2271 PASS、終了コード非0なし、実HTTP・実credential読込・実課金いずれもなし）
+- Documentation Integration：Completed（`docs/ROADMAP.md` / `docs/architecture.md` /
+  本Entryへ反映済み、Historical Record変更なし）
+- Release Review：初回「Changes Required」（Blocking Issueなし、Minor 2件、いずれも
+  正式設計書内の文書表記staleness、Production／E2E／Contractへの影響なし）→
+  Non-Blocking Finding修正→再Review「Approved」（Critical/Major/Minor/Suggestion
+  いずれも0件、Blocking Issueなし）。CR14-S-1（Code Review由来）はNon-Blockingのまま
+  維持し、Resolved・Known Issue・Open Questionへは昇格させていない
+- 本Releaseによる新規Known Issueなし
+
+### Scope
+
+- Consumer-less Foundation・既存production code無改修・既存test無改修・既存Pipeline非配線・
+  実HTTP通信なし・実課金なし・Class＋Constructor Injection・State非保持・元ArticleData
+  非mutation・`bind_featured_media()`への完全委譲・OpenAI固有Adapter非依存・具象Uploader
+  非依存
+
+---
+
 ## [v6.13.0] - 2026-07-18 ★ Article Featured Media Binding Foundation
 
 ### Added

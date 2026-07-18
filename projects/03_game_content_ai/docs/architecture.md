@@ -3553,3 +3553,177 @@ AI画像生成Runtime Wiring・生成画像Media Upload Runtime Wiring・`bind_f
 
 詳細は`docs/design/article_featured_media_binding_foundation.md`
 （Architecture Design・Architecture Review・Code Review・Code Review Non-Blocking Finding修正・Formal Regressionの経緯を含む）を参照。
+
+---
+
+## Article Featured Media Orchestration Foundation層（`src/article_featured_media_orchestration/`、v6.14.0 実装完了）
+
+> **本節は実装完了時点の記録である。新規E2E（34シナリオ・Validation展開25ケース・217アサーション・217/217 PASS）・既存Regression（`docs/CHANGELOG.md` v6.13.0 Testedセクション記載の正式16ファイル、2054/2054 PASS、新規E2E込み合計2271/2271 PASS）とも完全PASSし、Architecture Review（「Approved」、初回Changes Required：Minor 9件・Suggestion 1件、いずれもNon-Blocking Finding修正工程で反映済み）・Code Review（「Approved with Suggestions」、Suggestion 1件はNon-Blocking）・Formal Regressionを経ている。**
+> **Release Review：Approved（Blocking Issueなし。初回Changes Required：Minor 2件、いずれも正式設計書内の文書表記stalenessでありProduction／E2E／Contractへの影響なし、Non-Blocking Finding修正工程で反映済み）を経て、Release 6.14として完了した（Release Completed）。ただし本Releaseは`main.py`等のProduction Runtimeへは未接続のままである（Runtime Wiring完了・記事投稿への組み込み・画像自動生成の本番稼働のいずれも意味しない。Runtime Wiringは次候補「Article Featured Media Runtime Wiring」として`docs/ROADMAP.md`に未着手のまま維持されている）。**
+
+### Purpose
+
+v6.9.0〜v6.13.0で追加された4つのConsumer-less Foundation（`ai_image_generation.AIImageGenerator` Protocol・`GeneratedImage`→WordPress Media Upload capability・`article_featured_media.bind_featured_media()`）を、`generate → upload → bind`という固定順序で呼び出す単一責務のstateless Orchestratorを追加する。本層自体もConsumer-less Foundationであり、`main.py` / `image_resolver.py` / `WordPressOutput` / `OutputManager` / Pipeline / Composition Root / Retry Runtime / `scripts`のいずれへも配線しない。
+
+```
+ArticleData
+prompt
+filename
+        │
+        ▼
+ArticleFeaturedMediaOrchestrator.apply(article, prompt, filename)
+        │
+        ├─▶ 1. isinstance(article, ArticleData)検証（不適合はValueError）
+        ├─▶ 2. isinstance(prompt, str)検証（不適合はValueError）
+        ├─▶ 3. prompt.strip()空白検証（不適合はValueError、strip値は判定のみに使用）
+        ├─▶ 4. isinstance(filename, str)検証（不適合はValueError）
+        ├─▶ 5. filename.strip()空白検証（不適合はValueError、strip値は判定のみに使用）
+        ├─▶ 6. image_generator.generate(prompt) → GeneratedImage
+        ├─▶ 7. media_uploader.upload(generated_image, filename) → MediaUploadResult
+        └─▶ 8. bind_featured_media(article, media_result) → 新しいArticleData
+                        │
+                        ▼
+        featured_media_idが設定された新しいArticleData
+```
+
+### Package Boundary
+
+新規独立package`src/article_featured_media_orchestration/`。
+
+```
+src/article_featured_media_orchestration/
+├── __init__.py                              # Public API export
+└── article_featured_media_orchestrator.py   # ArticleFeaturedMediaOrchestrator, GeneratedImageUploadCapability
+```
+
+### Public API
+
+`src/article_featured_media_orchestration/__init__.py`が公開するのは次の2つのみ。
+
+```python
+ArticleFeaturedMediaOrchestrator
+GeneratedImageUploadCapability
+```
+
+```python
+class GeneratedImageUploadCapability(Protocol):
+    def upload(self, image: GeneratedImage, filename: str) -> MediaUploadResult: ...
+
+
+class ArticleFeaturedMediaOrchestrator:
+    def __init__(
+        self,
+        image_generator: AIImageGenerator,
+        media_uploader: GeneratedImageUploadCapability,
+    ) -> None: ...
+
+    def apply(self, article: ArticleData, prompt: str, filename: str) -> ArticleData: ...
+```
+
+Class＋Constructor Injectionを採用する（既存precedent`GeneratedImageWordPressMediaUploader`・`RetryRuntimeOrchestrator`と同型。`bind_featured_media()`がmodule-level functionを採用した理由（依存注入不要）とは判断基準が異なるだけで、両者は「依存注入の要否」という同一の判断基準の一貫した適用である）。`GeneratedImageUploadCapability`は既存`GeneratedImageWordPressMediaUploader.upload()`と構造的に適合するが、本Orchestratorはその具象classへは依存しない（Dependency Inversion、Option B採用）。
+
+### Constructor Validation順序
+
+```
+1. image_generatorのgenerate capability検証（callable(getattr(image_generator, "generate", None))）
+   不適合は固定message"image_generator must provide a callable generate method"のTypeError
+2. media_uploaderのupload capability検証（callable(getattr(media_uploader, "upload", None))）
+   不適合は固定message"media_uploader must provide a callable upload method"のTypeError
+3. self._image_generatorへ代入
+4. self._media_uploaderへ代入
+```
+
+Validationに成功する前に片方のdependencyだけをselfへ保存しない（AST Guardで確認済み）。`isinstance(..., Protocol)`・`@runtime_checkable`のいずれにも依存しないDuck Typing方式。
+
+### apply() Validation順序とContract
+
+```
+1. isinstance(article, ArticleData) → 不適合はValueError（固定message"article must be an ArticleData"）
+2. isinstance(prompt, str) → 不適合はValueError（固定message"prompt must be a str"）
+3. prompt.strip()が空 → 不適合はValueError（固定message"prompt must not be blank"）
+4. isinstance(filename, str) → 不適合はValueError（固定message"filename must be a str"）
+5. filename.strip()が空 → 不適合はValueError（固定message"filename must not be blank"）
+6. image_generator.generate(prompt) → GeneratedImage
+7. media_uploader.upload(generated_image, filename) → MediaUploadResult
+8. bind_featured_media(article, media_result) → 新しいArticleData
+9. 新しいArticleDataを返却
+```
+
+`strip()`は空白のみ判定にのみ使用し、dependencyへ渡す値は元の`prompt` / `filename`引数そのもの（str subclassを許可、正規化・拡張子付与は行わない）。各dependencyは正常系で正確に1回だけ呼ばれ、途中失敗時は後続を呼ばない。
+
+### 依存関係
+
+```
+許可：ai_image_generation.{AIImageGenerator, GeneratedImage} / wordpress_media.MediaUploadResultのみ /
+    article_featured_media.bind_featured_mediaのみ / outputs.ArticleDataのみ / typing.Protocol
+禁止：openai_image_generation / wordpress_media.WordPressMediaUploader（本体） /
+    generated_image_wordpress_media / image_resolver / ai / pipeline / workflow_engine /
+    scheduler / retry_* / scripts / main / outputs.WordPressOutput / outputs.OutputManager /
+    requests / urllib / openai
+逆依存禁止：ai_image_generation / openai_image_generation / wordpress_media /
+    generated_image_wordpress_media / article_featured_media / outputs は
+    article_featured_media_orchestrationをimportしない
+```
+
+```
+Dependency Diagram（Release 6.14後）
+
+ai_image_generation          wordpress_media          outputs
+  ├── AIImageGenerator          └── MediaUploadResult    └── ArticleData
+  └── GeneratedImage                    │                       │
+         │                              │                       │
+         └──────────┬───────────────────┴───────────┬───────────┘
+                     │                                │
+                     │                    article_featured_media
+                     │                    └── bind_featured_media()
+                     │                                │
+                     └────────────────┬───────────────┘
+                                       ▼
+                     article_featured_media_orchestration
+                     ├── GeneratedImageUploadCapability（Protocol、本package内で新設）
+                     └── ArticleFeaturedMediaOrchestrator
+```
+
+`generated_image_wordpress_media`・`openai_image_generation`はいずれも本Releaseから依存されない（Capability Protocol経由の間接的な構造適合のみ）。新規package`article_featured_media_orchestration`のみが4つのpackageすべてをimportするCaller側になる。既存4package間の依存関係（相互に独立）は変更しない。
+
+### Error Contract
+
+```
+image_generator capability不足：TypeError（固定message完全一致）
+media_uploader capability不足：TypeError（固定message完全一致）
+article型不正：ValueError（固定message完全一致）
+prompt型不正・空白のみ：ValueError（固定message完全一致）
+filename型不正・空白のみ：ValueError（固定message完全一致）
+image_generator.generate()由来の例外：無変換伝播（upload・bindは呼ばない）
+media_uploader.upload()由来の例外：無変換伝播（bindは呼ばない）
+bind_featured_media()由来の例外：無変換伝播
+```
+
+try／except・例外wrapper・`raise ... from ...`・fallback・自動retry・partial success resultはいずれも持たない。
+
+### State非保持Contract
+
+Constructor Injectionされた`_image_generator` / `_media_uploader`の2参照以外、インスタンス状態を一切保持しない。module-levelのmutable state・global文・nonlocal文・for／while／comprehension・try／exceptのいずれも持たない（AST Guardで0件を確認済み）。
+
+### Security Contract
+
+image bytes・prompt・filenameのいずれも保存・ログ出力しない。credential・Environment Variable・HTTP通信・filesystem I/Oのいずれも扱わない（dependency側の責務）。
+
+### Backward Compatibility
+
+既存`ai_image_generation` / `openai_image_generation` / `wordpress_media` / `generated_image_wordpress_media` / `article_featured_media` / `outputs`（`ArticleData` / `WordPressOutput`） / `image_resolver.py` / `main.py` / 記事生成Pipeline / Workflow / Scheduler / Retry Runtime、および既存テスト一式はいずれも無改修。新規独立packageの追加のみであり、既存の呼び出し元（現状ゼロ）にも影響しない。
+
+### Out of Scope
+
+`main.py` / `image_resolver.py`変更、Runtime Wiring、WordPress記事投稿、画像prompt生成、filename自動生成、Configuration First有効化フラグ、Environment Variable読込、OpenAI/WordPress client生成、fallback Policy、DEFAULT_MEDIA_IDとの統合、Retry Runtime接続、重複Upload対策、既存media ID再利用、未使用Media cleanup、Loggingは、いずれも本Releaseの対象外である（詳細は`docs/design/article_featured_media_orchestration_foundation.md` 7章）。
+
+### Test Review・Code Review・Regressionの実績
+
+新規E2E（`tests/test_e2e_v6_14_0_article_featured_media_orchestration_foundation.py`）は34シナリオ・Validation展開25ケース・217アサーション・217/217 PASS（終了コード0、意図しない警告なし、Tracebackなし）。既存Regression（`docs/CHANGELOG.md` v6.13.0 Testedセクション記載の正式16ファイル、2054/2054 PASS）とあわせた新規E2E込みの合計は2271/2271 PASS。Architecture Reviewは「Approved」（Blocking Issueなし、初回Changes Required：Minor 9件・Suggestion 1件、いずれもNon-Blocking、Non-Blocking Finding修正工程で反映済み）。Code Reviewは「Approved with Suggestions」（Blocking Issueなし、Critical/Major/Minor 0件、Suggestion 1件：CR14-S-1）。CR14-S-1（正式設計書21章と22章のReverse Dependency Guard対象package数の記載差、4package vs 6package）はProduction実装・新規E2Eいずれも22章が定める最終Approved scope（4package）と完全に一致しており、Production／E2Eへの影響はないためNon-Blockingのまま維持している。
+
+### Future Extension
+
+Article Featured Media Runtime Wiring（`main.py` / `image_resolver.py`等のProduction Runtimeへの接続）・Publish Composition Root Foundation・Image Generation Configuration Gate・Article Image Prompt Construction Foundation・Generated Image Filename Policy Foundation・Image Generation Fallback Policy・Media Upload Retry／Idempotency Foundation・WordPress Unused Media Cleanup Foundation（順序・Release分割方針は確定事項として固定しない。詳細は`docs/ROADMAP.md`）。
+
+詳細は`docs/design/article_featured_media_orchestration_foundation.md`
+（Architecture Design・Architecture Review・Production Implementation・Code Review・Formal Regressionの経緯を含む）を参照。
