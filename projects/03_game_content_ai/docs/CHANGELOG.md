@@ -361,6 +361,114 @@
 
 ---
 
+## [v6.13.0] - 2026-07-18 ★ Article Featured Media Binding Foundation
+
+### Added
+
+- 新規独立package`src/article_featured_media/`：v6.9.0の`WordPressMediaUploader.upload()`が
+  返す`MediaUploadResult.media_id`を、v1.6.0から既存の`ArticleData.featured_media_id`へ
+  反映する単一責務のstateless Binding層
+  - `src/article_featured_media/__init__.py`：package rootから`bind_featured_media`のみを公開
+  - `src/article_featured_media/article_featured_media_binder.py`：`bind_featured_media()`
+- `tests/test_e2e_v6_13_0_article_featured_media_binding_foundation.py`新規作成
+  （24シナリオ・Validation展開13ケース・123アサーション）
+- `docs/design/article_featured_media_binding_foundation.md`新規作成：Architecture Design・
+  Architecture Review・Code Review・Code Review Non-Blocking Finding修正・Formal Regression
+  の経緯を含む
+
+### Public API
+
+- `bind_featured_media(article: ArticleData, media_result: MediaUploadResult) -> ArticleData`
+  （module-level function。依存注入を必要としないため、既存precedent
+  `image_resolver.resolve_media_id()` / `taxonomy_config.resolve_taxonomy()`と同じくPublic
+  classではなく関数として実装）
+
+### Architecture／Behavior
+
+- `bind_featured_media()`は、①`isinstance(article, ArticleData)`検証（不適合は固定message
+  `"article must be an ArticleData"`の`ValueError`）、②`isinstance(media_result,
+  MediaUploadResult)`検証（不適合は固定message`"media_result must be a MediaUploadResult"`の
+  `ValueError`）、③`media_result.media_id`がbool、int以外、または1未満でないことの検証
+  （不適合は固定message`"media_result.media_id must be a positive int"`の`ValueError`）、④
+  `dataclasses.replace(article, featured_media_id=media_result.media_id)`による新しい
+  `ArticleData`の構築、⑤返却、の順で処理する
+- 元の`article`は変更せず、戻り値は別objectを返す。`featured_media_id`以外の全fieldは既存値を
+  維持し、`item`等のnested objectは同一object参照を維持する（deep copyしない）
+- 既存`featured_media_id`の値（0／`media_result.media_id`と同一／異なる正のID）に関わらず、
+  常に`media_result.media_id`で決定的に上書きする。既存値との比較・拒否ロジックは持たない
+  （Retry判断・重複Upload対策は本層の責務としない）
+- `MediaUploadResult.source_url` / `mime_type`はいずれも`ArticleData`へ反映しない。
+  `MediaUploadResult`自体も`ArticleData`へ保持しない
+- module-level functionであるためインスタンス状態が構造的に存在せず、module-levelの
+  mutable state・global文・nonlocal文のいずれも持たない
+- 分類はArchitecture Release。新規独立package・新規Public API・新規Dependency方向の確立を
+  伴うため
+- 対象外（今回は未実装）：AI画像生成の実行、生成画像のMedia Uploadの実行、`image_resolver.py` /
+  `WordPressOutput` / `main.py`変更、記事生成と画像生成の同一Runtime Flow接続、Composition Root
+  接続、Retry時の重複Upload対策、Upload成功後の記事投稿失敗時の整合性、既存media ID再利用、
+  未使用Media cleanup、Logging（同設計書7章）
+- 既存`outputs`（`ArticleData` / `WordPressOutput`）・`wordpress_media` /
+  `generated_image_wordpress_media` / `image_resolver.py` / `main.py` / 記事生成Pipeline /
+  Workflow / Scheduler / Retry Runtimeはいずれも無改修。既存側から`article_featured_media`への
+  Wiringも本Releaseでは行わない（消費者不在の先行実装）
+- **Architecture Review Non-Blocking Finding（Minor 2件：AR-m-1・AR-m-2、Suggestion 2件：
+  AR-S-1・AR-S-2）**：AR-m-1（正式設計書内の「Future Candidates」章参照誤り）・AR-m-2
+  （State Contract E2E GuardへのAST `Global`／`Nonlocal`検出追加）はImplementation工程で
+  正式設計書へ反映済み。AR-S-1（Reverse Dependency Guardのvacuous pass耐性強化）・AR-S-2
+  （`ValueError`採用根拠のprecedent引用追加）も同工程で反映済み
+- **Code Review Non-Blocking Finding（Minor 4件：CR-m-1〜CR-m-4、Suggestion 1件：CR-S-1）**：
+  CR-m-1（設計書32章に残っていた「Future Candidates」章参照誤りの残存1箇所）・CR-m-2
+  （20章のReverse Dependency Guard記述が実際のE2E実装の検出範囲を超えていた点の是正）・
+  CR-m-3（新規E2E DEP-1の禁止import集合`FORBIDDEN_EXACT`への`scripts`追加）はCode Review
+  Non-Blocking Finding修正工程で反映済み。CR-m-4（Implementation報告内の集計記載ミス、
+  ファイル修正対象なし）・CR-S-1（`dataclasses.fields()`利用箇所のvacuous pass耐性強化）は
+  いずれもNon-Blocking／Deferredのまま維持
+- 新規Known Issueなし
+
+### Tested
+
+- `tests/test_e2e_v6_13_0_article_featured_media_binding_foundation.py`：
+  24シナリオ・Validation展開13ケース・123アサーション・123/123 PASS（終了コード0、
+  意図しない警告なし、Tracebackなし）
+- 既存回帰確認（`docs/CHANGELOG.md` v6.12.0 Testedセクション記載の正式15ファイル、いずれも
+  ベースラインと同一件数、新規差分なし）：
+  - `tests/test_e2e_v1_11_0_save_result.py`：43/43 PASS
+  - `tests/test_e2e_v5_9_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_0_0_*.py`：43/43 PASS
+  - `tests/test_e2e_v6_1_0_*.py`：44/44 PASS
+  - `tests/test_e2e_v6_2_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_3_0_*.py`：174/174 PASS
+  - `tests/test_e2e_v6_4_0_*.py`：171/171 PASS
+  - `tests/test_e2e_v6_5_0_*.py`：131/131 PASS
+  - `tests/test_e2e_v6_6_0_*.py`：135/135 PASS
+  - `tests/test_e2e_v6_7_0_*.py`：117/117 PASS
+  - `tests/test_e2e_v6_8_0_*.py`：197/197 PASS
+  - `tests/test_e2e_v6_9_0_*.py`：331/331 PASS
+  - `tests/test_e2e_v6_10_0_*.py`：78/78 PASS
+  - `tests/test_e2e_v6_11_0_*.py`：248/248 PASS
+  - `tests/test_e2e_v6_12_0_*.py`：91/91 PASS
+- Regression合計：1931/1931 PASS（v1.11.0・v5.9.0〜v6.12.0）。全Suite終了コード0、
+  ベースライン差なし、実異常の警告なし
+- 新規E2E（123）＋Regression（1931）＝2054/2054 PASS
+- Architecture Review：「Approved」（Blocking Issueなし、Minor 2件・Suggestion 2件、
+  いずれもNon-Blocking）
+- Code Review：「Approved」（Blocking Issueなし、Critical／Major 0件、Minor 4件・
+  Suggestion 1件、いずれもNon-Blocking）
+- Formal Regression：PASS（既存15ファイル1931/1931 PASS＋新規E2E 123/123 PASS＝総合
+  2054/2054 PASS、終了コード非0なし、実HTTP・実credential読込・実課金いずれもなし）
+- 本Releaseによる新規Known Issueなし。CR-m-4はImplementation報告内の集計記載ミスであり
+  ファイル修正対象がないため、Known Issueとしては追加しない。CR-S-1はNon-Blocking
+  Suggestionとして正式設計書内でDeferredのまま維持し、Known IssueやOpen Questionへは
+  昇格させない
+
+### Scope
+
+- Consumer-less Foundation・既存production code無改修・既存test無改修・既存Pipeline非配線・
+  実HTTP通信なし・実課金なし・module-level function・State非保持・元ArticleData非mutation・
+  決定的な既存featured_media_id上書き
+
+---
+
 ## [v6.12.0] - 2026-07-18 ★ Generated Image WordPress Media Upload Wiring Foundation
 
 ### Added

@@ -3444,3 +3444,112 @@ Article → featured_media Wiring（`media_id`の消費、独立したArchitectu
 
 詳細は`docs/design/generated_image_wordpress_media_upload_wiring_foundation.md`
 （Architecture Design・Architecture Review 1〜5・Test Review・Code Review 1・CR-m-1 Fix・Code Review Re-Review・Formal Regressionの経緯を含む）を参照。
+
+## Article Featured Media Binding Foundation層（`src/article_featured_media/`、v6.13.0 実装完了）
+
+> **本節は実装完了時点の記録である。新規E2E（24シナリオ・Validation 13ケース・123アサーション・123/123 PASS）・既存Regression（`docs/CHANGELOG.md` v6.12.0 Testedセクション記載の正式15ファイル、1931/1931 PASS、新規E2E込み合計2054/2054 PASS）とも完全PASSし、Architecture Review（「Approved」、Minor 2件・Suggestion 2件はいずれもNon-Blocking）・Code Review（「Approved」、Minor 4件・Suggestion 1件はいずれもNon-Blocking）を経ている。**
+
+### Purpose
+
+v6.9.0の`WordPressMediaUploader.upload()`が返す`MediaUploadResult.media_id`を、v1.6.0から既存の`ArticleData.featured_media_id`へ反映する、単一責務のstateless Binding層を追加する。候補調査の結果、`ArticleData`・`WordPressOutput`はいずれも既存Contractのまま変更不要であることが判明しており、本層はこの「値の橋渡し」だけを担う**Consumer-less Foundation**である。画像生成の実行・Media Uploadの実行・`image_resolver.py` / `WordPressOutput` / `main.py`への配線はいずれも行わない。
+
+```
+ArticleData（既存、v1.6.0 featured_media_id含む）
+MediaUploadResult（v6.9.0）
+        │
+        ▼
+bind_featured_media(article, media_result)
+        │
+        ├─▶ isinstance(article, ArticleData)検証（不適合はValueError）
+        ├─▶ isinstance(media_result, MediaUploadResult)検証（不適合はValueError）
+        ├─▶ media_result.media_idのbool除外int・1以上検証（不適合はValueError）
+        └─▶ dataclasses.replace(article, featured_media_id=media_result.media_id)
+                        │
+                        ▼
+                新しいArticleData（featured_media_idのみ置換、他は既存値維持）
+```
+
+### Package Boundary
+
+新規独立package`src/article_featured_media/`。
+
+```
+src/article_featured_media/
+├── __init__.py                        # Public API export
+└── article_featured_media_binder.py   # bind_featured_media()
+```
+
+### Public API
+
+`src/article_featured_media/__init__.py`が公開するのは次の1つのみ。
+
+```python
+bind_featured_media
+```
+
+```python
+def bind_featured_media(article: ArticleData, media_result: MediaUploadResult) -> ArticleData: ...
+```
+
+Constructorを持つPublic classではなく、依存注入を必要としないmodule-level functionとして実装する（既存precedent`image_resolver.resolve_media_id()` / `taxonomy_config.resolve_taxonomy()`と同一の方式）。
+
+### Validation順序とContract
+
+```
+1. isinstance(article, ArticleData) → 不適合はValueError（固定message"article must be an ArticleData"）
+2. isinstance(media_result, MediaUploadResult) → 不適合はValueError
+   （固定message"media_result must be a MediaUploadResult"）
+3. media_result.media_idがbool、int以外、または1未満 → ValueError
+   （固定message"media_result.media_id must be a positive int"）
+4. dataclasses.replace(article, featured_media_id=media_result.media_id)で新しいArticleDataを構築
+5. 新しいArticleDataを返却
+```
+
+既存`featured_media_id`の値（0／`media_result.media_id`と同一／異なる正のID）に関わらず、常に`media_result.media_id`で決定的に上書きする。既存値との比較・拒否ロジックは持たない（Retry判断・重複Upload対策は本層の責務ではなく、将来のRuntime Wiring候補の論点）。
+
+### 依存関係
+
+```
+許可：outputs.ArticleDataのみ／wordpress_media.MediaUploadResultのみ
+禁止：wordpress_media.WordPressMediaUploader（本体） / generated_image_wordpress_media /
+    ai_image_generation / openai_image_generation / image_resolver / ai / pipeline /
+    workflow_engine / scheduler / retry_* / scripts / main / requests / urllib
+逆依存禁止：outputs / wordpress_media は article_featured_media をimportしない
+```
+
+### Error Contract
+
+```
+article型不正：ValueError（固定message完全一致）
+media_result型不正：ValueError（固定message完全一致）
+media_id値不正（bool／非int／0以下）：ValueError（固定message完全一致）
+dataclasses.replace()由来の予期しない例外：無変換伝播（catch・変換・ラップしない）
+KeyboardInterrupt／SystemExit：catchしない、無変換伝播
+```
+
+### State非保持Contract
+
+module-level functionであるためインスタンス状態という概念が構造的に存在しない。module-levelのmutable state・global文・nonlocal文のいずれも持たず、同一入力に対して常に値として同値な新しい`ArticleData`を返す（object identityの一致は要求しない）。
+
+### Security Contract
+
+article／media_resultの値・repr・str表現のいずれも、例外messageへ含めない。新規Loggingは追加しない。
+
+### Backward Compatibility
+
+既存`outputs`（`ArticleData` / `WordPressOutput`）・`wordpress_media`・`generated_image_wordpress_media` / `image_resolver.py` / `main.py` / 記事生成Pipeline / Workflow / Scheduler / Retry Runtime、および既存テスト一式はいずれも無改修。新規独立packageの追加のみであり、既存の呼び出し元（現状ゼロ）にも影響しない。
+
+### Out of Scope
+
+AI画像生成の実行、生成画像のMedia Uploadの実行、`image_resolver.py` / `WordPressOutput` / `main.py`変更、記事生成と画像生成の同一Runtime Flow接続、Composition Root接続、Retry時の重複Upload対策、Upload成功後の記事投稿失敗時の整合性、既存media ID再利用、未使用Media cleanup、Loggingは、いずれも本Releaseの対象外である（詳細は`docs/design/article_featured_media_binding_foundation.md` 7章）。
+
+### Test Review・Code Review・Regressionの実績
+
+新規E2E（`tests/test_e2e_v6_13_0_article_featured_media_binding_foundation.py`）は24シナリオ・Validation展開13ケース・123アサーション・123/123 PASS（終了コード0、意図しない警告なし、Tracebackなし）。既存Regression（`docs/CHANGELOG.md` v6.12.0 Testedセクション記載の正式15ファイル、1931/1931 PASS）とあわせた新規E2E込みの合計は2054/2054 PASS。Architecture Reviewは「Approved」（Blocking Issueなし、Minor 2件：AR-m-1・AR-m-2、Suggestion 2件：AR-S-1・AR-S-2、いずれもNon-Blocking、Implementation工程で反映済み）。Code Reviewは「Approved」（Blocking Issueなし、Minor 4件：CR-m-1〜CR-m-4、Suggestion 1件：CR-S-1、いずれもNon-Blocking）。うちCR-m-1（章参照誤りの残存）・CR-m-2（Reverse Dependency Guardの設計書記述超過）・CR-m-3（DEP-1禁止import集合への`scripts`追加）はNon-Blocking Finding修正工程で反映済み。CR-m-4（Implementation報告の集計記載ミス、ファイル修正対象なし）・CR-S-1（`dataclasses.fields()`利用箇所のvacuous pass耐性強化）はNon-Blocking／Deferredのまま維持。
+
+### Future Extension
+
+AI画像生成Runtime Wiring・生成画像Media Upload Runtime Wiring・`bind_featured_media()`のRuntime接続（`image_resolver.py` / `main.py` / Composition Root経由）・Upload成功後の記事投稿失敗時の整合性・Retry時の重複Upload対策・既存media ID再利用・未使用Media cleanup（順序・Release分割方針は確定事項として固定しない。詳細は`docs/ROADMAP.md`）。
+
+詳細は`docs/design/article_featured_media_binding_foundation.md`
+（Architecture Design・Architecture Review・Code Review・Code Review Non-Blocking Finding修正・Formal Regressionの経緯を含む）を参照。

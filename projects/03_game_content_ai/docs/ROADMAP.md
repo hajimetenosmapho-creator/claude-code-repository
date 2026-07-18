@@ -753,12 +753,37 @@
   91アサーション・91/91 PASS）・既存Regression（`docs/CHANGELOG.md` v6.11.0 Testedセクション
   記載の正式14ファイル、1840/1840 PASS、新規E2E込み合計1931/1931 PASS）とも完全PASSした
   （`docs/design/generated_image_wordpress_media_upload_wiring_foundation.md`）
-- [ ] **Article → featured_media Wiring**（次候補・未着手。v6.12.0 Generated Image WordPress
-  Media Upload Wiring Foundationの完了により前提条件を充足）：Generated Image WordPress Media
-  Upload Wiring Foundationで取得した`media_id`を`image_resolver.resolve_media_id()` /
-  `ArticleData.featured_media_id` / `WordPressOutput`経由で実際の記事投稿へ反映する配線。
-  `image_resolver.py` / `ArticleData` / `WordPressOutput`への変更を伴うため独立したArchitecture
-  Reviewを要する
+- [x] **Article Featured Media Binding Foundation**：v6.13.0で実装完了。候補調査の結果、
+  v6.9.0〜v6.12.0の既存Contractを実読したところ、`ArticleData.featured_media_id`（v1.6.0で
+  既存）・`WordPressOutput`（`featured_media_id > 0`のとき`payload["featured_media"]`へ反映する
+  ロジックも既存）はいずれも無変更で足りることが判明し、必要なのは「v6.9.0
+  `WordPressMediaUploader.upload()`が返す`MediaUploadResult.media_id`を、どうやって既存の
+  `featured_media_id`へ届けるか」という一点のみであった。この橋渡しだけを担う、単一責務の
+  stateless Binding層として新規独立package`src/article_featured_media/`（module-level function
+  `bind_featured_media(article: ArticleData, media_result: MediaUploadResult) -> ArticleData`の
+  みを公開）を追加した。`isinstance(article, ArticleData)`→`isinstance(media_result,
+  MediaUploadResult)`→`media_result.media_id`のbool除外int・1以上検証（いずれも不適合時は
+  固定messageの`ValueError`）の順で検証したうえで、`dataclasses.replace(article,
+  featured_media_id=media_result.media_id)`により元`ArticleData`を変更せず新しいobjectを返す。
+  `featured_media_id`以外の全fieldおよび`item`等のnested object参照は維持し、既存
+  `featured_media_id`の値（0／同一／異なる値のいずれ）に関わらずmedia_result.media_idで決定的に
+  上書きする（Retry判断・重複Upload対策は持たない、後続候補）。`outputs.ArticleData` /
+  `wordpress_media.MediaUploadResult`のみに依存し、`WordPressMediaUploader`本体・
+  `generated_image_wordpress_media` / `image_resolver.py` / `WordPressOutput` / `main.py` /
+  Pipeline / Composition Rootのいずれへも依存・配線しない（消費者不在の先行実装）。Architecture
+  Review（Approved、Minor 2件・Suggestion 2件はいずれもNon-Blocking）・Code Review（Approved、
+  Minor 4件・Suggestion 1件はいずれもNon-Blocking、Minor 3件は本Release内で反映済み）を経て、
+  新規E2E（24シナリオ・Validation 13ケース・123アサーション・123/123 PASS）・既存Regression
+  （`docs/CHANGELOG.md` v6.12.0 Testedセクション記載の正式15ファイル、1931/1931 PASS、新規E2E
+  込み合計2054/2054 PASS）とも完全PASSした（`docs/design/article_featured_media_binding_foundation.md`）
+- [ ] **Article Featured Media Runtime Wiring**（次候補・未着手。v6.13.0 Article Featured Media
+  Binding Foundationの完了により前提条件を充足）：AI画像生成（`OpenAIImageGenerator.generate()`）
+  の実行、生成画像のMedia Upload（`GeneratedImageWordPressMediaUploader.upload()`）の実行、および
+  v6.13.0の`bind_featured_media()`を実際に呼び出すComposition Root／Pipeline接続を、記事生成
+  Pipeline（`main.py` / `image_resolver.py`）へ組み込む後続Wiring。一括のReleaseとするか複数
+  Releaseへ分割するか、`image_resolver.py` / `main.py`への変更内容、Upload成功後の記事投稿失敗時の
+  整合性・Retry時の重複Upload対策・既存media ID再利用・未使用Media cleanup・fallback方針はいずれも
+  未確定であり、独立したArchitecture Reviewを要する
 - [ ] **Retry Notification Channel Foundation**（次候補）：Message Foundationが生成した通知内容を
   どの通知先（Slack／メール等）へ送るか選択する別パッケージ（`docs/design/
   retry_notification_message_foundation.md` 21章）
