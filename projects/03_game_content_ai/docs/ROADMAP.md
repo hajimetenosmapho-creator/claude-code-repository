@@ -728,11 +728,34 @@
   既存Regression（`docs/CHANGELOG.md` v6.10.0 Testedセクション記載の正式13ファイル、
   1592/1592 PASS、新規E2E込み合計1840/1840 PASS）とも完全PASSした
   （`docs/design/openai_image_generation_adapter_foundation.md`）
-- [ ] **Generated Image → WordPress Media Upload Wiring**（次候補・未着手）：OpenAI Image
-  Generation Adapter Foundationが生成した`GeneratedImage.image_bytes`を、v6.9.0の
-  `WordPressMediaUploader.upload()`へ実際に渡す配線。Adapter Foundationが完了した後に着手する
-- [ ] **Article → featured_media Wiring**（次候補・未着手）：Generated Image → WordPress Media
-  Upload Wiringで取得した`media_id`を`image_resolver.resolve_media_id()` /
+- [x] **Generated Image WordPress Media Upload Wiring Foundation**：v6.12.0で実装完了。v6.10.0の
+  `GeneratedImage`を、v6.9.0の`WordPressMediaUploader.upload()`へ橋渡しする単一責務のWiring層。
+  新規独立package`src/generated_image_wordpress_media/`（`GeneratedImageWordPressMediaUploader`
+  のみを公開）を追加した。`upload(image: GeneratedImage, filename: str) -> MediaUploadResult`は、
+  ①`isinstance(image, GeneratedImage)`検証（不適合は`ValueError`）、②
+  `callable(getattr(media_uploader, "upload", None))`によるcapability遅延検証（不適合は固定
+  message`"media_uploader must provide a callable upload method"`の`TypeError`）、③
+  `image_bytes=` / `filename=` / `mime_type=`のkeyword引数で`WordPressMediaUploader.upload()`へ
+  委譲、④`MediaUploadResult`を無変換で返却、の順で処理する。`media_uploader`はDuck Typing
+  （Constructor Injection、`isinstance()`によるnominal型検証は行わない）で受け取り、
+  `WordPressMediaUploadError` / signature不一致`TypeError` / dependency内部`TypeError` /
+  `RuntimeError` / `KeyboardInterrupt` / `SystemExit`はいずれもcatch・変換・ラップせず無変換
+  伝播する。Constructorはmedia_uploader参照のみを保持し、`upload()`もrequest単位state
+  （image／filename／MediaUploadResult等）をインスタンス属性へ保存しない（Runtime連続呼出
+  Guard・Constructor AST Guard・upload() AST Guardの3方式で検証）。既存`ai_image_generation` /
+  `openai_image_generation` / `wordpress_media` / `image_resolver.py` / `outputs` / 記事生成
+  Pipeline / Workflow / Scheduler / Retry Runtimeのいずれへも依存・配線しない（消費者不在の
+  先行実装）。Architecture Review（1〜4回目Changes Required、5回目Approved）・Test Review
+  （Approved、Suggestion 3件：TR-S-1〜TR-S-3）・Code Review（1回目Changes Required：Minor
+  Finding CR-m-1、`upload()`のrequest単位state非保持AST Guard追加（86→91アサーション、
+  production code無修正）で解消しRe-ReviewでApproved。継続Suggestion CR-S-1・CR-S-2、
+  新規Suggestion CRR-S-1はいずれもNon-Blocking）を経て、新規E2E（17シナリオ・8ケース・
+  91アサーション・91/91 PASS）・既存Regression（`docs/CHANGELOG.md` v6.11.0 Testedセクション
+  記載の正式14ファイル、1840/1840 PASS、新規E2E込み合計1931/1931 PASS）とも完全PASSした
+  （`docs/design/generated_image_wordpress_media_upload_wiring_foundation.md`）
+- [ ] **Article → featured_media Wiring**（次候補・未着手。v6.12.0 Generated Image WordPress
+  Media Upload Wiring Foundationの完了により前提条件を充足）：Generated Image WordPress Media
+  Upload Wiring Foundationで取得した`media_id`を`image_resolver.resolve_media_id()` /
   `ArticleData.featured_media_id` / `WordPressOutput`経由で実際の記事投稿へ反映する配線。
   `image_resolver.py` / `ArticleData` / `WordPressOutput`への変更を伴うため独立したArchitecture
   Reviewを要する

@@ -3333,3 +3333,114 @@ Runtime Guard：openai.OpenAIをpatchし、無許可の実Client構築をAsserti
 
 詳細は`docs/design/openai_image_generation_adapter_foundation.md`
 （Architecture Design・Architecture Review 1〜5・Test Review 1〜6・Implementation・IMP-DESIGN-1・Code Review 1指摘反映の経緯を含む）を参照。
+
+---
+
+## Generated Image WordPress Media Upload Wiring Foundation層（`src/generated_image_wordpress_media/`、v6.12.0 実装完了）
+
+> **本節は実装完了時点の記録である。新規E2E（17シナリオ・8ケース・91アサーション・91/91 PASS）・既存Regression（`docs/CHANGELOG.md` v6.11.0 Testedセクション記載の正式14ファイル、1840/1840 PASS、新規E2E込み合計1931/1931 PASS）とも完全PASSし、Architecture Review（5回目「Approved」）・Test Review（「Approved」、Suggestion 3件：TR-S-1〜TR-S-3）・Code Review（1回目「Changes Required」：Minor Finding CR-m-1、Re-Reviewで「Approved」）を経ている。**
+
+### Purpose
+
+v6.10.0の`GeneratedImage`を、v6.9.0の`WordPressMediaUploader.upload()`へ橋渡しする単一責務のWiring層を追加する。画像生成（prompt→`GeneratedImage`）・Article／`featured_media`反映・CLI／Composition Root・Retry Runtime統合はいずれも行わない**Consumer-less Foundation**である。
+
+```
+GeneratedImage（v6.10.0）
+        │
+        ▼
+GeneratedImageWordPressMediaUploader.upload(image, filename)
+        │
+        ├─▶ isinstance(image, GeneratedImage)検証（不適合はValueError）
+        ├─▶ callable(getattr(media_uploader, "upload", None))検証（不適合は固定messageのTypeError）
+        └─▶ WordPressMediaUploader.upload(
+                image_bytes=image.image_bytes, filename=filename, mime_type=image.mime_type)
+                        │
+                        ▼
+                MediaUploadResult（v6.9.0、無変換で返却）
+```
+
+### Package Boundary
+
+新規独立package`src/generated_image_wordpress_media/`。
+
+```
+src/generated_image_wordpress_media/
+├── __init__.py                                    # Public API export
+└── generated_image_wordpress_media_uploader.py    # GeneratedImageWordPressMediaUploader
+```
+
+### Public API
+
+`src/generated_image_wordpress_media/__init__.py`が公開するのは次の1つのみ。
+
+```python
+GeneratedImageWordPressMediaUploader
+```
+
+```python
+class GeneratedImageWordPressMediaUploader:
+    def __init__(self, media_uploader: WordPressMediaUploader) -> None: ...
+    def upload(self, image: GeneratedImage, filename: str) -> MediaUploadResult: ...
+```
+
+### 検証順序とCapability Contract
+
+```
+1. isinstance(image, GeneratedImage) → 不適合はValueError（Wiring層送出）
+2. callable(getattr(media_uploader, "upload", None)) → 不適合はTypeError
+   （Wiring層送出、固定message"media_uploader must provide a callable upload method"、完全一致）
+3. WordPressMediaUploader.upload()へkeyword引数（image_bytes= / filename= / mime_type=）で委譲
+4. MediaUploadResultを無変換で返却
+```
+
+`media_uploader`はConstructor InjectionのみでDuck Typing（`isinstance(media_uploader, WordPressMediaUploader)`によるnominal型検証は行わない）。capability検証は`upload()`呼び出し時まで遅延させる。
+
+### 依存関係
+
+```
+許可：ai_image_generation.GeneratedImageのみ／wordpress_media.WordPressMediaUploader・MediaUploadResultのみ
+禁止：openai_image_generation / image_resolver / outputs / ai / pipeline / workflow_engine /
+    scheduler / retry_* / scripts / requests / openai
+逆依存禁止：ai_image_generation / openai_image_generation / wordpress_media は
+    generated_image_wordpress_media をimportしない
+```
+
+### Error Contract
+
+```
+image型不正：ValueError（Wiring層送出、message非固定・情報非露出）
+media_uploader capability不正：TypeError（Wiring層送出、固定message完全一致）
+media_uploader signature不一致：TypeError（Python runtime送出、message非固定、無変換伝播）
+dependency内部TypeError：注入dependency送出、無変換伝播
+WordPressMediaUploadError／RuntimeError等：無変換伝播（catch・変換・ラップ・抑制しない）
+KeyboardInterrupt／SystemExit：catchしない、無変換伝播
+```
+
+capability不正TypeErrorのみが固定messageで識別可能であり、それ以外の下流TypeError（signature不一致・dependency内部・その他）を呼び出し元が相互に分類できることは保証しない。
+
+### State非保持Contract
+
+Constructorはmedia_uploaderへの参照のみを保持し、`upload()`もimage／filename／MediaUploadResult／例外object等のrequest単位stateをインスタンス属性へ保存しない（Runtime連続呼出Guard・Constructor AST Guard・upload() AST Guardの3方式でE2E検証）。
+
+### Security Contract
+
+image bytes／filename／MIME type実値／dependency repr・class名／credential／Authorization headerのいずれも、Wiring層自身が生成する例外message・ログへ含めない。新規Loggingは追加しない。
+
+### Backward Compatibility
+
+既存`ai_image_generation` / `openai_image_generation` / `wordpress_media` / `image_resolver.py` / `outputs` / 記事生成Pipeline / Workflow / Scheduler / Retry Runtime、および既存テスト一式はいずれも無改修。新規独立packageの追加のみであり、既存の呼び出し元（現状ゼロ）にも影響しない。
+
+### Out of Scope
+
+画像生成（prompt→GeneratedImage）、Article／featured_media反映、CLI／Script Entry Point、Environment Composition、実OpenAI Client生成、実WordPress Client生成、`image_resolver.py` / `ArticleData` / `WordPressOutput`変更、既存記事生成Pipeline・Workflow・Scheduler・Retry Runtime統合、独自Protocol新設、複数CMS対応、Logging、Retry、Dry Runは、いずれも本Releaseの対象外である（詳細は`docs/design/generated_image_wordpress_media_upload_wiring_foundation.md` 37.2章）。
+
+### Test Review・Code Review・Regressionの実績
+
+新規E2E（`tests/test_e2e_v6_12_0_generated_image_wordpress_media_upload_wiring_foundation.py`）は17シナリオ・8ケース・91アサーション・91/91 PASS（終了コード0、意図しない警告なし、Tracebackなし）。既存Regression（`docs/CHANGELOG.md` v6.11.0 Testedセクション記載の正式14ファイル、1840/1840 PASS）とあわせた新規E2E込みの合計は1931/1931 PASS。Architecture Reviewは1〜4回目「Changes Required」を経て5回目「Approved」。Test Reviewは「Approved」（Blocking Issueなし、Suggestion 3件：TR-S-1〜TR-S-3）。Code Reviewでは、新規E2EのSTATE-AST-1が`GeneratedImageWordPressMediaUploader.__init__()`のみをAST検査対象としており`upload()`内のrequest単位state非保持を直接検証していないMinor Finding（CR-m-1、Production Code自体は適合済みで修正不要）を1回目「Changes Required」として指摘し、`upload()`専用のAST Source Guard追加（86→91アサーション、production code無修正）で解消してRe-Review「Approved」。継続Suggestion（CR-S-1・CR-S-2）および新規Suggestion（CRR-S-1）はいずれもNon-Blocking。
+
+### Future Extension
+
+Article → featured_media Wiring（`media_id`の消費、独立したArchitecture Reviewを要する）・Retry Runtime統合・複数CMS対応時のMedia Uploader抽象化・CLI／Script Entry Point（順序は確定事項として固定しない。詳細は`docs/ROADMAP.md`）。
+
+詳細は`docs/design/generated_image_wordpress_media_upload_wiring_foundation.md`
+（Architecture Design・Architecture Review 1〜5・Test Review・Code Review 1・CR-m-1 Fix・Code Review Re-Review・Formal Regressionの経緯を含む）を参照。

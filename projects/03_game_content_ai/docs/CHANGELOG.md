@@ -361,6 +361,110 @@
 
 ---
 
+## [v6.12.0] - 2026-07-18 ★ Generated Image WordPress Media Upload Wiring Foundation
+
+### Added
+
+- 新規独立package`src/generated_image_wordpress_media/`：v6.10.0の`GeneratedImage`を、
+  v6.9.0の`WordPressMediaUploader.upload()`へ橋渡しする単一責務のWiring層
+  - `src/generated_image_wordpress_media/__init__.py`：package rootから
+    `GeneratedImageWordPressMediaUploader`のみを公開
+  - `src/generated_image_wordpress_media/generated_image_wordpress_media_uploader.py`：
+    `GeneratedImageWordPressMediaUploader`（`__init__` / `upload`）
+- `tests/test_e2e_v6_12_0_generated_image_wordpress_media_upload_wiring_foundation.py`
+  新規作成（17シナリオ・8ケース・91アサーション）
+- `docs/design/generated_image_wordpress_media_upload_wiring_foundation.md`新規作成：
+  Architecture Design・Architecture Review 1〜5・Test Review・Code Review 1・
+  CR-m-1 Fix・Code Review Re-Review・Formal Regressionの経緯を含む
+
+### Public API
+
+- `GeneratedImageWordPressMediaUploader`：`__init__(media_uploader: WordPressMediaUploader)` /
+  `upload(image: GeneratedImage, filename: str) -> MediaUploadResult`
+
+### Architecture／Behavior
+
+- `upload()`は、①`isinstance(image, GeneratedImage)`検証（不適合は`ValueError`）、②
+  `callable(getattr(media_uploader, "upload", None))`によるcapability遅延検証（不適合は固定
+  message`"media_uploader must provide a callable upload method"`の`TypeError`、完全一致で
+  Test可能）、③`image_bytes=` / `filename=` / `mime_type=`のkeyword引数で
+  `WordPressMediaUploader.upload()`へ委譲、④`MediaUploadResult`を無変換で返却、の順で処理する
+- `media_uploader`はConstructor InjectionのみでDuck Typing（`isinstance()`によるnominal型検証は
+  行わない）。capability検証は`upload()`呼び出し時まで遅延させる
+- `WordPressMediaUploadError` / signature不一致`TypeError` / dependency内部`TypeError` /
+  `RuntimeError` / `KeyboardInterrupt` / `SystemExit`はいずれもcatch・変換・ラップ・抑制せず
+  無変換伝播する。capability不正TypeErrorのみが固定messageで識別可能であり、それ以外の下流
+  TypeError（signature不一致・dependency内部・その他）を呼び出し元が相互に分類できることは
+  保証しない
+- Constructorはmedia_uploader参照のみを保持し、`upload()`もimage／filename／
+  MediaUploadResult／例外object等のrequest単位stateをインスタンス属性へ保存しない
+  （Runtime連続呼出Guard・Constructor AST Guard・upload() AST Guardの3方式でE2E検証）
+- 分類はArchitecture Release。新規独立package・新規Public API・新規Dependency方向の確立を
+  伴うため
+- 対象外（今回は未実装）：画像生成（prompt→GeneratedImage）、Article／featured_media反映、
+  CLI／Script Entry Point、Environment Composition、実OpenAI Client生成、実WordPress Client
+  生成、`image_resolver.py` / `ArticleData` / `WordPressOutput`変更、既存記事生成Pipeline・
+  Workflow・Scheduler・Retry Runtime統合、独自Protocol新設、複数CMS対応、Logging、Retry、
+  Dry Run（同設計書37.2章）
+- 既存`ai_image_generation` / `openai_image_generation` / `wordpress_media` /
+  `image_resolver.py` / `outputs` / 記事生成Pipeline / Workflow / Scheduler / Retry Runtimeは
+  いずれも無改修。既存側から`generated_image_wordpress_media`へのWiringも本Releaseでは
+  行わない（消費者不在の先行実装）
+- **初回Code Reviewで発見・解消したMinor Finding（CR-m-1）**：新規E2EのSTATE-AST-1が
+  `GeneratedImageWordPressMediaUploader.__init__()`のみをAST検査対象としており、`upload()`
+  内でrequest単位stateをself属性へ保存しないことを直接検証していなかった。Production Code
+  自体は適合しており修正不要と確認したうえで、`upload()`専用のAST Source Guard
+  （`ast.Assign` / `ast.AnnAssign` / `ast.AugAssign` / `setattr(self, ...)`、tuple／list
+  target対応）を新規E2Eへ追加（86→91アサーション、production code無修正）して解消し、
+  Code Review Re-ReviewでApprovedとなった
+- 継続Suggestion（CR-S-1：DEP-2対象packageが将来空になった場合のvacuous pass耐性、
+  CR-S-2：`get_call_lines`がattribute形式のopen()等を一般的には検出しない）および新規
+  Suggestion（CRR-S-1：STATE-AST-1補助Assertionのlocal変数Assign存在への軽微な結合）は
+  いずれもNon-Blocking（Deferred／Accepted Risk）。詳細は
+  `docs/design/generated_image_wordpress_media_upload_wiring_foundation.md` 43.8〜43.10章
+- 新規Known Issueなし
+
+### Tested
+
+- `tests/test_e2e_v6_12_0_generated_image_wordpress_media_upload_wiring_foundation.py`：
+  17シナリオ・8ケース・91アサーション・91/91 PASS（終了コード0、意図しない警告なし、
+  Tracebackなし）
+- 既存回帰確認（`docs/CHANGELOG.md` v6.11.0 Testedセクション記載の正式14ファイル、いずれも
+  ベースラインと同一件数、新規差分なし）：
+  - `tests/test_e2e_v1_11_0_save_result.py`：43/43 PASS
+  - `tests/test_e2e_v5_9_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_0_0_*.py`：43/43 PASS
+  - `tests/test_e2e_v6_1_0_*.py`：44/44 PASS
+  - `tests/test_e2e_v6_2_0_*.py`：64/64 PASS
+  - `tests/test_e2e_v6_3_0_*.py`：174/174 PASS
+  - `tests/test_e2e_v6_4_0_*.py`：171/171 PASS
+  - `tests/test_e2e_v6_5_0_*.py`：131/131 PASS
+  - `tests/test_e2e_v6_6_0_*.py`：135/135 PASS
+  - `tests/test_e2e_v6_7_0_*.py`：117/117 PASS
+  - `tests/test_e2e_v6_8_0_*.py`：197/197 PASS
+  - `tests/test_e2e_v6_9_0_*.py`：331/331 PASS
+  - `tests/test_e2e_v6_10_0_*.py`：78/78 PASS
+  - `tests/test_e2e_v6_11_0_*.py`：248/248 PASS
+- Regression合計：1840/1840 PASS（v1.11.0・v5.9.0〜v6.11.0）。全Suite終了コード0、
+  ベースライン差なし、実異常の警告なし
+- 新規E2E（91）＋Regression（1840）＝1931/1931 PASS
+- Architecture Review：1〜4回目「Changes Required」、5回目「Approved」
+- Test Review：「Approved」（Blocking Issueなし、Suggestion 3件：TR-S-1〜TR-S-3）
+- Code Review：1回目「Changes Required」（Minor Finding CR-m-1、Production Code適合・
+  修正不要）、`upload()` state非保持AST Guard追加（86→91アサーション）による解消を経て
+  Re-Review「Approved」（Critical／Major／Minor Findingなし）
+- Formal Regression：PASS（既存14ファイル1840/1840 PASS＋新規E2E 91/91 PASS＝総合
+  1931/1931 PASS、終了コード非0なし、実HTTP・実credential読込・実課金いずれもなし）
+- 本Releaseによる新規Known Issueなし。CR-m-1はCode Review Re-Reviewで解消済みのFindingで
+  あり、Known Issueとしては追加しない
+
+### Scope
+
+- Consumer-less Foundation・既存production code無改修・既存test無改修・既存Pipeline非配線・
+  実HTTP通信なし・実課金なし・request単位state非保持・Duck Typing capability検証
+
+---
+
 ## [v6.11.0] - 2026-07-17 ★ OpenAI Image Generation Adapter Foundation
 
 ### Added
