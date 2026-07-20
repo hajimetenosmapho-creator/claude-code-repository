@@ -872,22 +872,61 @@
   （Approved、Blocking Issueなし、Minor 0件、Suggestion 1件：CR-S-1はNon-Blockingのまま維持し
   Known Issueへ昇格させない）を経て、Release 6.16として完了した
   （`docs/design/generated_image_filename_policy_foundation.md`）
+- [x] **Article Image Prompt Construction Foundation**：v6.17.0で実装完了（Release Review
+  Approved with Suggestions、Release Completed）。記事の`title`・`excerpt`から、画像生成用prompt文字列を決定論的に
+  構築する、新規独立package`src/article_image_prompt_construction/`
+  （`construct_article_image_prompt(title: str, excerpt: str) -> str`のみを公開）を
+  追加した。`ArticleData`を直接受け取らず`title`・`excerpt`を個別引数で受け取るnarrow
+  inputを採用（戻り値が`ArticleData`でない関数は個別引数を採用するというv6.16.0
+  precedentの判断パターンを適用）。`title`は必須（空・空白のみは`ValueError`）、
+  `excerpt`は空文字列を許容しtitle-onlyテンプレートへ収束する。日本語固定template
+  （「ロゴ」は含めず、意図しない文字描画・透かし・UIオーバーレイの抑制のみを目的とする
+  文言）へtitle・excerptを埋め込み、`\t` `\n` `\r`を含む`\s+`一致空白は半角space 1個へ
+  収束（zero-width space等の不可視Unicode文字は`unicodedata`不使用のため保証対象外と
+  明記）、HTML／Markdownは意味解析・除去せず単なる文字列として扱う（plain text入力は
+  呼び出し側責務）。出力は最大1000文字。完成prompt全体をhard truncateせず、固定部分
+  （prefix／mid／excerpt label／括弧／suffix）は常に完全保持し、可変部分（title・
+  excerpt）のみをtitle優先で段階的に切り詰める（`…`をtruncation markerとしてbudgetへ
+  算入。excerptが1文字も入らない場合のみtitle-onlyへfallackし、その際は元の
+  normalized titleをtitle-only budgetで再fitする）。`ArticleFeaturedMediaOrchestrator.
+  apply(article, prompt, filename)`（v6.14.0）へ渡す`prompt`引数の構築手段が
+  Repository内に存在しなかった空白を埋めるFoundationである。標準ライブラリ`re`のみに
+  依存し（`outputs.ArticleData` / `ai_image_generation` / `openai_image_generation` /
+  `generated_image_wordpress_media` / `article_featured_media` /
+  `article_featured_media_orchestration` / `image_generation_config` /
+  `generated_image_filename_policy` / `wordpress_media` / `ai`（`prompt_builder`含む）の
+  いずれにも非依存）、`main.py` / `image_resolver.py`を含む全既存packageは無改修・
+  未配線（消費者不在の先行実装、Consumer-less Foundation）。Architecture Review 1
+  （Changes Required、Blocking 4件：完成prompt hard truncate禁止・excerpt保持優先配分・
+  Security保証範囲の正確化・Plain Text Input Contract明記、Non-Blocking 4件、いずれも
+  Architecture Amendmentで解消）・Architecture Review 2（Approved with Suggestions、
+  Blocking 0件、Suggestion 3件）・Code Review（Approved with Suggestions、Blocking
+  0件・Major 0件・Minor 3件：うちCR-1「設計書の外部Survey参照」・CR-3「`\r`実入力
+  Case欠落」はCode Review Follow-upで解消、Suggestion 3件はDeferred／Informational）を
+  経て、新規E2E（43シナリオ・111ケース・136アサーション・136/136 PASS、CR-3対応後の
+  最終値）・Formal Regression（累積Regression Inventory20ファイル、既存19ファイル
+  2508/2508 PASS＋新規136/136 PASS＝総合2644/2644 PASS）とも完全PASSした。Release Review
+  （Approved with Suggestions、Blocking 0件・Major 0件、Minor 1件：RR-M-1「ROADMAP
+  Entryの`[x]`とRelease未実施表現の一時併存」は本更新で解消、Suggestion 2件：RR-S-A
+  「architecture.md実装済みポインタの記載形式差」はAccepted・RR-S-B「precedent確認方法」
+  はInformational、いずれもNon-Blocking）を経て、Release 6.17として完了した
+  （`docs/design/article_image_prompt_construction_foundation.md`）
 - [ ] **Article Featured Media Runtime Wiring**（次候補・未着手。v6.14.0 Article Featured Media
   Orchestration Foundationの完了により前提条件を充足。v6.15.0 Image Generation Configuration
   Gateにより「有効／無効の切り替え」、v6.16.0 Generated Image Filename Policy Foundationにより
-  「filenameの構築方法」という前提がそれぞれ追加で充足された（v6.14.0・v6.15.0・v6.16.0は
-  いずれもRelease Review Approved済み））：v6.14.0の`ArticleFeaturedMediaOrchestrator.apply()`を、実際に
+  「filenameの構築方法」、v6.17.0 Article Image Prompt Construction Foundationにより
+  「promptの構築方法」という前提がそれぞれ追加で充足された（v6.14.0〜v6.17.0はいずれも
+  Release Review Approved済み）。ただしPublish Composition Root Foundationは依然
+  未着手であり、本Wiringへ直行できる状態には至っていない）：v6.14.0の`ArticleFeaturedMediaOrchestrator.apply()`を、実際に
   `main.py` / `image_resolver.py`等のProduction Runtimeへ接続する後続Wiring。一括のReleaseと
   するか複数Releaseへ分割するか、`image_resolver.py` / `main.py`への変更内容、OpenAI／
   WordPress credential取得経路、Upload成功後の記事投稿失敗時の整合性・Retry時の重複Upload
   対策・既存media ID再利用・未使用Media cleanup・fallback方針はいずれも未確定であり、
-  Article Image Prompt Construction Foundation・Publish Composition Root Foundationも
-  未着手のままであるため、独立したArchitecture Reviewを要する
+  Publish Composition Root Foundationも未着手のままであるため、独立したArchitecture
+  Reviewを要する
 - [ ] **Publish Composition Root Foundation**（次候補）：記事生成→WordPress投稿の一連の生成・配線を
   専用に担う、`RetryCompositionRoot`と対をなすComposition Rootの新設。Article Featured Media
   Runtime Wiringの前提として検討されうる
-- [ ] **Article Image Prompt Construction Foundation**（次候補）：記事タイトル・本文・SEO情報から
-  promptを構築する専用Foundation
 - [ ] **Image Generation Fallback Policy**（次候補）：画像生成・Upload失敗時に記事投稿を継続するか
   中止するかの業務判断を確立するFoundation
 - [ ] **Media Upload Retry／Idempotency Foundation**（次候補）：Retry Queueのmedia_id保持field

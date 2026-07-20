@@ -3990,7 +3990,139 @@ hashは匿名化・暗号化・credential保護を目的としない（sha256選
 
 ### Future Extension
 
-Article Featured Media Runtime Wiring（本Foundationを消費するRuntime接続）・Publish Composition Root Foundation・Article Image Prompt Construction Foundation・Image Generation Fallback Policy・Media Upload Retry／Idempotency Foundation・WordPress Unused Media Cleanup Foundation（順序・Release分割方針は確定事項として固定しない。詳細は`docs/ROADMAP.md`）。
+Article Featured Media Runtime Wiring（本Foundationを消費するRuntime接続）・Publish Composition Root Foundation・Image Generation Fallback Policy・Media Upload Retry／Idempotency Foundation・WordPress Unused Media Cleanup Foundation（順序・Release分割方針は確定事項として固定しない。Article Image Prompt Construction Foundationはv6.17.0で実装済み。詳細は`docs/ROADMAP.md`）。
 
 詳細は`docs/design/generated_image_filename_policy_foundation.md`
 （Architecture Design・Architecture Review・Architecture Amendment・Production Implementation・Code Review・Formal Regressionの経緯を含む）を参照。
+
+---
+
+## Article Image Prompt Construction Foundation層（`src/article_image_prompt_construction/`、v6.17.0 実装完了）
+
+> **本節は実装完了時点の記録である。新規E2E（43シナリオ・111ケース・136アサーション・136/136 PASS、Code Review Finding CR-3対応後の最終値）・累積Regression Inventory（既存19ファイル＋新規v6.17.0 E2E 1ファイル＝累積20ファイル、既存19ファイル分2508/2508 PASS、新規E2E込み合計2644/2644 PASS）とも完全PASSし、Architecture Review 1（「Changes Required」、Blocking 4件・Non-Blocking 4件、Architecture Amendmentで全件解消）・Architecture Review 2（「Approved with Suggestions」、Blocking 0件・Suggestion 3件）・Code Review（「Approved with Suggestions」、Blocking 0件・Major 0件・Minor 3件（うちCR-1・CR-3はCode Review Follow-upで解消）・Suggestion 3件はDeferred／Informational）・Formal Regressionを経ている。**
+> **Documentation Integration：Completed。Release Review：Approved with Suggestions（Blocking 0件・Major 0件・Minor 1件：RR-M-1「ROADMAP Entryの`[x]`とRelease未実施表現の一時併存」はDocumentation Integration Finalizeで解消、Suggestion 2件：RR-S-A「architecture.md実装済みポインタの記載形式差」はAccepted、RR-S-B「precedent確認方法」はInformational、いずれもNon-Blocking）を経て、Release 6.17として完了した（Release Completed）。ただし本Releaseは`main.py`等のProduction Runtimeへは未接続のままである（Runtime Wiring完了・記事投稿への組み込み・画像自動生成の本番稼働のいずれも意味しない。Runtime Wiringは次候補「Article Featured Media Runtime Wiring」として`docs/ROADMAP.md`に未着手のまま維持されている）。**
+
+### Purpose
+
+`ArticleFeaturedMediaOrchestrator.apply(article, prompt, filename)`（v6.14.0）が受け取る`prompt: str`引数を、記事の`title`・`excerpt`から決定論的に構築する、独立したPrompt Construction Foundationを確立する。本層自体もConsumer-less Foundationであり、`main.py` / `image_resolver.py` / `outputs.ArticleData` / `article_featured_media_orchestration`のいずれへも配線・依存しない。
+
+```
+title: str
+excerpt: str
+        │
+        ▼
+construct_article_image_prompt(title, excerpt)
+        │
+        ├─▶ title・excerptをValidation・Normalization
+        │    （isinstance()判定・\s+空白収束・ASCII C0+DEL除去）
+        │
+        ├─▶ excerptが空（正規化後）：title-only固定templateへ
+        │
+        └─▶ excerptが非空：title優先でbudget内へfit
+             → 残りbudgetへexcerptをfit
+             → excerptが1文字も入らない場合のみtitle-onlyへ
+                fallback（title-only budgetで再fit）
+                        │
+                        ▼
+        prompt: str（固定suffixを常に完全保持、最大1000文字）
+```
+
+### Package Boundary
+
+新規独立package`src/article_image_prompt_construction/`。
+
+```
+src/article_image_prompt_construction/
+├── __init__.py                            # Public API export
+└── article_image_prompt_construction.py   # construct_article_image_prompt()
+```
+
+### Public API
+
+`src/article_image_prompt_construction/__init__.py`が公開するのは次の1つのみ。
+
+```python
+construct_article_image_prompt
+```
+
+```python
+def construct_article_image_prompt(title: str, excerpt: str) -> str: ...
+```
+
+Constructorを持つPublic classではなく、依存注入を必要としないmodule-level functionとして実装する（既存precedent`generate_image_filename()` / `bind_featured_media()`と同一の方式）。`ArticleData`は直接受け取らない（戻り値が`ArticleData`でない関数はnarrow inputを採用するというv6.16.0の判断パターンを適用）。
+
+### Validation／Error Contract
+
+Validation Orderはtitle型→title正規化→title blank判定→excerpt型→excerpt正規化→prompt構築の順（fail-fast、titleの検証が完了してからexcerptの検証へ進む）。
+
+```
+title型不正：ValueError（固定message"title must be a str"）
+title正規化後blank：ValueError（固定message"title must not be blank"）
+excerpt型不正：ValueError（固定message"excerpt must be a str"）
+```
+
+`title` / `excerpt`いずれも`isinstance(value, str)`で判定（`str` subclassを受理。v6.16.0 AR-Minor-1 precedent踏襲）。`excerpt`は空文字列・whitespace-onlyを許容し、正規化後空であればtitle-onlyテンプレートへ暗黙に収束する（例外を送出しない）。型不正な入力は正規化処理（`_normalize`）へ渡る前にfail-fastする。例外messageに`title` / `excerpt`の実値は一切含めない。
+
+### Normalization Contract
+
+ASCII C0 control characters（`\x00-\x08` `\x0B` `\x0C` `\x0E-\x1F`）とDEL（`\x7F`）を半角spaceへ置換し、`\t` `\n` `\r`を含む`\s+`一致空白（全角スペースU+3000等を含む）を半角space 1個へ収束、前後空白を除去する。Zero-width space（U+200B等）・Unicode format characters・bidi control charactersはこの正規化の対象外であり、`unicodedata`不使用のため網羅的な不可視文字検出は行わないと明記する（保証する範囲・保証しない範囲を明確に区別、Architecture Review 1 Finding AR-B-3対応）。`title` / `excerpt`はplain text想定であり、HTML／Markdownの意味解析・sanitizeは行わない（単なる文字データとして正規化・埋め込みするのみ。plain textであることの保証は呼び出し側責務、Architecture Review 1 Finding AR-B-4対応）。
+
+### Template／Truncation Contract
+
+```
+_MAX_PROMPT_LENGTH = 1000
+_FIXED_LEN_TITLE_ONLY（prefix＋mid＋suffix） = 72
+_FIXED_LEN_WITH_EXCERPT（prefix＋mid＋excerpt label＋括弧＋suffix） = 80
+title-only title budget = 1000 - 72 = 928
+excerpt付き可変budget（title＋excerpt合計） = 1000 - 80 = 920
+```
+
+固定suffix「画像内に読める文字、透かし、UIやテキストのオーバーレイを含めないでください。」を含む固定部分（prefix／mid／excerpt label／括弧／suffix）は常に完全に保持し、完成prompt文字列全体へのhard truncateは行わない（Architecture Review 1 Finding AR-B-1対応）。可変部分（title・excerpt）のみを、titleを優先してbudget内へfitし、残りbudgetをexcerptへ割り当てる段階的配分を採用する（Architecture Review 1 Finding AR-B-2対応）。切り詰めが必要な場合は`…`（U+2026）をtruncation markerとして末尾へ付与し、marker自体もbudgetへ算入する。excerptが1文字も入らない場合のみtitle-onlyテンプレートへfallbackし、その際は**with-excerpt側で切り詰めたtitleを使い回さず、元のnormalized titleをtitle-only budget（928）で改めてfitし直す**（不要な過剰truncationを回避）。excerpt末尾が既に句点で終わる場合でも重複回避の条件分岐は行わず、`。」。`のような句点重複を意図的な許容事項として固定する（Architecture Review 2 Suggestion AR2-S-3）。固定suffixに「ロゴ」は含めない（著作権・商標対策ではなく、意図しない文字描画・透かし・UIオーバーレイの抑制に目的を限定、Architecture Review 2 Suggestion AR-M-3対応）。
+
+### Dependency Direction
+
+```
+許可：Python標準ライブラリの re のみ
+禁止：outputs（ArticleData） / ai_image_generation / openai_image_generation /
+    generated_image_wordpress_media / article_featured_media /
+    article_featured_media_orchestration / image_generation_config /
+    generated_image_filename_policy / wordpress_media / ai（prompt_builder含む） /
+    os / logging / hashlib / dataclasses / typing（明示import） / unicodedata /
+    pathlib / subprocess / importlib（動的import） / ネットワーク・
+    ファイルI/O一切 / 環境変数参照
+逆依存禁止：main.py / image_resolver.py / article_featured_media_orchestration
+    は article_image_prompt_construction をimportしない
+```
+
+`generated_image_filename_policy`（v6.16.0）と並び、Repository内で依存が最も少ないFoundationの一つである（project内package依存ゼロ）。`main.py` / `image_resolver.py`を含む既存Runtimeはいずれも本Foundationを未参照。
+
+### Security／State Contract
+
+module-level pure functionであり、`global` / `nonlocal`は使用せず、module-level定数（`_PREFIX` / `_SUFFIX`等の文字列リテラルとcompiled regex）はいずれも1回のみ代入される（同一名の再代入なし）。print／loggingは一切実装しない（既存`ai/prompt_builder.PromptBuilder`が不正バージョン時に`print()`する点との明確な差別化）。`title` / `excerpt`の実値・生成したprompt文字列はいずれも保存・ログ出力しない。例外messageへ入力値を含めない。external I/O（ネットワーク・ファイル・環境変数参照・subprocess）は一切発生しない。prompt injection的な悪意ある入力への意味的な検出・除去はscope外であり、機械的な制御文字除去・長さ上限のみを実施する（真のprompt injection対策としては不十分であることを設計書に明記）。
+
+### Integration Boundary
+
+将来のComposition Root／Runtime Wiringが
+
+```python
+prompt = construct_article_image_prompt(article.seo_title, article.excerpt)
+```
+
+として呼び出し、
+
+```python
+ArticleFeaturedMediaOrchestrator.apply(article, prompt, filename)
+```
+
+（v6.14.0）の`prompt`引数として供給することを想定する。Composition Root・Runtime Wiring自体は本Foundationでは設計・実装していない。
+
+### Test Review・Code Review・Regressionの実績
+
+新規E2E（`tests/test_e2e_v6_17_0_article_image_prompt_construction_foundation.py`）は43シナリオ・111ケース・136アサーション・136/136 PASS（終了コード0、意図しない警告なし、Tracebackなし。Code Review Finding CR-3対応（`\r`実入力Normalization Case追加）後の最終値であり、Architecture Amendment直後の初回実績42シナリオ・109ケース・134アサーションから更新された）。累積Regression Inventory（既存19ファイル：`test_e2e_v1_11_0_save_result.py`・`test_e2e_v5_9_0_*.py`・`test_e2e_v6_0_0_*.py`〜`test_e2e_v6_16_0_*.py`、2508/2508 PASS）とあわせた新規E2E込みの合計は2644/2644 PASS。Architecture Review 1は「Changes Required」（Blocking 4件：完成prompt hard truncate禁止・excerpt保持優先配分・Security保証範囲正確化・Plain Text Input Contract明記、Non-Blocking 4件、いずれもArchitecture Amendmentで解消）。Architecture Review 2は「Approved with Suggestions」（Blocking Issueなし、Suggestion 3件）。Code Reviewは「Approved with Suggestions」（Blocking Issueなし、Critical/Major 0件、Minor 3件：うちCR-1「設計書の外部Survey参照」・CR-3「`\r`実入力Case欠落」はCode Review Follow-upで解消、CR-2はAccepted/No Change Required、Suggestion 3件（CR-4・CR-6はDeferred、CR-5はInformational）はいずれもNon-Blockingのまま維持）。Formal Regressionは正式Inventory20ファイルを個別実行し、既存19ファイル2508/2508 PASS（baseline完全維持）＋新規136/136 PASS＝総合2644/2644 PASSで「Completed」と判定した。Release Reviewは「Approved with Suggestions」（Blocking 0件・Major 0件・Minor 1件（RR-M-1、本更新で解消）・Suggestion 2件（RR-S-A・RR-S-B、いずれもNon-Blocking）、Public API・全Contract・Dependency・SecurityのAST解析・ソース直読による独立検証、新規E2E独立再実行、Formal Regression実績の4文書間整合、Historical Record論点（v6.16.0節Future Extension更新の現状維持）を経て、Release成果物7ファイル全体を承認した。
+
+### Out of Scope／Future Extension
+
+`main.py` / `image_resolver.py`変更、Runtime Wiring、Composition Root、`ImageGenerationConfig`の実消費、fallback／failure continuation、Retry／Idempotency、Unused Media Cleanup、filename生成（`generated_image_filename_policy`の責務のまま）、実画像生成API呼び出し、HTML／Markdown sanitization、多言語翻訳、詳細なvisual art directionは、いずれも本Releaseの対象外である（詳細は`docs/design/article_image_prompt_construction_foundation.md` 4章）。Future Extension候補（Publish Composition Root Foundation・Article Featured Media Runtime Wiring・Image Generation Fallback Policy・Media Upload Retry／Idempotency Foundation・WordPress Unused Media Cleanup Foundation）の順序・Release分割方針は確定事項として固定しない。詳細は`docs/ROADMAP.md`。
+
+詳細は`docs/design/article_image_prompt_construction_foundation.md`
+（Architecture Design・Architecture Review 1・Architecture Amendment・Architecture Review 2・Production Implementation・Code Review・Formal Regressionの経緯を含む）を参照。

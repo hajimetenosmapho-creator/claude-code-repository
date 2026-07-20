@@ -361,6 +361,135 @@
 
 ---
 
+## [v6.17.0] - 2026-07-21 ★ Article Image Prompt Construction Foundation
+
+> **本Entryの時点でのRelease状態**：Architecture Design Completed／Architecture Review 1
+> Changes Required／Architecture Amendment Completed／Architecture Review 2 Approved with
+> Suggestions／Production Implementation Completed／New E2E PASS／Code Review Approved with
+> Suggestions／Formal Regression Completed／Documentation Integration Completed／
+> **Release Review Approved with Suggestions**（Blocking 0件・Major 0件・Minor 1件：
+> RR-M-1はDocumentation Integration Finalizeで解消、Suggestion 2件：RR-S-A・RR-S-Bは
+> いずれもNon-Blocking）。**Release：Completed**。
+
+### Added
+
+- 新規独立package`src/article_image_prompt_construction/`：`ArticleFeaturedMediaOrchestrator.
+  apply(article, prompt, filename)`（v6.14.0）が受け取る`prompt: str`引数を、記事の
+  `title`・`excerpt`から決定論的に構築する、provider非依存・WordPress非依存・
+  `ArticleData`非依存のConsumer-less Foundation
+  - `src/article_image_prompt_construction/__init__.py`：package rootから
+    `construct_article_image_prompt`のみを公開
+  - `src/article_image_prompt_construction/article_image_prompt_construction.py`：
+    `construct_article_image_prompt(title: str, excerpt: str) -> str`
+- `tests/test_e2e_v6_17_0_article_image_prompt_construction_foundation.py`新規作成
+  （43シナリオ・111ケース・136アサーション、Code Review Finding CR-3対応後の最終値）
+- `docs/design/article_image_prompt_construction_foundation.md`新規作成：Architecture
+  Design・Architecture Review 1（Changes Required）・Architecture Amendment
+  （Completed）・Architecture Review 2（Approved with Suggestions）・Production
+  Implementation・Code Review（Approved with Suggestions）・Formal Regressionの
+  経緯を含む
+
+### Public API
+
+- `construct_article_image_prompt(title: str, excerpt: str) -> str`（module-level
+  function、pure・stateless・deterministic）
+- `ArticleData`を直接受け取らないnarrow input（`title`・`excerpt`の個別引数）を採用
+
+### Contract概要
+
+- Validation Order：title型→title正規化→title blank判定→excerpt型→excerpt正規化→
+  prompt構築の順（fail-fast）。`isinstance()`使用、`str` subclass受理
+- Error Contract：`title must be a str` / `title must not be blank` /
+  `excerpt must be a str`（いずれも固定literalの`ValueError`、入力値をmessageへ
+  含めない）。`excerpt`は空文字列・whitespace-onlyを許容しtitle-onlyテンプレートへ
+  収束
+- Normalization：ASCII C0 control characters＋DELを半角spaceへ置換、`\t` `\n` `\r`を
+  含む`\s+`一致空白（全角スペース含む）を半角space 1個へ収束。zero-width space等の
+  不可視Unicode文字は`unicodedata`不使用のため保証対象外と明記。HTML／Markdownは
+  意味解析・sanitizeせず単なる文字列として扱う（plain text入力は呼び出し側責務）
+- 日本語固定template（「ロゴ」を含めず、意図しない文字描画・透かし・UIオーバーレイの
+  抑制のみを目的とする文言）。excerpt末尾句点重複（`。」。`）は意図的な許容事項として
+  固定し、Production側で独自に重複回避しない
+- 最大長1000文字。固定部分（prefix／mid／excerpt label／括弧／suffix）は完成prompt
+  全体へのhard truncateでは保護せず、常に完全な形で連結することで構造的に保持する。
+  可変部分（title・excerpt）のみをtitle優先で段階的に切り詰め、`…`をtruncation
+  markerとしてbudgetへ算入する。excerptが1文字も入らない場合のみtitle-onlyへ
+  fallbackし、その際は元のnormalized titleをtitle-only budget（928）で再fitする
+  （with-excerpt側で切り詰めたtitleは使い回さない）
+
+### Runtime Zero Diff
+
+- 既存`ai_image_generation` / `openai_image_generation` / `wordpress_media` /
+  `generated_image_wordpress_media` / `article_featured_media` /
+  `article_featured_media_orchestration` / `image_generation_config` /
+  `generated_image_filename_policy` / `outputs` / `ai`（`prompt_builder`含む） /
+  `image_resolver.py` / `main.py` / 記事生成Pipeline / Workflow / Scheduler /
+  Retry Runtimeはいずれも無改修・未配線（消費者不在の先行実装）
+
+### Security／Dependency
+
+- 許可dependencyは標準ライブラリの`re`のみ。project内packageへの依存はゼロ
+  （`outputs.ArticleData`を含むいずれの既存型にも依存しない）
+- `os` / `logging` / `hashlib` / `dataclasses` / `typing`（明示import） /
+  `unicodedata` / `pathlib` / `subprocess` / `importlib`（動的import）はいずれも禁止
+- state非保持（module-level pure function、`global`／`nonlocal`不使用）。print／
+  logging禁止。入力値・生成prompt文字列は保存・ログ出力しない。例外messageへ入力値を
+  含めない。prompt injection semantic対策はscope外（機械的な制御文字除去・長さ上限
+  のみ）
+
+### Tested
+
+- `tests/test_e2e_v6_17_0_article_image_prompt_construction_foundation.py`：43シナリオ・
+  111ケース・136アサーション・136/136 PASS（終了コード0、意図しない警告なし、
+  Tracebackなし。Code Review Finding CR-3対応（`\r`実入力Normalization Case追加）後の
+  最終値であり、Architecture Amendment直後の初回実績42シナリオ・109ケース・
+  134アサーションから更新された）
+- Formal Regression（累積Regression Inventory方式、既存19ファイル＋新規v6.17.0 E2E、
+  計20ファイルを個別実行。`tests/`配下の全E2Eの無差別実行はしていない）：
+  - 既存19ファイル（`docs/CHANGELOG.md` v6.16.0 Testedセクション記載の正式対象、
+    v1.11.0・v5.9.0・v6.0.0〜v6.16.0）：2508/2508 PASS（Release 6.16 baseline
+    完全維持、新規差分なし）
+  - 新規v6.17.0 E2E：136/136 PASS
+  - 総合：2644/2644 PASS。全20ファイル終了コード0、Warning 0、Traceback 0、
+    外部API実接続0、重複実行なし
+  - `.\venv\Scripts\python.exe -m pip check`：成功（No broken requirements found）
+  - Scenario／CaseのCase ID表記規約はv1.11.0〜v6.8.0（旧形式）とv6.9.0〜v6.17.0
+    （現行`[XXX] header`＋`XXX-Na.`形式）とで過去に複数回進化しており、全20ファイル
+    共通の総Scenario／総Caseは算出していない。全Inventory共通の正式な回帰判定軸は
+    Assertion／PASS数である
+- Architecture Review 1：「Changes Required」（Claude Codeによる独立Review。検出：
+  Blocking 4件（完成prompt hard truncate禁止・excerpt保持優先配分・Security保証範囲
+  正確化・Plain Text Input Contract明記）・Non-Blocking 4件、いずれもArchitecture
+  Amendmentで解消）
+- Architecture Amendment：「Completed」（Blocking 4件すべてResolved）
+- Architecture Review 2：「Approved with Suggestions」（Blocking 0件、Suggestion
+  3件：AR2-S-1〜AR2-S-3）
+- Code Review：「Approved with Suggestions」（Blocking Issueなし、Critical/Major
+  0件、Minor 3件（CR-1：設計書の外部Survey参照、CR-2：`_fit()`のbudget==1分岐冗長、
+  CR-3：`\r`実入力Normalization Case欠落）のうちCR-1・CR-3はCode Review Follow-upで
+  解消、CR-2はAccepted/No Change Required、Suggestion 3件（CR-4・CR-6は
+  Deferred、CR-5はInformational）はいずれもNon-Blockingのまま維持）
+- Documentation Integration：Completed（`docs/ROADMAP.md` / `docs/architecture.md` /
+  本Entryへ反映済み、Historical Record変更なし）
+- Release Review：「Approved with Suggestions」（Blocking 0件・Major 0件、Minor 1件：
+  RR-M-1「ROADMAP v6.17.0 Entryの`[x]`とRelease未実施表現の一時併存」はDocumentation
+  Integration Finalizeで解消、Suggestion 2件：RR-S-A「architecture.md実装済みポインタの
+  記載形式差」はAccepted / No Change Required、RR-S-B「precedent確認方法」は
+  Informational、いずれもNon-Blocking）。Public Contract・E2E Inventory（43 Scenario・
+  111 Case・136 Assertion）・Formal Regression記録（20ファイル・2644/2644 PASS）・
+  4文書間整合・Historical Record非改変（v6.16.0節Future Extensionへの実装済みポインタ
+  追記はv6.16.0自身のprecedentと同型と判定）・Runtime Zero Diffのいずれも適合と判定し、
+  Release成果物7ファイル全体を承認した
+- 本Entry時点で新規Known Issueなし
+
+### Scope
+
+- Consumer-less Foundation・既存production code無改修・既存test無改修・既存Pipeline非配線・
+  実HTTP通信なし・実課金なし・State非保持（module-level function）・deterministic・
+  provider非依存・WordPress非依存・`ArticleData`非依存
+
+---
+
 ## [v6.16.0] - 2026-07-20 ★ Generated Image Filename Policy Foundation
 
 > **本Entryの時点でのRelease状態**：Architecture Design Completed／Architecture Review
