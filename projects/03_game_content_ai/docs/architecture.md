@@ -3848,7 +3848,149 @@ class ImageGenerationConfig:
 
 ### Future Extension
 
-Article Featured Media Runtime Wiring（本Gateを消費するRuntime接続）・Publish Composition Root Foundation・Article Image Prompt Construction Foundation・Generated Image Filename Policy Foundation・Image Generation Fallback Policy・Media Upload Retry／Idempotency Foundation・WordPress Unused Media Cleanup Foundation（順序・Release分割方針は確定事項として固定しない。詳細は`docs/ROADMAP.md`）。
+Article Featured Media Runtime Wiring（本Gateを消費するRuntime接続）・Publish Composition Root Foundation・Article Image Prompt Construction Foundation・Image Generation Fallback Policy・Media Upload Retry／Idempotency Foundation・WordPress Unused Media Cleanup Foundation（順序・Release分割方針は確定事項として固定しない。詳細は`docs/ROADMAP.md`）。Generated Image Filename Policy Foundationはv6.16.0で実装済み（本節末尾のGenerated Image Filename Policy Foundation層を参照）。
 
 詳細は`docs/design/image_generation_configuration_gate_foundation.md`
 （Architecture Design・Architecture Review・Production Implementation・Code Review・Formal Regressionの経緯を含む）を参照。
+
+## Generated Image Filename Policy Foundation層（`src/generated_image_filename_policy/`、v6.16.0 実装完了）
+
+> **本節は実装完了時点の記録である。新規E2E（60シナリオ・104ケース・143アサーション・143/143 PASS）・累積Regression Inventory（既存18ファイル＋新規v6.16.0 E2E 1ファイル＝累積19ファイル、既存18ファイル分2365/2365 PASS、新規E2E込み合計2508/2508 PASS）とも完全PASSし、Architecture Review（「Approved」、Blocking 0・Major 1・Minor 8・Suggestion 2、いずれも本文書内の修正で解消）・Architecture Amendment（Japanese／Unicode Fallback Collision再評価、「Approved」、Blocking 0・Major 1・Minor 4・Suggestion 2、いずれも本文書内の修正で解消）・Code Review（「Approved with Suggestions」、Blocking Issueなし、Minor 1件は本工程内で解消、Suggestion 1件はNon-Blocking）・Formal Regressionを経ている。**
+> **Documentation Integration：Completed。Release Review：Approved（Blocking Issueなし、Minor 0件、Suggestion 1件：CR-S-1はNon-Blockingのまま維持）を経て、Release 6.16として完了した（Release Completed）。ただし本Releaseは`main.py`等のProduction Runtimeへは未接続のままである（Runtime Wiring完了・記事投稿への組み込み・画像自動生成の本番稼働のいずれも意味しない。Runtime Wiringは次候補「Article Featured Media Runtime Wiring」として`docs/ROADMAP.md`に未着手のまま維持されている）。**
+
+### Purpose
+
+`ArticleFeaturedMediaOrchestrator.apply(article, prompt, filename)`（v6.14.0）が受け取る`filename: str`引数を、生成画像のtitle相当文字列と`mime_type`から決定論的に構築する、独立したFilename Policy Foundationを確立する。本層自体もConsumer-less Foundationであり、`main.py` / `image_resolver.py` / `outputs.ArticleData` / `ai_image_generation.GeneratedImage` / `openai_image_generation` / `article_featured_media_orchestration` / `wordpress_media`のいずれへも配線・依存しない。
+
+```
+title: str
+mime_type: str
+        │
+        ▼
+generate_image_filename(title, mime_type)
+        │
+        ├─▶ ASCII slugが得られる場合：generate_slug()（v1.5.0）と同一の
+        │    正規化順序でslugを構築（最大60文字、単語境界truncate）
+        └─▶ ASCII slugが得られない場合：title原文のsha256決定的hash
+             （先頭8桁小文字hex）を付与したhash付きfallbackへ切り替え
+                        │
+                        ▼
+        Windows予約デバイス名Guard（拡張子付与前のslug部分に適用）
+                        │
+                        ▼
+        mime_type固定allow-listから拡張子を導出し付与
+                        │
+                        ▼
+                filename: str（basenameのみ、拡張子込み、path非含有、最大65文字）
+```
+
+### Package Boundary
+
+新規独立package`src/generated_image_filename_policy/`。
+
+```
+src/generated_image_filename_policy/
+├── __init__.py                             # Public API export
+└── generated_image_filename_policy.py      # generate_image_filename()
+```
+
+### Public API
+
+`src/generated_image_filename_policy/__init__.py`が公開するのは次の1つのみ。
+
+```python
+generate_image_filename
+```
+
+```python
+def generate_image_filename(title: str, mime_type: str) -> str: ...
+```
+
+Constructorを持つPublic classではなく、依存注入を必要としないmodule-level functionとして実装する（既存precedent`generate_slug()` / `resolve_media_id()` / `bind_featured_media()`と同一の方式）。
+
+### Slug正規化とHash付きFallback
+
+ASCII slugが得られる場合（正規化後の文字列が非空の場合）は`src/slug_generator.py`の`generate_slug()`と同一の正規化順序（非ASCII文字列→半角space変換 → `[^a-zA-Z0-9\s]`除去＋lowercase化 → 空白→ハイフン変換＋端のハイフン除去 → 連続ハイフン圧縮 → 単語境界を優先した最大60文字truncate）でslugを構築する。`generate_slug()`を直接importせず、正規化ロジックのみを本層独自に再実装している（`generate_slug()`は`date_str`付与を前提とした別Contractのモジュールであるため）。
+
+ASCII slugが得られない場合（日本語のみ・空文字列・空白のみ・記号のみ・絵文字のみ等、正規化後の文字列が空になる場合）は、**title原文（正規化前の引数そのもの）** の`hashlib.sha256(title.encode("utf-8")).hexdigest()[:8]`をsuffixとして付与した`"generated-image-<8桁小文字hex>"`（固定24文字）へ切り替える（Architecture Amendment：Japanese／Unicode Fallback Collision対策）。saltなし・時刻／乱数／環境非依存の決定的計算であり、同一titleは常に同一のhash付きfallback basenameを返す。本プロジェクトの主要ユースケース（日本語title主体）で、異なる記事画像が固定文字列へ100%収束するという問題を、低確率のcollisionへ低減する（完全な一意性は保証しない。WordPress側の自動renameへの依存もContractとして採用しない）。
+
+### MIME／Extension Contract
+
+固定allow-list（canonical値の完全一致のみ、`.strip()` / `.lower()` / parameter除去 / alias追加はいずれも行わない）。
+
+```
+image/png  -> png
+image/jpeg -> jpg
+image/webp -> webp
+image/gif  -> gif
+```
+
+allow-list外・非canonical（大文字混在・前後空白・parameter付き・`image/jpg`等の誤記を含む）はいずれも`ValueError`（固定message`"mime_type is not a supported image type"`）。標準ライブラリ`mimetypes`は環境依存で非決定的なため不使用。
+
+### Windows予約デバイス名Guard
+
+`CON` `PRN` `AUX` `NUL` `COM1`〜`COM9` `LPT1`〜`LPT9`（個別名22種、case-insensitive）に、拡張子付与**前**のslug部分（ASCII slugまたはhash付きfallback basenameのいずれか）が完全一致した場合、`"-image"`suffixを付与して回避する。`COM0` / `COM10` / `LPT0` / `LPT10`は対象外（Windowsが実際に予約するのは1〜9のみ）。hash付きfallback basename（最小24文字）は予約名（最大4文字）の文字数を構造的に超過するため、この経路では常にスキップされる。
+
+### 最大長Contract
+
+slug部分は最大60文字（単語境界truncate）。戻り値全体（拡張子込み）は常に65文字以内（slug最大60文字＋`.`＋拡張子最大4文字`webp`）。Windows予約名suffix付与後も最大10文字、hash付きfallbackも固定24文字であり、いずれも60文字上限に十分な余裕がある。
+
+### Error Contract
+
+```
+title型不正：ValueError（固定message"title must be a str"）
+mime_type型不正：ValueError（固定message"mime_type must be a str"）
+mime_type allow-list外：ValueError（固定message"mime_type is not a supported image type"）
+title不正値（空・空白のみ・使用可能文字0件）：例外を送出せず、hash付きfallbackへ切り替え
+```
+
+`title` / `mime_type`いずれも`isinstance(value, str)`で判定（`str` subclassを受理）。Validation Orderはtitle型→mime_type型→mime_type allow-list→title正規化の順（fail-fast）。
+
+### Dependency Direction
+
+```
+許可：Python標準ライブラリの re, hashlib のみ
+禁止：outputs（ArticleData） / ai_image_generation（GeneratedImage） /
+    openai_image_generation / wordpress_media / generated_image_wordpress_media /
+    article_featured_media / article_featured_media_orchestration /
+    image_generation_config / image_resolver / ai / pipeline / workflow_engine /
+    scheduler / retry_* / scripts / main / mimetypes / unicodedata / datetime /
+    random / uuid / requests / urllib / os / logging
+逆依存禁止：outputs / ai_image_generation / wordpress_media /
+    generated_image_wordpress_media / article_featured_media /
+    article_featured_media_orchestration / image_generation_config /
+    openai_image_generation は generated_image_filename_policy をimportしない
+```
+
+他の全既存packageから独立した、Repository内で依存が最も少ないFoundationである（project内package依存ゼロ）。`main.py` / `image_resolver.py`を含む既存Runtimeはいずれも本Foundationを未参照。
+
+### State非保持Contract
+
+module-level functionであり、`STATE-AST-1`（module-levelのAssign文が存在しないこと）を満たすため、MIME拡張子mapping・Windows予約名集合・正規表現パターンはいずれもmodule-level定数ではなく関数ローカル変数として実装している（呼び出しごとに再構築される。Code Review Suggestion CR-S-1として記録済み、Non-Blocking、Production変更不要）。
+
+### Consumer-less Contract
+
+`main.py` / `image_resolver.py` / `ArticleFeaturedMediaOrchestrator` / 既存全packageのいずれからも本Foundationは未参照であり、Production Runtimeで消費されていない。
+
+### Security Contract
+
+hashは匿名化・暗号化・credential保護を目的としない（sha256選定理由は決定性・標準ライブラリでの可用性のみ）。8文字への切り詰めによりbrute force照合が現実的に可能であり、hashからの復元不可能性を主張しない。元titleを保存・logging・print出力しない。directory traversal・絶対path・path separatorを含む戻り値は構造的に生成し得ない。
+
+### Backward Compatibility
+
+既存`ai_image_generation` / `openai_image_generation` / `wordpress_media` / `generated_image_wordpress_media` / `article_featured_media` / `article_featured_media_orchestration` / `image_generation_config` / `outputs`（`ArticleData` / `WordPressOutput`） / `image_resolver.py` / `main.py` / `slug_generator.py` / 記事生成Pipeline / Workflow / Scheduler / Retry Runtime、および既存テスト一式はいずれも無改修。新規独立packageの追加のみであり、既存の呼び出し元（現状ゼロ）にも影響しない。
+
+### Out of Scope
+
+`main.py` / `image_resolver.py`変更、Runtime Wiring、Composition Root、OpenAI／WordPress API呼び出し、Media Upload実行、Featured Media Binding実行、Retry／Idempotency、Unused Media Cleanup、Article Image Prompt Construction、`.env`追加は、いずれも本Releaseの対象外である（詳細は`docs/design/generated_image_filename_policy_foundation.md` 3.2章）。
+
+### Test Review・Code Review・Regressionの実績
+
+新規E2E（`tests/test_e2e_v6_16_0_generated_image_filename_policy_foundation.py`）は60シナリオ・104ケース・143アサーション・143/143 PASS（終了コード0、意図しない警告なし、Tracebackなし）。累積Regression Inventory（既存18ファイル：`test_e2e_v1_11_0_save_result.py`・`test_e2e_v5_9_0_*.py`・`test_e2e_v6_0_0_*.py`〜`test_e2e_v6_15_0_*.py`、2365/2365 PASS）とあわせた新規E2E込みの合計は2508/2508 PASS。Architecture Reviewは「Approved」（Blocking Issueなし、検出：Blocking 0・Major 1・Minor 8・Suggestion 2、いずれも本文書内の修正で解消）。Architecture Amendment（Japanese／Unicode Fallback Collision再評価）は「Approved」（Blocking Issueなし、検出：Blocking 0・Major 1・Minor 4・Suggestion 2、いずれも本文書内の修正で解消）。Code Reviewは「Approved with Suggestions」（Blocking Issueなし、Critical/Major 0件、Minor 1件：設計書内の文字数誤記は本工程内で解消、Suggestion 1件：CR-S-1「STATE-AST-1準拠のための関数ローカルdict／set再構築」はNon-Blockingのまま維持）。Formal Regressionの初回試行はローカルvenvの`openai`未導入により1ファイルが実行不能で`Failed`と判定したが、`requirements.txt`準拠でvenvを修復し再実行後`Completed`となった（Release 6.16自体のdefectではない）。Release Reviewは「Approved」（Blocking 0件・Major 0件・Minor 0件・Suggestion 1件：CR-S-1はNon-Blockingのまま維持しKnown Issueへ昇格させない）であり、Release成果物7ファイル全体を承認してRelease 6.16として完了した。
+
+### Future Extension
+
+Article Featured Media Runtime Wiring（本Foundationを消費するRuntime接続）・Publish Composition Root Foundation・Article Image Prompt Construction Foundation・Image Generation Fallback Policy・Media Upload Retry／Idempotency Foundation・WordPress Unused Media Cleanup Foundation（順序・Release分割方針は確定事項として固定しない。詳細は`docs/ROADMAP.md`）。
+
+詳細は`docs/design/generated_image_filename_policy_foundation.md`
+（Architecture Design・Architecture Review・Architecture Amendment・Production Implementation・Code Review・Formal Regressionの経緯を含む）を参照。

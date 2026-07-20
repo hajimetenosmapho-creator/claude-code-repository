@@ -836,24 +836,58 @@
   Inventory18ファイル、2365/2365 PASS）とも完全PASSした。Release Review（Approved、
   Blocking Issueなし、Suggestion 1件：CR10-S-1はNon-Blockingのまま維持）を経て、
   Release 6.15として完了した（`docs/design/image_generation_configuration_gate_foundation.md`）
+- [x] **Generated Image Filename Policy Foundation**：v6.16.0で実装完了（Release Review
+  Approved、Release Completed）。`ArticleFeaturedMediaOrchestrator.apply(article, prompt, filename)`（v6.14.0）が
+  受け取る`filename: str`引数を、生成画像のtitle相当文字列と`mime_type`から決定論的に構築する、
+  新規独立package`src/generated_image_filename_policy/`（`generate_image_filename(title: str,
+  mime_type: str) -> str`のみを公開）を追加した。ASCII slugが得られる場合は`generate_slug()`
+  （v1.5.0）と同一の正規化順序（非ASCII→space変換→記号除去＋lowercase化→space→ハイフン変換
+  →連続ハイフン圧縮→単語境界truncate、最大60文字）でslugを構築し、mime_typeは固定allow-list
+  （`image/png`→`.png`・`image/jpeg`→`.jpg`・`image/webp`→`.webp`・`image/gif`→`.gif`、
+  canonical値のみ受理・`mimetypes`不使用）から拡張子を導出する。ASCII slugが得られない場合
+  （日本語のみ・空・空白のみ・記号のみ等）は、title原文（正規化前）の
+  `hashlib.sha256(title.encode("utf-8")).hexdigest()[:8]`をsuffixとして付与した
+  `"generated-image-<8桁小文字hex>"`（固定24文字）へ切り替える（Architecture Amendment：
+  Japanese／Unicode Fallback Collision対策。固定fallbackへの100%収束を、異なるtitle間での
+  低確率collisionへ低減する。完全な一意性は保証しない）。Windows予約デバイス名（`CON`／`PRN`／
+  `AUX`／`NUL`／`COM1`〜`COM9`／`LPT1`〜`LPT9`の個別名22種、拡張子付与前のslug部分でcase-
+  insensitive判定、`COM0`／`COM10`等は対象外）に完全一致した場合は`"-image"`suffixで回避する。
+  戻り値全体は常に65文字以内（slug最大60文字＋拡張子最大5文字）。`outputs.ArticleData` /
+  `ai_image_generation.GeneratedImage` / `openai_image_generation` /
+  `article_featured_media_orchestration` / `wordpress_media`のいずれにも依存せず（許可
+  dependencyは標準ライブラリの`re`・`hashlib`のみ）、既存`main.py` / `image_resolver.py`を
+  含む全既存packageは無改修・未配線（消費者不在の先行実装、Consumer-less Foundation）。
+  Architecture Review（Approved、Blocking 0・Major 1・Minor 8・Suggestion 2、いずれも
+  本文書内の修正で解消）・Architecture Amendment（Japanese／Unicode Fallback Collision再評価、
+  Approved、Blocking 0・Major 1・Minor 4・Suggestion 2、いずれも本文書内の修正で解消。
+  Unicode filename許可案は将来の消費者`WordPressMediaUploader`のASCII限定正規表現との
+  非互換性を理由に不採用、全titleへのhash付与案はSEO価値とのtrade-offを理由に不採用と、
+  いずれも独立評価のうえ判断）・Code Review（Approved with Suggestions、Blocking Issueなし、
+  Minor 1件：設計書内の文字数誤記は本工程内で解消、Suggestion 1件：STATE-AST-1準拠のための
+  関数ローカルdict／set再構築はNon-Blockingのまま維持）を経て、新規E2E（60シナリオ・
+  104ケース・143アサーション・143/143 PASS）・Formal Regression（累積Regression
+  Inventory19ファイル、2508/2508 PASS。初回試行はローカルvenvの`openai`未導入により
+  1ファイルが実行不能で`Failed`と判定したが、`requirements.txt`準拠でvenvを修復し
+  再実行後`Completed`。Release 6.16自体のdefectではない）とも完全PASSした。Release Review
+  （Approved、Blocking Issueなし、Minor 0件、Suggestion 1件：CR-S-1はNon-Blockingのまま維持し
+  Known Issueへ昇格させない）を経て、Release 6.16として完了した
+  （`docs/design/generated_image_filename_policy_foundation.md`）
 - [ ] **Article Featured Media Runtime Wiring**（次候補・未着手。v6.14.0 Article Featured Media
   Orchestration Foundationの完了により前提条件を充足。v6.15.0 Image Generation Configuration
-  Gateにより「有効／無効の切り替え」という前提の1つが追加で充足されたが、Release Review未実施の
-  ため正式完了はしていない）：v6.14.0の`ArticleFeaturedMediaOrchestrator.apply()`を、実際に
+  Gateにより「有効／無効の切り替え」、v6.16.0 Generated Image Filename Policy Foundationにより
+  「filenameの構築方法」という前提がそれぞれ追加で充足された（v6.14.0・v6.15.0・v6.16.0は
+  いずれもRelease Review Approved済み））：v6.14.0の`ArticleFeaturedMediaOrchestrator.apply()`を、実際に
   `main.py` / `image_resolver.py`等のProduction Runtimeへ接続する後続Wiring。一括のReleaseと
   するか複数Releaseへ分割するか、`image_resolver.py` / `main.py`への変更内容、OpenAI／
   WordPress credential取得経路、Upload成功後の記事投稿失敗時の整合性・Retry時の重複Upload
   対策・既存media ID再利用・未使用Media cleanup・fallback方針はいずれも未確定であり、
-  Article Image Prompt Construction Foundation・Generated Image Filename Policy
-  Foundation・Publish Composition Root Foundationも未着手のままであるため、独立した
-  Architecture Reviewを要する
+  Article Image Prompt Construction Foundation・Publish Composition Root Foundationも
+  未着手のままであるため、独立したArchitecture Reviewを要する
 - [ ] **Publish Composition Root Foundation**（次候補）：記事生成→WordPress投稿の一連の生成・配線を
   専用に担う、`RetryCompositionRoot`と対をなすComposition Rootの新設。Article Featured Media
   Runtime Wiringの前提として検討されうる
 - [ ] **Article Image Prompt Construction Foundation**（次候補）：記事タイトル・本文・SEO情報から
   promptを構築する専用Foundation
-- [ ] **Generated Image Filename Policy Foundation**（次候補）：filenameの命名規則・拡張子決定方針を
-  確立する専用Foundation
 - [ ] **Image Generation Fallback Policy**（次候補）：画像生成・Upload失敗時に記事投稿を継続するか
   中止するかの業務判断を確立するFoundation
 - [ ] **Media Upload Retry／Idempotency Foundation**（次候補）：Retry Queueのmedia_id保持field

@@ -361,6 +361,131 @@
 
 ---
 
+## [v6.16.0] - 2026-07-20 ★ Generated Image Filename Policy Foundation
+
+> **本Entryの時点でのRelease状態**：Architecture Design Completed／Architecture Review
+> Approved／Architecture Amendment Approved（Japanese／Unicode Fallback Collision対策）
+> ／Production Implementation Completed／New E2E PASS／Code Review Approved with
+> Suggestions／Formal Regression Completed／Documentation Integration Completed／
+> **Release Review Approved**（Blocking Issueなし。Suggestion 1件：CR-S-1は
+> Non-Blockingのまま維持）。**Release：Completed**。
+
+### Added
+
+- 新規独立package`src/generated_image_filename_policy/`：`ArticleFeaturedMediaOrchestrator.
+  apply(article, prompt, filename)`（v6.14.0）が受け取る`filename: str`引数を、生成画像の
+  title相当文字列と`mime_type`から決定論的に構築する、provider非依存・WordPress非依存の
+  Consumer-less Foundation
+  - `src/generated_image_filename_policy/__init__.py`：package rootから
+    `generate_image_filename`のみを公開
+  - `src/generated_image_filename_policy/generated_image_filename_policy.py`：
+    `generate_image_filename(title: str, mime_type: str) -> str`
+- `tests/test_e2e_v6_16_0_generated_image_filename_policy_foundation.py`新規作成
+  （60シナリオ・104ケース・143アサーション）
+- `docs/design/generated_image_filename_policy_foundation.md`新規作成：Architecture
+  Design・Architecture Review（Approved）・Architecture Amendment（Approved）・
+  Production Implementation・Code Review（Approved with Suggestions）・Formal
+  Regressionの経緯を含む
+
+### Public API
+
+- `generate_image_filename(title: str, mime_type: str) -> str`（module-level function、
+  pure・stateless・deterministic）
+
+### Filename Normalization
+
+- ASCII slugが得られる場合：`src/slug_generator.py`の`generate_slug()`と同一の正規化順序
+  （非ASCII→半角space変換 → `[^a-zA-Z0-9\s]`除去＋lowercase化 → 空白→ハイフン変換＋端の
+  ハイフン除去 → 連続ハイフン圧縮 → 単語境界を優先した最大60文字truncate）を独自実装として
+  踏襲する（`generate_slug()`は直接importしない）
+- Windows予約デバイス名（`CON` `PRN` `AUX` `NUL` `COM1`〜`COM9` `LPT1`〜`LPT9`の個別名22種、
+  case-insensitive、`COM0`／`COM10`等は対象外）に、拡張子付与前のslug部分が完全一致した
+  場合は`"-image"`suffixで回避する
+- 戻り値全体（拡張子込み）は常に65文字以内
+
+### Canonical MIME Allow-list
+
+```
+image/png  -> .png
+image/jpeg -> .jpg
+image/webp -> .webp
+image/gif  -> .gif
+```
+
+canonical値の完全一致のみを受理する（`.strip()` / `.lower()` / parameter除去 / alias追加は
+いずれも行わない。大文字混在・前後空白・parameter付き・`image/jpg`等の誤記はすべて`ValueError`）。
+標準ライブラリ`mimetypes`は環境依存で非決定的なため不使用。
+
+### Hash付きFallback（Architecture Amendment：Japanese／Unicode Fallback Collision対策）
+
+- ASCII slugが得られない場合（日本語のみ・空・空白のみ・記号のみ等）は、title原文
+  （正規化前）の`hashlib.sha256(title.encode("utf-8")).hexdigest()[:8]`を付与した
+  `"generated-image-<8桁小文字hex>"`（固定24文字）へ切り替える
+- saltなし・時刻／乱数／環境非依存の決定的計算。同一titleは常に同一のhash付きfallback
+  basenameを返す
+- 当初の固定fallback（`"generated-image"`のみ）案は、日本語title主体の実運用で異なる記事
+  画像が固定文字列へ100%収束する問題を招くと判断し、Architecture Amendmentにより変更した
+  （Public API・入力Contractの変更は伴わない）。完全な一意性は保証しない
+
+### Runtime Zero Diff
+
+- 既存`ai_image_generation` / `openai_image_generation` / `wordpress_media` /
+  `generated_image_wordpress_media` / `article_featured_media` /
+  `article_featured_media_orchestration` / `image_generation_config` / `outputs` /
+  `image_resolver.py` / `main.py` / `slug_generator.py` / 記事生成Pipeline / Workflow /
+  Scheduler / Retry Runtimeはいずれも無改修・未配線（消費者不在の先行実装）
+
+### Security／Dependency
+
+- 許可dependencyは標準ライブラリの`re`・`hashlib`のみ。project内packageへの依存はゼロ
+  （`outputs.ArticleData` / `ai_image_generation.GeneratedImage`を含むいずれの既存型にも
+  依存しない）
+- `mimetypes` / `unicodedata` / `datetime` / `random` / `uuid` / `locale` / `os` はいずれも
+  禁止（検討のうえ不採用、設計書15章・15.3節・15.4節参照）
+- hashは匿名化・暗号化・credential保護を目的とせず、復元不可能性を主張しない。元titleを
+  保存・logging・print出力しない。directory traversal・絶対path・path separatorを含む
+  戻り値は構造的に生成し得ない
+
+### Tested
+
+- `tests/test_e2e_v6_16_0_generated_image_filename_policy_foundation.py`：60シナリオ・
+  104ケース・143アサーション・143/143 PASS（終了コード0、意図しない警告なし、Tracebackなし）
+- Formal Regression（累積Regression Inventory方式、既存18ファイル＋新規v6.16.0 E2E、
+  計19ファイルを個別実行）：
+  - 既存18ファイル（`docs/CHANGELOG.md` v6.15.0 Testedセクション記載の正式対象、
+    v1.11.0・v5.9.0・v6.0.0〜v6.15.0）：2365/2365 PASS（ベースライン維持、新規差分なし）
+  - 新規v6.16.0 E2E：143/143 PASS
+  - 総合：2508/2508 PASS。全19ファイル終了コード0、Warning 0、Traceback 0、重複実行なし
+  - Formal Regression was completed after aligning the project venv with the existing
+    `requirements.txt` declaration（初回試行はローカルvenvに`openai`パッケージが
+    未インストールだったため1ファイルが実行不能で`Failed`と判定したが、Release 6.16の
+    変更に起因するものではなく、`requirements.txt`に既存記載の依存関係をvenvへ導入する
+    環境整備により解消し、再実行で全件PASSした）
+- Architecture Review：「Approved」（Claude Codeによる独立Review。検出：Blocking 0・
+  Major 1・Minor 8・Suggestion 2、いずれも本文書内の修正で解消）
+- Architecture Amendment：「Approved」（Japanese／Unicode Fallback Collision再評価。
+  検出：Blocking 0・Major 1・Minor 4・Suggestion 2、いずれも本文書内の修正で解消）
+- Code Review：「Approved with Suggestions」（Blocking Issueなし、Critical/Major 0件、
+  Minor 1件（設計書内の文字数誤記）は本工程内で解消、Suggestion 1件：STATE-AST-1準拠のための
+  MIME mapping／Windows予約名集合の関数ローカル配置はNon-Blockingのまま維持）
+- Documentation Integration：Completed（`docs/ROADMAP.md` / `docs/architecture.md` /
+  本Entryへ反映済み、Historical Record変更なし）
+- Release Review：「Approved」（Blocking 0件・Critical/Major/Minor各0件、Suggestion
+  1件：CR-S-1、Non-Blocking）。Public Contract・E2E Inventory（60 Scenario・104 Case・
+  143 Assertion）・Formal Regression記録（19ファイル・2508/2508 PASS）・4文書間整合・
+  Historical Record非改変・Runtime Zero Diffのいずれも適合と判定し、Release成果物
+  7ファイル全体を承認した。CR-S-1はNon-Blockingのまま維持し、Known Issue・Open
+  Questionへは昇格させていない
+- 本Releaseによる新規Known Issueなし
+
+### Scope
+
+- Consumer-less Foundation・既存production code無改修・既存test無改修・既存Pipeline非配線・
+  実HTTP通信なし・実課金なし・State非保持（module-level function）・Fail Closed（title不正は
+  hash付きfallback、mime_type不正はValueError）・deterministic・provider非依存・WordPress非依存
+
+---
+
 ## [v6.15.0] - 2026-07-20 ★ Image Generation Configuration Gate
 
 > **本Entryの時点でのRelease状態**：Architecture Design Completed／Architecture Review
