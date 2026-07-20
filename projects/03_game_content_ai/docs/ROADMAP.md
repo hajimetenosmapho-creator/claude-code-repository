@@ -811,19 +811,45 @@
   初回Changes Required：Minor 2件、いずれも設計書内の文書表記staleness、Production／E2E／
   Contractへの影響なし、Non-Blocking Finding修正工程で反映済み）を経て、Release 6.14として
   完了した（`docs/design/article_featured_media_orchestration_foundation.md`）
+- [x] **Image Generation Configuration Gate**：v6.15.0で実装完了（Release Review
+  Approved、Release Completed）。画像生成機能（`AIImageGenerator` Protocol）を
+  Production Runtimeへ接続する前に、有効／無効を
+  Configuration-Firstで制御する、provider非依存のGateを確立した。新規独立package
+  `src/image_generation_config/`（`ImageGenerationConfig`のみを公開、`@dataclass(frozen=True)`、
+  field`enabled: bool`のみ）を追加し、環境変数`AI_IMAGE_GENERATION_ENABLED`を`from_env()`
+  呼び出し時にのみ読み込む。前後空白を除去し大文字小文字を無視して`"true"`と完全一致する
+  場合のみ有効、それ以外（未設定・空文字・`"1"`／`"yes"`／`"on"`等を含む）はすべて無効という
+  Fail Closed方式を採用し、例外は一切送出しない（既存`*_ENABLED`系Configuration19箇所中、
+  default OFF機能17箇所と同じ規約）。`OPENAI_API_KEY` / `OPENAI_IMAGE_TIMEOUT_SECONDS`は
+  いずれも読み取らず、そのValidationは引き続き`OpenAIImageGenerator.from_env()`の責務として
+  維持する。既存`ai_image_generation` / `openai_image_generation` / `wordpress_media` /
+  `generated_image_wordpress_media` / `article_featured_media` /
+  `article_featured_media_orchestration` / `outputs` / `retry_*` / `pipeline` /
+  `workflow_engine` / `scheduler` / `scripts` / `main.py` / `image_resolver.py`はいずれも
+  無改修・未配線（消費者不在の先行実装、Consumer-less Foundation）。
+  `AI_IMAGE_GENERATION_ENABLED=true`に設定しても、本Release単独ではRuntime動作は一切変化せず、
+  OpenAI／WordPress APIいずれも呼び出さない。Architecture Review（Approved、初回検出：
+  Blocking 0・Major 1・Minor 5・Suggestion 2、いずれも本文書内の修正で解消）・Code Review
+  （Approved with Suggestions、Blocking Issueなし、Minor 3件は本工程内で解消、Suggestion
+  1件：CR10-S-1「動的importはAST Guard対象外」はNon-Blockingのまま維持）を経て、新規E2E
+  （54シナリオ・94アサーション・94/94 PASS）・Formal Regression（累積Regression
+  Inventory18ファイル、2365/2365 PASS）とも完全PASSした。Release Review（Approved、
+  Blocking Issueなし、Suggestion 1件：CR10-S-1はNon-Blockingのまま維持）を経て、
+  Release 6.15として完了した（`docs/design/image_generation_configuration_gate_foundation.md`）
 - [ ] **Article Featured Media Runtime Wiring**（次候補・未着手。v6.14.0 Article Featured Media
-  Orchestration Foundationの完了により前提条件を充足）：v6.14.0の
-  `ArticleFeaturedMediaOrchestrator.apply()`を、実際に`main.py` / `image_resolver.py`等の
-  Production Runtimeへ接続する後続Wiring。一括のReleaseとするか複数Releaseへ分割するか、
-  `image_resolver.py` / `main.py`への変更内容、Configuration First有効化フラグの要否、
-  OpenAI／WordPress credential取得経路、Upload成功後の記事投稿失敗時の整合性・Retry時の重複
-  Upload対策・既存media ID再利用・未使用Media cleanup・fallback方針はいずれも未確定であり、
-  独立したArchitecture Reviewを要する
+  Orchestration Foundationの完了により前提条件を充足。v6.15.0 Image Generation Configuration
+  Gateにより「有効／無効の切り替え」という前提の1つが追加で充足されたが、Release Review未実施の
+  ため正式完了はしていない）：v6.14.0の`ArticleFeaturedMediaOrchestrator.apply()`を、実際に
+  `main.py` / `image_resolver.py`等のProduction Runtimeへ接続する後続Wiring。一括のReleaseと
+  するか複数Releaseへ分割するか、`image_resolver.py` / `main.py`への変更内容、OpenAI／
+  WordPress credential取得経路、Upload成功後の記事投稿失敗時の整合性・Retry時の重複Upload
+  対策・既存media ID再利用・未使用Media cleanup・fallback方針はいずれも未確定であり、
+  Article Image Prompt Construction Foundation・Generated Image Filename Policy
+  Foundation・Publish Composition Root Foundationも未着手のままであるため、独立した
+  Architecture Reviewを要する
 - [ ] **Publish Composition Root Foundation**（次候補）：記事生成→WordPress投稿の一連の生成・配線を
   専用に担う、`RetryCompositionRoot`と対をなすComposition Rootの新設。Article Featured Media
   Runtime Wiringの前提として検討されうる
-- [ ] **Image Generation Configuration Gate**（次候補）：画像生成機能の有効／無効を切り替える
-  Configuration First方式の環境変数ゲートの新設。既存`AI_AGENT_ENABLED`等のprecedentに倣う
 - [ ] **Article Image Prompt Construction Foundation**（次候補）：記事タイトル・本文・SEO情報から
   promptを構築する専用Foundation
 - [ ] **Generated Image Filename Policy Foundation**（次候補）：filenameの命名規則・拡張子決定方針を

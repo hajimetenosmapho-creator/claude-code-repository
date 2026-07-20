@@ -3723,7 +3723,132 @@ image bytes・prompt・filenameのいずれも保存・ログ出力しない。c
 
 ### Future Extension
 
-Article Featured Media Runtime Wiring（`main.py` / `image_resolver.py`等のProduction Runtimeへの接続）・Publish Composition Root Foundation・Image Generation Configuration Gate・Article Image Prompt Construction Foundation・Generated Image Filename Policy Foundation・Image Generation Fallback Policy・Media Upload Retry／Idempotency Foundation・WordPress Unused Media Cleanup Foundation（順序・Release分割方針は確定事項として固定しない。詳細は`docs/ROADMAP.md`）。
+Article Featured Media Runtime Wiring（`main.py` / `image_resolver.py`等のProduction Runtimeへの接続）・Publish Composition Root Foundation・Article Image Prompt Construction Foundation・Generated Image Filename Policy Foundation・Image Generation Fallback Policy・Media Upload Retry／Idempotency Foundation・WordPress Unused Media Cleanup Foundation（順序・Release分割方針は確定事項として固定しない。詳細は`docs/ROADMAP.md`）。Image Generation Configuration Gateはv6.15.0で実装済み（本節末尾のImage Generation Configuration Gate Foundation層を参照）。
 
 詳細は`docs/design/article_featured_media_orchestration_foundation.md`
+（Architecture Design・Architecture Review・Production Implementation・Code Review・Formal Regressionの経緯を含む）を参照。
+
+---
+
+## Image Generation Configuration Gate Foundation層（`src/image_generation_config/`、v6.15.0 実装完了）
+
+> **本節は実装完了時点の記録である。新規E2E（54シナリオ・94アサーション・94/94 PASS）・累積Regression Inventory（既存17ファイル＋新規v6.15.0 E2E 1ファイル＝累積18ファイル、既存17ファイル分2271/2271 PASS、新規E2E込み合計2365/2365 PASS）とも完全PASSし、Architecture Review（「Approved」、初回検出：Blocking 0・Major 1・Minor 5・Suggestion 2、いずれも本文書内の修正で解消）・Code Review（「Approved with Suggestions」、Minor 3件は本工程内で解消、Suggestion 1件：CR10-S-1はNon-Blocking）・Formal Regressionを経ている。**
+> **Release Review：Approved（Blocking Issueなし。Suggestion 1件：CR10-S-1はNon-Blockingのまま維持）を経て、Release 6.15として完了した（Release Completed）。ただし本Releaseは`main.py`等のProduction Runtimeへは未接続のままである（Runtime Wiring完了・記事投稿への組み込み・画像自動生成の本番稼働・`OpenAIImageGenerator`のRuntime生成のいずれも意味しない。`AI_IMAGE_GENERATION_ENABLED=true`に設定しても、本Release単独ではRuntime動作は一切変化せず、OpenAI／WordPress APIいずれも呼び出さない。Runtime Wiringは次候補「Article Featured Media Runtime Wiring」として`docs/ROADMAP.md`に未着手のまま維持されている）。**
+
+### Purpose
+
+画像生成機能（`ai_image_generation.AIImageGenerator` Protocol）をProduction Runtimeへ接続する前に、有効／無効をConfiguration-Firstで制御する、provider非依存のGateを確立する。本層自体もConsumer-less Foundationであり、`main.py` / `image_resolver.py` / `OutputManager` / `WordPressOutput` / `OpenAIImageGenerator` / `ArticleFeaturedMediaOrchestrator` / `GeneratedImageWordPressMediaUploader` / `WordPressMediaUploader` / `retry_*` / `pipeline` / `workflow_engine` / `scheduler` / `scripts`のいずれへも配線しない。
+
+```
+（将来）Composition Root／Runtime Consumer
+        │
+        ▼
+ImageGenerationConfig.from_env()
+        │
+        ├─▶ os.getenv("AI_IMAGE_GENERATION_ENABLED", "") を取得
+        ├─▶ .strip().lower() == "true" で判定
+        └─▶ ImageGenerationConfig(enabled=...) を返す
+        │
+        ▼
+Python標準ライブラリ（os, dataclasses）のみに依存
+```
+
+### Package Boundary
+
+新規独立package`src/image_generation_config/`。
+
+```
+src/image_generation_config/
+├── __init__.py                     # Public API export
+└── image_generation_config.py      # ImageGenerationConfig
+```
+
+### Public API
+
+`src/image_generation_config/__init__.py`が公開するのは次の1つのみ。
+
+```python
+ImageGenerationConfig
+```
+
+```python
+@dataclass(frozen=True)
+class ImageGenerationConfig:
+    enabled: bool
+
+    @classmethod
+    def from_env(cls) -> "ImageGenerationConfig": ...
+```
+
+既存19箇所の`*_ENABLED`系Configuration（`AgentConfig`・`AnalyticsConfig`等）と同じ`<Feature>Config`命名規約・`@dataclass` + `from_env()`パターンを踏襲する。`ImageGenerationConfig(enabled=True)`のような明示的Constructor呼び出しも通常のdataclassとして利用可能。
+
+### Environment Variable Contract
+
+環境変数`AI_IMAGE_GENERATION_ENABLED`のみを読み込む。
+
+```
+未設定：                        enabled=False
+空文字：                        enabled=False
+空白のみ：                      enabled=False
+"true" / "TRUE" / "True"：      enabled=True
+前後空白付き"  true  "：        enabled=True（strip()適用）
+"false" / "1" / "yes" / "on"
+    等、"true"以外すべて：      enabled=False
+非ASCII文字列・非常に長い文字列： enabled=False
+例外：                          送出しない（Fail Closed）
+```
+
+大文字小文字は区別しない（`.lower()`適用）。有効化条件は「前後空白を除去し大文字小文字を無視した結果が厳密に`"true"`と一致すること」の一点のみであり、`"1"` / `"yes"` / `"on"`等の同義語はサポートしない（既存19箇所の`*_ENABLED`系Configurationがいずれも`"true"`の単一リテラルのみで判定していることと整合）。
+
+不正値・未設定はいずれも`False`として扱い、例外を送出しない（Fail Closed）。既存`*_ENABLED`系Configuration19箇所のうち、default OFF機能17箇所（`AgentConfig`・`AnalyticsConfig`等）が同じFail Closed方式（`.lower()[.strip()] == "true"`）を採用している。残り2箇所（`LOG_ENABLED`・`SNS_ENABLED`）はdefault ON機能で`!= "false"`という逆方向のFail Open方式を採るが、これはdefault OFFの本Gateとは異なるユースケースであり参考にしていない。
+
+`from_env()`は呼び出し時点の環境変数を読む（module import時には読まない）。呼び出しごとに独立したインスタンスを返し、instance間でstateを共有しない。
+
+### 依存関係
+
+```
+許可：Python標準ライブラリのos, dataclassesのみ
+禁止：main / image_resolver / outputs（OutputManager, WordPressOutput） /
+    openai_image_generation（OpenAIImageGenerator） /
+    article_featured_media_orchestration（ArticleFeaturedMediaOrchestrator） /
+    generated_image_wordpress_media（GeneratedImageWordPressMediaUploader） /
+    wordpress_media（WordPressMediaUploader） / retry_* / pipeline /
+    workflow_engine / scheduler / scripts / openai / anthropic / requests
+逆依存禁止：main.py / image_resolver.py / OutputManager / WordPressOutput /
+    OpenAIImageGenerator / ArticleFeaturedMediaOrchestrator /
+    GeneratedImageWordPressMediaUploader / WordPressMediaUploader / retry_*
+    （実在17package、globで動的取得） / pipeline / workflow_engine / scheduler /
+    scriptsは image_generation_config をimportしない（13対象、正式設計書21章
+    R-1〜R-13）
+```
+
+### Consumer-less Contract
+
+上記13対象いずれからも本Foundationは未参照であり、Production RuntimeでGateを消費しない。本Release単独でのAPI呼び出し数は構造的に0（`image_generation_config`パッケージが`openai`・`requests`等のいずれもimportしないため）。詳細は`docs/design/image_generation_configuration_gate_foundation.md` 20〜22章を参照。
+
+### Runtime Zero Diff Contract
+
+`AI_IMAGE_GENERATION_ENABLED=true`であっても、本Release単独ではRuntime動作を変更しない。OpenAI APIを呼ばない、WordPress APIを呼ばない、画像生成処理を一切開始しない。`main.py` / `image_resolver.py` / `src/outputs/` / `src/ai_image_generation/` / `src/openai_image_generation/` / `src/wordpress_media/` / `src/generated_image_wordpress_media/` / `src/article_featured_media/` / `src/article_featured_media_orchestration/` / `src/retry_*/` / `src/pipeline/` / `src/workflow_engine/` / `src/scheduler/` / `scripts/`はいずれも無改修（`git diff`で確認済み）。
+
+### Security Contract
+
+`OPENAI_API_KEY`をコード内に文字列としても保持しない（読み取らない・保持しない・reprへ含めない・exceptionへ含めない）。`OPENAI_IMAGE_TIMEOUT_SECONDS`も同様に非参照。`OPENAI_API_KEY`および`OPENAI_IMAGE_TIMEOUT_SECONDS`のValidationは、引き続き`OpenAIImageGenerator.from_env()`（`src/openai_image_generation/openai_image_generator.py`）の責務として維持する（本Gateはそれらを一切扱わない）。`enabled: bool`以外をinstance stateへ保持しない。`@dataclass(frozen=True)`の自動生成`repr()`は`enabled`の値のみを含み、secretを含まない（フィールドが`enabled`の1つのみのため構造的に保証される）。environment全体のrepr・os.environのログ出力のいずれも行わない。loggingなし、printなし。
+
+### Backward Compatibility
+
+既存`ai_image_generation` / `openai_image_generation` / `wordpress_media` / `generated_image_wordpress_media` / `article_featured_media` / `article_featured_media_orchestration` / `outputs`（`ArticleData` / `WordPressOutput`） / `image_resolver.py` / `main.py` / 記事生成Pipeline / Workflow / Scheduler / Retry Runtime、および既存テスト一式はいずれも無改修。`.env.example`は既存20行を維持したまま3変数（`AI_IMAGE_GENERATION_ENABLED` / `OPENAI_API_KEY` / `OPENAI_IMAGE_TIMEOUT_SECONDS`）を追記したのみ（append-only）。新規独立packageの追加のみであり、既存の呼び出し元（現状ゼロ）にも影響しない。
+
+### Out of Scope
+
+`main.py` / `image_resolver.py`変更、Runtime Wiring、`ArticleFeaturedMediaOrchestrator` / `OpenAIImageGenerator` / `GeneratedImageWordPressMediaUploader` / `WordPressMediaUploader`のRuntime生成、Publish Composition Root Foundation、Article Image Prompt Construction Foundation、Generated Image Filename Policy Foundation、画像生成failure continuation policy、fallback、retry、idempotency、unused media cleanup、WordPress記事投稿フロー変更、`ArticleData` / `bind_featured_media`変更、既存FoundationのPublic API変更は、いずれも本Releaseの対象外である（詳細は`docs/design/image_generation_configuration_gate_foundation.md` 7章）。
+
+### Test Review・Code Review・Regressionの実績
+
+新規E2E（`tests/test_e2e_v6_15_0_image_generation_configuration_gate.py`）は54シナリオ・94アサーション・94/94 PASS（終了コード0、意図しない警告なし、Tracebackなし）。累積Regression Inventory（既存17ファイル：`test_e2e_v1_11_0_save_result.py`・`test_e2e_v5_9_0_*.py`・`test_e2e_v6_0_0_*.py`〜`test_e2e_v6_14_0_*.py`、2271/2271 PASS）とあわせた新規E2E込みの合計は2365/2365 PASS。Architecture Reviewは「Approved」（Blocking Issueなし、初回検出：Blocking 0・Major 1・Minor 5・Suggestion 2、いずれも本文書内の修正で解消）。Code Reviewは「Approved with Suggestions」（Blocking Issueなし、Critical/Major 0件、Minor 3件は本工程内で解消、Suggestion 1件：CR10-S-1）。CR10-S-1（Dependency GuardのAST解析は`ast.Import`／`ast.ImportFrom`のみを対象とし、`importlib.import_module()`等の動的importは検出しない）は、現状Repositoryに動的importの実例がなく、v6.14の既存Guard方式とも一致するため、Production／E2Eへの影響はないためNon-Blockingのまま維持している。
+
+### Future Extension
+
+Article Featured Media Runtime Wiring（本Gateを消費するRuntime接続）・Publish Composition Root Foundation・Article Image Prompt Construction Foundation・Generated Image Filename Policy Foundation・Image Generation Fallback Policy・Media Upload Retry／Idempotency Foundation・WordPress Unused Media Cleanup Foundation（順序・Release分割方針は確定事項として固定しない。詳細は`docs/ROADMAP.md`）。
+
+詳細は`docs/design/image_generation_configuration_gate_foundation.md`
 （Architecture Design・Architecture Review・Production Implementation・Code Review・Formal Regressionの経緯を含む）を参照。

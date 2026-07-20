@@ -361,6 +361,108 @@
 
 ---
 
+## [v6.15.0] - 2026-07-20 ★ Image Generation Configuration Gate
+
+> **本Entryの時点でのRelease状態**：Architecture Design Completed／Architecture Review
+> Approved／Production Implementation Completed／New E2E PASS／Code Review Approved with
+> Suggestions／Formal Regression PASS／Documentation Integration Completed／**Release
+> Review Approved**（Blocking Issueなし。Suggestion 1件：CR10-S-1はNon-Blockingのまま
+> 維持）。**Release：Completed**。
+
+### Added
+
+- 新規独立package`src/image_generation_config/`：画像生成機能（`AIImageGenerator` Protocol）
+  の有効／無効をConfiguration-Firstで制御するGateのみを責務とする、provider非依存の
+  Consumer-less Foundation
+  - `src/image_generation_config/__init__.py`：package rootから`ImageGenerationConfig`
+    のみを公開
+  - `src/image_generation_config/image_generation_config.py`：`ImageGenerationConfig`
+    （`@dataclass(frozen=True)`、field`enabled: bool`のみ）
+- `tests/test_e2e_v6_15_0_image_generation_configuration_gate.py`新規作成
+  （54シナリオ・94アサーション）
+- `docs/design/image_generation_configuration_gate_foundation.md`新規作成：Architecture
+  Design・Architecture Review（Approved）・Production Implementation・Code Review
+  （Approved with Suggestions）・Formal Regressionの経緯を含む
+- `.env.example`へ3設定を追記（既存行の変更・削除・並べ替えなし、20行追加のみ）：
+  `AI_IMAGE_GENERATION_ENABLED`（画像生成機能の有効／無効、デフォルトfalse）・
+  `OPENAI_API_KEY`（コメントアウトplaceholder）・`OPENAI_IMAGE_TIMEOUT_SECONDS`
+  （コメントアウト、デフォルト180秒）
+
+### Public API
+
+- `ImageGenerationConfig.__init__`は`@dataclass`自動生成（`enabled: bool`のみ）
+- `ImageGenerationConfig.from_env() -> ImageGenerationConfig`（classmethod）
+
+### Architecture／Behavior
+
+- `from_env()`は環境変数`AI_IMAGE_GENERATION_ENABLED`のみを読み込む。`os.getenv(...,
+  "").strip().lower() == "true"`により、未設定・空文字・空白のみ・`"true"`以外の値
+  （`"1"`／`"yes"`／`"on"`等の同義語を含む）はすべて`enabled=False`となる。大文字小文字は
+  区別せず、前後空白は除去する。`"true"`（大文字小文字を区別しない、前後空白除去後）と
+  完全一致する場合のみ`enabled=True`
+- 不正値・未設定はいずれも`False`として扱い、例外を送出しない（Fail Closed）。既存
+  `*_ENABLED`系Configuration19箇所中、default OFF機能17箇所が同じFail Closed方式を
+  採用している
+- `OPENAI_API_KEY`・`OPENAI_IMAGE_TIMEOUT_SECONDS`はいずれも読み取らない・保持しない。
+  それらのValidationは引き続き`OpenAIImageGenerator.from_env()`の責務として維持する
+- `@dataclass(frozen=True)`によりインスタンス生成後の`enabled`再代入は`FrozenInstanceError`
+  になる。`slots`は使用しない（既存frozen dataclass規約と整合）
+- module import時に環境変数を読まず、`from_env()`呼び出し時にその時点の値を読む。logging・
+  printのいずれも行わない
+- 分類はArchitecture Release。新規独立package・新規Public API・新規Dependency方向の確立を
+  伴うため
+- 対象外（今回は未実装）：`main.py` / `image_resolver.py`変更、Runtime Wiring、
+  `ArticleFeaturedMediaOrchestrator` / `OpenAIImageGenerator` /
+  `GeneratedImageWordPressMediaUploader`のRuntime生成、Publish Composition Root
+  Foundation、Article Image Prompt Construction Foundation、Generated Image Filename
+  Policy Foundation、画像生成failure continuation policy、fallback、retry、
+  idempotency、unused media cleanup（詳細は同設計書7章）
+- 既存`ai_image_generation` / `openai_image_generation` / `wordpress_media` /
+  `generated_image_wordpress_media` / `article_featured_media` /
+  `article_featured_media_orchestration` / `outputs` / `retry_*` / `pipeline` /
+  `workflow_engine` / `scheduler` / `scripts` / `main.py` / `image_resolver.py`は
+  いずれも無改修。既存側から`image_generation_config`へのWiringも本Releaseでは行わない
+  （消費者不在の先行実装）
+- **Code Review Suggestion（1件：CR10-S-1、Non-Blocking）**：Dependency GuardのAST解析は
+  `ast.Import`／`ast.ImportFrom`を対象とし、`importlib.import_module()`等の動的importは
+  検出しない。現状Repositoryに動的importの実例はなく、v6.14の既存Guard方式とも一致するため
+  Non-Blockingとして維持し、本Releaseでは修正しない
+- 新規Known Issueなし
+
+### Tested
+
+- `tests/test_e2e_v6_15_0_image_generation_configuration_gate.py`：54シナリオ・
+  94アサーション・94/94 PASS（終了コード0、意図しない警告なし、Tracebackなし）
+- Formal Regression（累積Regression Inventory方式、既存17ファイル＋新規v6.15.0 E2E、
+  計18ファイルを個別実行）：
+  - 既存17ファイル（`docs/design/article_featured_media_orchestration_foundation.md`
+    28.1節記載の正式対象、v1.11.0・v5.9.0・v6.0.0〜v6.14.0）：2271/2271 PASS
+    （ベースライン維持、新規差分なし）
+  - 新規v6.15.0 E2E：94/94 PASS
+  - 総合：2365/2365 PASS。全18ファイル終了コード0、Warning 0、Traceback 0、重複実行なし
+- Architecture Review：「Approved」（Claude Codeによる独立Review。検出：Blocking 0・
+  Major 1・Minor 5・Suggestion 2、いずれも本文書内の修正で解消し、再Review：
+  Blocking/Major/Minor/Suggestionいずれも0件、Blocking Issueなし）
+- Code Review：「Approved with Suggestions」（Blocking Issueなし、Critical 0件・
+  Major 0件・Minor 0件（3件検出しいずれも本工程内で解消）・Suggestion 1件：CR10-S-1、
+  Non-Blocking）
+- Formal Regression：PASS（既存17ファイル2271/2271 PASS＋新規E2E 94/94 PASS＝総合
+  2365/2365 PASS、終了コード非0なし、実HTTP・実credential読込・実課金いずれもなし）
+- Documentation Integration：Completed（`docs/ROADMAP.md` / `docs/architecture.md` /
+  本Entryへ反映済み、Historical Record変更なし）
+- Release Review：「Approved」（Blocking Issueなし、Critical/Major/Minor各0件、
+  Suggestion 1件：CR10-S-1、Non-Blocking）。CR10-S-1はNon-Blockingのまま維持し、
+  Resolved・Known Issue・Open Questionへは昇格させていない
+- 本Releaseによる新規Known Issueなし
+
+### Scope
+
+- Consumer-less Foundation・既存production code無改修・既存test無改修・既存Pipeline非配線・
+  実HTTP通信なし・実課金なし・frozen dataclass・State非保持・Fail Closed・provider非依存・
+  OPENAI_API_KEY／timeout非関与
+
+---
+
 ## [v6.14.0] - 2026-07-18 ★ Article Featured Media Orchestration Foundation
 
 > **本Entryの時点でのRelease状態**：Architecture Design Completed／Architecture Review
