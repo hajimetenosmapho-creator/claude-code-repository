@@ -911,24 +911,70 @@
   「architecture.md実装済みポインタの記載形式差」はAccepted・RR-S-B「precedent確認方法」
   はInformational、いずれもNon-Blocking）を経て、Release 6.17として完了した
   （`docs/design/article_image_prompt_construction_foundation.md`）
+- [x] **Article Featured Media Composition Root Foundation**：Release 6.9.0〜6.17.0で整備された画像系9
+  Foundationを、`main.py`等のRuntimeへ配線せずに構築・接続する専用Composition Root
+  `ArticleFeaturedMediaCompositionRoot`（新規独立package`src/article_featured_media_composition/`、
+  `__all__`は当該classのみ）を新設した。`RetryCompositionRoot`（v5.1.0）と対をなす、
+  Publish系で初めてのComposition Rootである。`@dataclass(frozen=True)`とし、公開fieldは
+  `orchestrator: ArticleFeaturedMediaOrchestrator | None`（`field(repr=False)`付与）・
+  `image_mime_type: str | None`の2件のみ。`from_env()`は
+  `ImageGenerationConfig.from_env()`によるGate判定 → Gate OFF時は環境変数を一切追加で
+  読まず即座に`orchestrator=None, image_mime_type=None`の正常な無効状態を返す → Gate ON時は
+  `OpenAIImageGenerator.from_env()` → 新設した`output_mime_type`（read-only property。
+  既存`_MIME_TYPE_BY_OUTPUT_FORMAT`をSSOTとしてそのまま参照し、MIME文字列リテラルを
+  重複させない）取得 → `WordPressMediaUploader.from_env()` →
+  `GeneratedImageWordPressMediaUploader`接続 → `ArticleFeaturedMediaOrchestrator`構築、
+  という固定順序で組み立てる。Gate ON＋credential不足時は既存factory
+  （v6.9／v6.11）の`ValueError`を無変換伝播するFail Fastとし、Composition Root自身は
+  `try`/`except`を一切持たない。`__post_init__`が3種の不変条件（両fieldの整合性・
+  `orchestrator.apply`のcallable性・`image_mime_type`の非空str）を4種の固定messageで
+  検証する。Null Objectは採用せず`None`＋`is_available()`（`orchestrator is not None`）とし、
+  Fallback Policy（画像なしで記事投稿を継続するか等の業務判断）を本Releaseへ先取りしない
+  設計とした。Architecture Review 1（Changes Required、Major 2件：Security Contractの
+  事実誤認・Test Strategy内部矛盾、Minor 3件、Suggestion 4件、いずれもArchitecture
+  Amendment 1で解消）・Architecture Review 2（Approved with Suggestions、Blocking 0件・
+  Major 0件、Minor 2件・Suggestion 4件）・Code Review（Approved with Suggestions、
+  Blocking 0件・Major 0件、Minor 3件：うち変更ファイル件数の誤記・Gate OFF env非読取り
+  検証手段の限定・INV-2 edge case未カバー、Suggestion 2件、いずれもDocumentation
+  Integrationまで延期可能と判定）を経て、新規E2E（standalone script形式、17 prefix・
+  128シナリオ・128ケース・146アサーション・146/146 PASS、`clean subprocess`による
+  openai未import決定的検証と`socket.getaddrinfo`／`socket.socket.connect`のin-process
+  遮断検証を含む）・Formal Regression（累積Regression Inventory方式、既存20ファイル
+  2644/2644 PASS＋新規146/146 PASS＝総合2790/2790 PASS、正式Inventory21ファイル全件
+  終了コード0・Warning 0・skip 0・外部API実接続0、総実行時間17秒）とも完全PASSした。
+  Release Review（Approved with Suggestions、Blocking 0件・Major 0件、Minor 1件：
+  §17.2「S-11の限定範囲」の過大な一般化をRelease Review反映工程で訂正（RRF-1）、
+  Suggestion 1件：Status行の列揃え、Release Review反映工程で解消（RRF-2）。
+  Release Review 2：Not Required）を経て、Release 6.18として完了した
+  （`docs/design/article_featured_media_composition_root_foundation.md`）。
+  Deferred：Gate値のtypo（例："ture"）がv6.15 Fail Closedにより静かにGate OFFへ落ちる
+  非対称性はInherited Limitationとして明記し、厳格化はDeferred Item DI-9
+  （Image Generation Gate Value Strict Validation）として独立検討する。`dataclasses.asdict(root)`は
+  secret-safeなserializationではないことをContractとして明記した。
 - [ ] **Article Featured Media Runtime Wiring**（次候補・未着手。v6.14.0 Article Featured Media
   Orchestration Foundationの完了により前提条件を充足。v6.15.0 Image Generation Configuration
   Gateにより「有効／無効の切り替え」、v6.16.0 Generated Image Filename Policy Foundationにより
   「filenameの構築方法」、v6.17.0 Article Image Prompt Construction Foundationにより
-  「promptの構築方法」という前提がそれぞれ追加で充足された（v6.14.0〜v6.17.0はいずれも
-  Release Review Approved済み）。ただしPublish Composition Root Foundationは依然
-  未着手であり、本Wiringへ直行できる状態には至っていない）：v6.14.0の`ArticleFeaturedMediaOrchestrator.apply()`を、実際に
-  `main.py` / `image_resolver.py`等のProduction Runtimeへ接続する後続Wiring。一括のReleaseと
-  するか複数Releaseへ分割するか、`image_resolver.py` / `main.py`への変更内容、OpenAI／
-  WordPress credential取得経路、Upload成功後の記事投稿失敗時の整合性・Retry時の重複Upload
-  対策・既存media ID再利用・未使用Media cleanup・fallback方針はいずれも未確定であり、
-  Publish Composition Root Foundationも未着手のままであるため、独立したArchitecture
-  Reviewを要する
+  「promptの構築方法」、v6.18.0 Article Featured Media Composition Root Foundationにより
+  「dependency構築・接続」という前提がそれぞれ追加で充足された（v6.14.0〜v6.18.0は
+  いずれもRelease Review Approved済み）。ただし画像生成のFallback Policy（Image Generation Fallback
+  Policy、次候補）は依然未着手であり、本Wiringへ直行できる状態には至っていない）：
+  v6.14.0の`ArticleFeaturedMediaOrchestrator.apply()`を、v6.18.0の
+  `ArticleFeaturedMediaCompositionRoot`経由で実際に`main.py` / `image_resolver.py`等の
+  Production Runtimeへ接続する後続Wiring。一括のReleaseとするか複数Releaseへ分割するか、
+  `image_resolver.py` / `main.py`への変更内容、Upload成功後の記事投稿失敗時の整合性・
+  Retry時の重複Upload対策・既存media ID再利用・未使用Media cleanup・fallback方針は
+  いずれも未確定であり、独立したArchitecture Reviewを要する
 - [ ] **Publish Composition Root Foundation**（次候補）：記事生成→WordPress投稿の一連の生成・配線を
-  専用に担う、`RetryCompositionRoot`と対をなすComposition Rootの新設。Article Featured Media
-  Runtime Wiringの前提として検討されうる
+  専用に担う、`RetryCompositionRoot`と対をなすComposition Rootの新設。v6.18.0
+  `ArticleFeaturedMediaCompositionRoot`は画像featured media領域に限定した先行版
+  （画像スコープ限定版）であり、`main.py`のpublish全体（Anthropic client／
+  LogManager／AnalyticsManager／OutputManager／PublishingConfig／SnsConfig等）を
+  対象とする本命の`Publish Composition Root Foundation`は本Release完了後も引き続き
+  未着手である。Article Featured Media Runtime Wiringの前提として検討されうる
 - [ ] **Image Generation Fallback Policy**（次候補）：画像生成・Upload失敗時に記事投稿を継続するか
-  中止するかの業務判断を確立するFoundation
+  中止するかの業務判断を確立するFoundation。v6.18.0の`None`＋`is_available()`採用は、
+  本Foundation未着手のままFallback判断を先取りしないための意図的な設計判断である
 - [ ] **Media Upload Retry／Idempotency Foundation**（次候補）：Retry Queueのmedia_id保持field
   拡張、重複Upload防止、idempotency keyの確立。既存`RetryQueueItem`にmedia_id相当のfieldが
   存在しないことを踏まえ独立検討する

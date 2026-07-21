@@ -361,6 +361,165 @@
 
 ---
 
+## [v6.18.0] - 2026-07-21 ★ Article Featured Media Composition Root Foundation
+
+> **本Entryの時点でのRelease状態**：Architecture Design Completed／Architecture Review 1
+> Changes Required／Architecture Amendment 1 Completed／Architecture Review 2 Approved with
+> Suggestions／Architecture Amendment 2 Not Required／Production Implementation Completed／
+> New E2E PASS／Code Review Approved with Suggestions／Formal Regression Passed／
+> Documentation Integration Completed／**Release Review Approved with Suggestions**
+> （Blocking 0件・Major 0件、Minor 1件・Suggestion 1件、Release Review 2：Not Required）。
+> **Release：Completed**。
+
+### Added
+
+- 新規独立package`src/article_featured_media_composition/`：Release 6.9.0〜6.17.0の
+  画像系9 Foundationを、`main.py`等のRuntimeへ配線せずに構築・接続する
+  Composition Root。`RetryCompositionRoot`（v5.1.0）と対をなす、Publish系で
+  初めてのComposition Root
+  - `src/article_featured_media_composition/__init__.py`：package rootから
+    `ArticleFeaturedMediaCompositionRoot`のみを公開
+  - `src/article_featured_media_composition/article_featured_media_composition_root.py`：
+    `ArticleFeaturedMediaCompositionRoot`（`@dataclass(frozen=True)`）・
+    `from_env()`・`is_available()`
+- `tests/test_e2e_v6_18_0_article_featured_media_composition_root_foundation.py`
+  新規作成（実測1196行・17 prefix・128シナリオ・128ケース・146アサーション）
+- `docs/design/article_featured_media_composition_root_foundation.md`新規作成：
+  Repository Survey・Architecture Design・Architecture Review 1（Changes
+  Required）・Architecture Amendment 1（Completed）・Architecture Review 2
+  （Approved with Suggestions）・Production Implementation・Code Review
+  （Approved with Suggestions）・Formal Regression（Passed）・Documentation
+  Integrationの経緯を含む
+
+### Changed
+
+- `src/openai_image_generation/openai_image_generator.py`：read-only property
+  `output_mime_type`を追加（既存9行の純追加diff。既存attribute・method・
+  signature・挙動は無変更）。既存`_MIME_TYPE_BY_OUTPUT_FORMAT`をSingle Source
+  of Truthとしてそのまま参照し、MIME文字列リテラルを重複させない
+- Runtime変更なし。`main.py`変更なし
+
+### Public API
+
+- `ArticleFeaturedMediaCompositionRoot(orchestrator, image_mime_type)`
+  （`@dataclass(frozen=True)`。`orchestrator`は`field(repr=False)`）
+- `ArticleFeaturedMediaCompositionRoot.from_env() -> ArticleFeaturedMediaCompositionRoot`
+  （classmethod、引数なし）
+- `ArticleFeaturedMediaCompositionRoot.is_available() -> bool`
+- `OpenAIImageGenerator.output_mime_type -> str`（read-only property、v6.11.0への追加）
+
+### Contract概要
+
+- Gate（`AI_IMAGE_GENERATION_ENABLED`、v6.15.0）OFF時：以降の環境変数を一切読まず、
+  credentialを要求せず、adapterを構築せず、`orchestrator=None,
+  image_mime_type=None`という正常な無効状態を例外なく返す
+- Gate ON＋credential不足・値不正時：既存factory（v6.9.0／v6.11.0）の
+  `ValueError`を無変換で伝播するFail Fast。Composition Root自身は`try`/`except`
+  を一切持たない
+- `__post_init__`が3種の不変条件（両fieldの整合性・`orchestrator.apply`の
+  callable性・`image_mime_type`の非空str）を4種の固定messageで検証
+  （`ValueError`×3・`TypeError`×1）
+- 構築順序：`ImageGenerationConfig.from_env()` → Gate判定 →
+  `OpenAIImageGenerator.from_env()` → `output_mime_type`取得 →
+  `WordPressMediaUploader.from_env()` → `GeneratedImageWordPressMediaUploader`
+  → `ArticleFeaturedMediaOrchestrator`構築
+- Null Objectは不採用。`None`＋`is_available()`（`orchestrator is not None`）を
+  採用し、Fallback Policy（画像なしで記事投稿を継続するか等）を本Releaseへ
+  先取りしない
+
+### Runtime Zero Diff
+
+- `main.py` / `src/image_resolver.py` / `src/outputs/`（7ファイル） /
+  `src/pipeline/`（6ファイル） / `scripts/`（18ファイル）の計33ファイルを
+  個別走査し、いずれも新規packageへ一切参照していないことを確認
+- `generated_image_filename_policy`（v6.16.0）・`article_image_prompt_construction`
+  （v6.17.0）は、構築すべき状態を持たないため本層からは一切importしない
+  （Runtime Wiring側が直接importする設計）
+- 既存`ai_image_generation` / `openai_image_generation`（追加のみ） /
+  `wordpress_media` / `generated_image_wordpress_media` /
+  `article_featured_media` / `article_featured_media_orchestration` /
+  `image_generation_config` / `generated_image_filename_policy` /
+  `article_image_prompt_construction`はいずれも無改修・未配線
+  （消費者不在の先行実装）
+
+### Security／Dependency
+
+- Composition Root自身はAPI key・password・token・environment snapshot・
+  image bytesをfieldとして保持しない
+- `orchestrator` field経由でsecret-bearing dependencyを間接保持するが、
+  `field(repr=False)`により`repr(root)` / `str(root)`からは構造的に除外される
+- `dataclasses.asdict(root)`はsecret-safeなserializationまたはlogging手段
+  ではない（本Release自体は`asdict()`を呼び出さない。呼び出し側が安全な用途と
+  扱うことをContractとして保証しない）
+- import時のenvironment読取りなし、module importだけでは`openai`を
+  importしない、`constructor` / `from_env()`だけでは外部API・DNS・socket接続を
+  発生させない、log出力（`print` / `logging`）なし
+- 検証対象は常に`from_env()`直後・`apply()`未実行の状態。本Releaseは`apply()`を
+  一切実行しない
+- Release Reviewにて、設計書§17.2「S-11の限定範囲」が`apply()`実行後も評価が
+  そのまま成立すると過大に一般化していた記述をRRF-1として訂正した（`root`が
+  保持する`OpenAIImageGenerator`は初回`generate()`時にclientを遅延キャッシュ
+  するため、`apply()`実行後は到達可能object graphが変化する）。Production Code
+  の変更は伴わず、本Releaseの検証範囲（`from_env()`直後・`apply()`未実行）にも
+  影響しない。`apply()`実行後の状態はDI-4（Runtime Wiring）で改めて評価する
+
+### Tested
+
+- `tests/test_e2e_v6_18_0_article_featured_media_composition_root_foundation.py`：
+  実測1196行・17 prefix（API-／IMM-／GATE-／ON-／ERRCFG-／SEQ-／AVAIL-／
+  NONE-／INV-／MIME-／SEC-／IMPORT-／DEP-／RUNTIME-／COMPAT-／ENV-／
+  READINESS-）・128シナリオ・128ケース・146アサーション・146/146 PASS
+  （終了コード0、警告0、skip 0、Tracebackなし）。`clean subprocess`による
+  openai未import決定的検証、test本体プロセス内での`socket.getaddrinfo` /
+  `socket.socket.connect`のin-process遮断検証を含む
+- focused v6.11.0 regression（ファイル無改修）：248/248 PASS（終了コード0）。
+  `output_mime_type`追加が既存Contractを一切破壊していないことを確認
+- Formal Regression（累積Regression Inventory方式、既存20ファイル＋新規
+  v6.18.0 E2E、計21ファイルを個別実行。`tests/`配下の全E2E（実測70ファイル）の
+  無差別実行はしていない）：
+  - 既存20ファイル（`docs/CHANGELOG.md` v6.17.0 Testedセクション記載の正式対象、
+    v1.11.0・v5.9.0・v6.0.0〜v6.17.0）：2644/2644 PASS（Release 6.17 baseline
+    完全維持、新規差分なし）
+  - 新規v6.18.0 E2E：146/146 PASS
+  - 総合：2790/2790 PASS。全21ファイル終了コード0、Warning 0、Traceback 0、
+    外部API実接続0、Git状態不変、重複実行なし
+  - 総実行時間17秒
+- Architecture Review 1：「Changes Required」（Blocking 0件・Major 2件：
+  Security Contractの事実誤認・Test Strategy内部矛盾、Minor 3件、Suggestion
+  4件、いずれもArchitecture Amendment 1で解消）
+- Architecture Amendment 1：「Completed」（F-1〜F-9すべて対応）
+- Architecture Review 2：「Approved with Suggestions」（Blocking 0件・Major
+  0件、Minor 2件（実装前修正必須ではないと判定）・Suggestion 4件）
+- Architecture Amendment 2：「Not Required」
+- Code Review：「Approved with Suggestions」（Blocking 0件・Major 0件、Minor
+  3件：変更ファイル件数の誤記・Gate OFF env非読取り検証手段（`os.getenv`のみ
+  trackingし`os.environ.get`経路は直接観測しない）の限定・INV-2 edge case
+  （apply属性存在かつ非callable）未カバー、Suggestion 2件：subprocess env
+  明示化・test改善候補3点、いずれもFormal Regression前必須ではなく
+  Documentation Integrationまで延期可能と判定）
+- Formal Regression：「Passed」（正式Inventory21ファイル、2790/2790 PASS、
+  FAIL 0、Warning 0、skip 0、外部接続0、Git状態不変）
+- Documentation Integration：Completed（`docs/ROADMAP.md` /
+  `docs/architecture.md` / 本Entry / 正式設計書へ反映済み。Deferred Item
+  DI-10をDI-9へ繰り上げ、§5 N-13のcross-reference誤り「19章参照」を
+  「17章参照」へ訂正、変更ファイル件数「4件」を「5件（正式設計書自身を含む）」
+  へ訂正、S-11の限定範囲・Python executable選定理由を明記）
+- Release Review：「Approved with Suggestions」（Blocking 0件・Major 0件、
+  Minor 1件：設計書§17.2「S-11の限定範囲」の過大な一般化（RRF-1、上記
+  Security／Dependency参照）、Suggestion 1件：Status行の列揃え（RRF-2）、
+  いずれも本工程で解消。Release Review 2：Not Required）
+
+### Scope
+
+- Consumer-less Foundation・既存production code無改修（v6.11.0への
+  追加を除く）・既存test無改修・main.py非配線・実HTTP通信なし・実課金なし・
+  外部API実接続0・Runtime Zero Diff維持
+- Out of Scope：Runtime Wiring・`apply()`実行・prompt／filenameの実生成・
+  Fallback Policy・retry・idempotency・cleanup・publish全体の
+  Composition Root化
+
+---
+
 ## [v6.17.0] - 2026-07-21 ★ Article Image Prompt Construction Foundation
 
 > **本Entryの時点でのRelease状態**：Architecture Design Completed／Architecture Review 1

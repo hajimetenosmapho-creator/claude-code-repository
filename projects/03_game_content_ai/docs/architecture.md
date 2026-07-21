@@ -4126,3 +4126,81 @@ ArticleFeaturedMediaOrchestrator.apply(article, prompt, filename)
 
 詳細は`docs/design/article_image_prompt_construction_foundation.md`
 （Architecture Design・Architecture Review 1・Architecture Amendment・Architecture Review 2・Production Implementation・Code Review・Formal Regressionの経緯を含む）を参照。
+
+## Article Featured Media Composition Root Foundation層（`src/article_featured_media_composition/`、v6.18.0 実装完了）
+
+> **本節は実装完了時点の記録である。新規E2E（17 prefix・128シナリオ・128ケース・146アサーション・146/146 PASS）・累積Regression Inventory（既存20ファイル＋新規v6.18.0 E2E 1ファイル＝累積21ファイル、既存20ファイル分2644/2644 PASS、新規E2E込み合計2790/2790 PASS）とも完全PASSし、Architecture Review 1（「Changes Required」、Blocking 0・Major 2・Minor 3・Suggestion 4、いずれもArchitecture Amendment 1で解消）・Architecture Review 2（「Approved with Suggestions」、Blocking 0・Major 0・Minor 2・Suggestion 4）・Code Review（「Approved with Suggestions」、Blocking 0・Major 0・Minor 3・Suggestion 2、いずれもFormal Regression前必須ではなくDocumentation Integrationまで延期可能と判定）・Formal Regression（Passed）・Release Review（「Approved with Suggestions」、Blocking 0件・Major 0件、Minor 1件：§17.2「S-11の限定範囲」の過大な一般化をRelease Review反映工程で訂正、Suggestion 1件：Status行の列揃え、Release Review 2：Not Required）を経て、Release 6.18として完了した。**
+
+### Purpose
+
+Release 6.9.0〜6.17.0で整備された画像系9つのConsumer-less Foundationは、相互に組み立てる層をRepository内に持たなかった。`ArticleFeaturedMediaOrchestrator`（v6.14.0）は`image_generator`・`media_uploader`をConstructor Injectionで受け取る設計だが、その2つを実際に構築して注入する箇所がどこにもなかった。本層は、`RetryCompositionRoot`（v5.1.0）と対をなす、Publish系で初めてのComposition Root `ArticleFeaturedMediaCompositionRoot`を新設し、この不足を埋める。ただしPublish全体ではなく、Article Featured Media画像処理に限定したComposition Rootである（Publish全体版は`Publish Composition Root Foundation`として別途未着手のまま残る）。
+
+### Package Boundary
+
+`src/article_featured_media_composition/`は、configuration評価・credential解決・adapter構築・adapter間の接続・orchestrator構築・利用可能状態の公開の6点にのみ責務を限定する。画像workflowの実行（`apply()`の呼び出し）・promptの実生成・filenameの実生成・失敗時の継続／中止判断（Fallback Policy）・Runtimeへの配線はいずれも対象外である。`main.py` / `image_resolver.py` / `OutputManager` / Pipeline / Agent / Scheduler / Retry Runtime / `scripts`関連の既存コードのいずれからも参照されない（Consumer-less Foundation継続）。`generated_image_filename_policy`（v6.16.0）・`article_image_prompt_construction`（v6.17.0）は、構築すべき状態を持たない module-level pure function であるため、本層からは一切importしない（Runtime Wiring側が直接importする設計）。
+
+### Public API
+
+```python
+@dataclass(frozen=True)
+class ArticleFeaturedMediaCompositionRoot:
+    orchestrator: ArticleFeaturedMediaOrchestrator | None = field(repr=False)
+    image_mime_type: str | None
+
+    @classmethod
+    def from_env(cls) -> "ArticleFeaturedMediaCompositionRoot": ...
+
+    def is_available(self) -> bool: ...
+```
+
+`__all__`は`ArticleFeaturedMediaCompositionRoot`のみ。新規Protocol・新規例外型は定義しない。`orchestrator` fieldへ`field(repr=False)`を付与し、`repr(root)` / `str(root)`から除外する（Security／State Contract参照）。
+
+### Gate／Availability Contract
+
+Gate（`AI_IMAGE_GENERATION_ENABLED`、`ImageGenerationConfig`、v6.15.0）がOFFの場合、`from_env()`は以降の環境変数を一切読まず、credentialを要求せず、adapterを構築せず、`orchestrator=None, image_mime_type=None`という正常な無効状態を返す（例外を送出しない）。Gate ON時にcredential不足・値不正がある場合は、既存factory（`OpenAIImageGenerator.from_env()` / `WordPressMediaUploader.from_env()`）が送出する`ValueError`を無変換で伝播するFail Fastとし、Composition Root自身は`try`/`except`を一切持たない（AST検証で`ExceptHandler`件数0を確認）。`is_available()`は`orchestrator is not None`のみを返す、例外・副作用のないmethodである。`__post_init__`が3種の不変条件（`orchestrator`と`image_mime_type`の整合性・`orchestrator.apply`のcallable性・`image_mime_type`の非空str）を4種の固定messageで検証する。Null Objectは採用せず、Fallback Policy（`Image Generation Fallback Policy`、未着手）の判断を本層へ先取りしない。
+
+### Dependency Graph
+
+```text
+ImageGenerationConfig.from_env()（v6.15.0）
+  → Gate判定
+  → OpenAIImageGenerator.from_env()（v6.11.0）
+  → output_mime_type（read-only property、新設）
+  → WordPressMediaUploader.from_env()（v6.9.0）
+  → GeneratedImageWordPressMediaUploader（v6.12.0）
+  → ArticleFeaturedMediaOrchestrator（v6.14.0）
+  → ArticleFeaturedMediaCompositionRoot
+```
+
+`OpenAIImageGenerator`を`WordPressMediaUploader`より先に構築する（実行時データフロー順との一致、`output_mime_type`が前者に依存するため）。`bind_featured_media`（v6.13.0）は`ArticleFeaturedMediaOrchestrator`が内部で直接importするため、本層は参照も注入もしない。
+
+### MIME Information Contract
+
+`OpenAIImageGenerator`（v6.11.0）へread-only property `output_mime_type`を追加した（既存9行の純追加diff、既存attribute・method・signature・挙動は無変更）。既存の`_MIME_TYPE_BY_OUTPUT_FORMAT`をSingle Source of Truthとしてそのまま参照し、`return _MIME_TYPE_BY_OUTPUT_FORMAT[self._output_format]`のみを実装する。png／jpeg／webpの3形式に対応する。Composition Root module内にMIME文字列リテラルを一切記述せず、`generate()`が返す`GeneratedImage.mime_type`と同一SSOTから導出されるため常に一致する。`generated_image_filename_policy`（v6.16.0）へ複製されたallowlistは持たない（v6.11.0の出力format集合がv6.16.0の許可MIME集合の真部分集合であるため、`from_env()`経由のvalueは常に`generate_image_filename()`と互換）。
+
+### Security／State Contract
+
+Composition Root自身はAPI key・password・token・environment snapshot・image bytesをfieldとして保持しない。`orchestrator` field経由でsecret-bearing dependency（`OpenAIImageGenerator._api_key` / `WordPressMediaUploader.app_password`）を間接的に保持するが、`field(repr=False)`により`repr(root)` / `str(root)`からは構造的に除外される（内部dependencyが将来`__repr__`を独自定義しても影響しない）。ただし`dataclasses.asdict(root)`は`field(repr=False)`の対象外であり、secret-safeなserializationまたはlogging手段ではない（呼び出し側が`asdict(root)`を安全な用途へ使うことをContractとして保証しない）。本層自体はimport時にenvironmentを読まず、module importだけでは`openai`をimportせず、`constructor` / `from_env()`だけでは外部API・DNS・socket接続を一切発生させない。log出力（`print` / `logging`）も行わない。
+
+### Integration Boundary
+
+Runtime Wiring（`main.py` / `image_resolver.py`等への接続）は本層の対象外である。将来のRuntime Wiringにおける利用イメージは次のとおり想定するが、本Releaseでは実装しない。
+
+```python
+root = ArticleFeaturedMediaCompositionRoot.from_env()   # 起動時に1回
+if root.is_available():
+    prompt   = construct_article_image_prompt(article.seo_title, article.excerpt)  # v6.17.0
+    filename = generate_image_filename(article.seo_title, root.image_mime_type)    # v6.16.0
+    article  = root.orchestrator.apply(article, prompt, filename)                  # v6.14.0
+```
+
+### Test Review・Code Review・Regressionの実績
+
+新規E2E（`tests/test_e2e_v6_18_0_article_featured_media_composition_root_foundation.py`）は実測1196行、17 prefix（API-／IMM-／GATE-／ON-／ERRCFG-／SEQ-／AVAIL-／NONE-／INV-／MIME-／SEC-／IMPORT-／DEP-／RUNTIME-／COMPAT-／ENV-／READINESS-）・128シナリオ・128ケース・146アサーション・146/146 PASS（終了コード0、警告0、skip 0）。`clean subprocess`によるopenai未import決定的検証と、test本体プロセス内での`socket.getaddrinfo` / `socket.socket.connect`のin-process遮断検証を含む。累積Regression Inventory（既存20ファイル：`test_e2e_v1_11_0_save_result.py`・`test_e2e_v5_9_0_*.py`・`test_e2e_v6_0_0_*.py`〜`test_e2e_v6_17_0_*.py`、2644/2644 PASS）とあわせた新規E2E込みの合計は2790/2790 PASS。正式Regression Inventoryは`tests/test_e2e_*.py`全件（実在70ファイル）の無差別実行ではなく、既存Release precedentに基づく21ファイルである。Architecture Review 1は「Changes Required」（Blocking 0・Major 2：Security Contractの事実誤認・Test Strategy内部矛盾、Minor 3・Suggestion 4、いずれもArchitecture Amendment 1で解消）。Architecture Review 2は「Approved with Suggestions」（Blocking 0・Major 0、Minor 2・Suggestion 4）。Code Reviewは「Approved with Suggestions」（Blocking 0・Major 0、Minor 3件：変更ファイル件数の誤記・Gate OFF env非読取り検証手段の限定・INV-2 edge case未カバー、Suggestion 2件：subprocess env明示化・test改善候補、いずれもFormal Regression前必須ではないと判定）。Formal Regressionは正式Inventory21ファイルを個別実行し、既存20ファイル2644/2644 PASS（baseline完全維持）＋新規146/146 PASS＝総合2790/2790 PASSで「Passed」と判定した（総実行時間17秒、外部API実接続0件、Git状態不変）。Release Reviewは「Approved with Suggestions」（Blocking 0件・Major 0件、Minor 1件・Suggestion 1件、Release Review 2：Not Required）と判定し、Release 6.18として完了した。
+
+### Out of Scope／Future Extension
+
+`main.py` / `image_resolver.py`変更、Runtime Wiring、`apply()`の実行、prompt／filenameの実生成、Fallback Policy、retry、idempotency、cleanup、publish全体のComposition Root化は、いずれも本Releaseの対象外である（詳細は`docs/design/article_featured_media_composition_root_foundation.md` 5章）。Future Extension候補（Article Featured Media Runtime Wiring・Publish Composition Root Foundation・Image Generation Fallback Policy・Media Upload Retry／Idempotency Foundation・WordPress Unused Media Cleanup Foundation）の順序・Release分割方針は確定事項として固定しない。詳細は`docs/ROADMAP.md`。
+
+詳細は`docs/design/article_featured_media_composition_root_foundation.md`
+（Architecture Design・Architecture Review 1・Architecture Amendment 1・Architecture Review 2・Production Implementation・Code Review・Formal Regression・Documentation Integration・Release Reviewの経緯を含む）を参照。

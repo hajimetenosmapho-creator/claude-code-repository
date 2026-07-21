@@ -254,6 +254,15 @@ class OpenAIImageGenerator:
 
         return cls(api_key=api_key, **kwargs)
 
+    @property
+    def output_mime_type(self) -> str:
+        """このgeneratorが生成する予定の画像のcanonical MIME type。
+
+        generate() の戻り値 GeneratedImage.mime_type と同一の写像
+        （_MIME_TYPE_BY_OUTPUT_FORMAT）から導出されるため、両者は常に一致する。
+        """
+        return _MIME_TYPE_BY_OUTPUT_FORMAT[self._output_format]
+
     def _get_client(self) -> "openai.OpenAI":
         if self._client is None:
             import openai
