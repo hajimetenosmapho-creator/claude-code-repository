@@ -4204,3 +4204,91 @@ if root.is_available():
 
 詳細は`docs/design/article_featured_media_composition_root_foundation.md`
 （Architecture Design・Architecture Review 1・Architecture Amendment 1・Architecture Review 2・Production Implementation・Code Review・Formal Regression・Documentation Integration・Release Reviewの経緯を含む）を参照。
+
+---
+
+## Image Generation Fallback Policy Foundation層（`src/image_generation_fallback_policy/`、v6.19.0）
+
+> **本節はRelease Review完了時点の記録である。新規E2E（standalone script形式、25 prefix：API-／ACTION-／CAT-／MAP-／IMM-／CONT-／UNCLS-／REJECT-／PROP-／WPUP-／REASON-／NOPARSE-／UNK-／DEFENSE-／TYPEERR-／BASE-／PURE-／SEC-／NOEXC-／DEP-／IMPORT-／SOCKET-／RUNTIME-／COMPAT-／ENV-、254アサーション、254/254 PASS、終了コード0、stderr空）・累積Formal Regression（正式Inventory22ファイル：`test_e2e_v1_11_0_save_result.py`・`test_e2e_v5_9_0_*.py`・`test_e2e_v6_0_0_*.py`〜`test_e2e_v6_19_0_*.py`、既存21ファイル2790/2790 PASS＋新規v6.19.0 254/254 PASS＝総合3044/3044 PASS、FAIL 0・SKIP 0・終了コード異常0・既知差分0・外部接続0）とも完全PASSした。Architecture Review 1（「Changes Required」、Blocking 1・Major 3・Minor 3・Suggestion 3）→ Amendment 1 → Architecture Review 2（「Changes Required」、Blocking 0・Major 1・Minor 3・Suggestion 2）→ Amendment 2 → Architecture Review 3（「Changes Required」、Blocking 0・Major 2・Minor 1・Suggestion 1）→ Amendment 3 → Architecture Review 4（「Approved with Suggestions」、Blocking 0・Major 0・Minor 3・Suggestion 2）の4回の反復を経て収束した。Production Code Review（「Approved with Suggestions」、Blocking 0・Major 0・Minor 3・Suggestion 2）で検出されたMinor 3件・Suggestion 1件はProduction Implementation Correctionで解消した。venv Environment Repair（指定venvへ`openai>=2.46.0,<3.0.0`範囲内のversion 2.48.0を導入し、Formal Regression前提を充足）を経てFormal Regressionを完了し、Documentation Integrationを完了した。Release Review（「Approved with Suggestions」、Blocking 0・Major 0・Minor 0・Suggestion 2：S-1 設計書Status欄の指示語「本工程」、S-2 Release Review状態表記の不統一。いずれもRelease Review反映工程で解消）を経て、**Release 6.19として完了した（Release：Completed）。**
+
+### Purpose
+
+`ArticleFeaturedMediaOrchestrator.apply()`（v6.14.0）の実行中に発生した失敗に対し、「featured mediaなしで記事投稿を継続してよいか」「呼び出し側が元の例外を無変換で再送出すべきか」を決定する、provider中立な判断規則を確立する。v6.18.0 `ArticleFeaturedMediaCompositionRoot`が意図的に先取りしなかったFallback Policy（画像なしで記事投稿を継続するか等の業務判断）を埋める、Deferred Item DI-1に対応するFoundationである。Runtimeへの配線（DI-4 Article Featured Media Runtime Wiring）は本層の対象外であり、既存Foundation群と同じくConsumer-lessである。
+
+### Package Boundary
+
+`src/image_generation_fallback_policy/`は、失敗の分類（provider中立なFailure Categoryへの正規化）と、そこから導出されるFallback Actionの表現のみに責務を限定する。例外の捕捉・再送出・wrap・変換、記事ループ全体の停止可否の決定、記事単位のスキップ手段の提供はいずれも対象外である（DI-4の責務）。`main.py` / `image_resolver.py` / `OutputManager` / Pipeline / `ArticleFeaturedMediaOrchestrator` / `ArticleFeaturedMediaCompositionRoot` / `image_generation_config` / `generated_image_filename_policy` / `article_image_prompt_construction` / `ai_image_generation`関連の既存コードのいずれからも参照されない（Consumer-less Foundation）。分類のため`openai_image_generation`（v6.11.0）の`OpenAIImageGenerationError` / `OpenAIImageGenerationErrorReason`、および`wordpress_media`（v6.9.0）の`WordPressMediaUploadError`のみをimportし、`openai` SDKを直接importしない。
+
+### Public API
+
+```python
+class ImageGenerationFallbackAction(Enum):
+    CONTINUE_WITHOUT_FEATURED_MEDIA = "CONTINUE_WITHOUT_FEATURED_MEDIA"
+    PROPAGATE_ORIGINAL_ERROR = "PROPAGATE_ORIGINAL_ERROR"
+
+
+class ImageGenerationFailureCategory(Enum):
+    IMAGE_GENERATION_FAILED = "IMAGE_GENERATION_FAILED"
+    IMAGE_GENERATION_REQUEST_REJECTED = "IMAGE_GENERATION_REQUEST_REJECTED"
+    IMAGE_GENERATION_NOT_AUTHORIZED = "IMAGE_GENERATION_NOT_AUTHORIZED"
+    MEDIA_UPLOAD_FAILED = "MEDIA_UPLOAD_FAILED"
+    UNCLASSIFIED = "UNCLASSIFIED"
+
+
+@dataclass(frozen=True)
+class ImageGenerationFallbackDecision:
+    category: ImageGenerationFailureCategory
+
+    @property
+    def action(self) -> ImageGenerationFallbackAction: ...
+
+
+def decide_image_generation_fallback(error: Exception) -> ImageGenerationFallbackDecision: ...
+```
+
+`__all__`は上記4 symbolのみ。`ImageGenerationFallbackDecision`の保存fieldは`category`1件のみであり、`action`はmodule-levelの分類表`_ACTION_BY_CATEGORY`（素の`dict`）から導出されるread-only propertyである（dataclass fieldではないため`fields()` / `repr` / `asdict` / `astuple`のいずれにも現れない）。新規例外型・新規Protocolは定義しない。`decide_image_generation_fallback()`が送出する唯一の例外は、`error`が`Exception`のinstanceでない場合の固定message`TypeError`である。
+
+### Failure Taxonomy／Category→Action写像
+
+OpenAI reasonの9値は、allow-list方式により4／1／2／2へ分類される。
+
+```text
+TIMEOUT / CONNECTION / RATE_LIMIT / SERVER_ERROR（allow-list、frozenset `_CONTINUABLE_REASONS`）
+    → IMAGE_GENERATION_FAILED           → CONTINUE_WITHOUT_FEATURED_MEDIA
+
+REQUEST_REJECTED
+    → IMAGE_GENERATION_REQUEST_REJECTED → PROPAGATE_ORIGINAL_ERROR
+
+AUTHENTICATION / PERMISSION_DENIED
+    → IMAGE_GENERATION_NOT_AUTHORIZED   → PROPAGATE_ORIGINAL_ERROR
+
+INVALID_RESPONSE / UNKNOWN / 未知reason / reason属性欠落 / ハッシュ不可能なreason値
+    → UNCLASSIFIED                      → PROPAGATE_ORIGINAL_ERROR
+
+WordPressMediaUploadError（全件）
+    → MEDIA_UPLOAD_FAILED                → PROPAGATE_ORIGINAL_ERROR
+
+上記2型以外のすべてのException
+    → UNCLASSIFIED                      → PROPAGATE_ORIGINAL_ERROR
+```
+
+CONTINUE対象は`_CONTINUABLE_REASONS`という**allow-list**（deny-listではない）で管理される4 reasonのみに限定される。v6.11.0が将来reasonを追加した場合、新しい値は自動的に安全側（`UNCLASSIFIED` → `PROPAGATE_ORIGINAL_ERROR`）へ落ちる。`reason`がハッシュ不可能な値（`list` / `dict` / `set`等）であっても、`isinstance(reason, OpenAIImageGenerationErrorReason)`による判定を`_CONTINUABLE_REASONS`へのmembership testより先に行うため、policy自身に起因する予期しない`TypeError`を送出しない（Production Code Review Finding m-1、Correctionで解消）。`ImageGenerationFailureCategory` → `ImageGenerationFallbackAction`の写像は`_ACTION_BY_CATEGORY`（素の`dict`）への直接subscriptで取得し、`.get(default)`による既定値への丸め込みは行わない。
+
+### Security Contract
+
+`decide_image_generation_fallback()`は、受け取った例外オブジェクトへの参照を戻り値へ一切残さない。例外の`message` / `args` / provider応答本文 / HTTPステータスコード / image prompt / credential / generated image bytesのいずれも読み取らず、保持しない。`try` / `except`を1つも持たず、受け取った例外を再送出・wrap・変換しない。`os` / `logging` / `requests` / `socket`をimportせず、module importおよび`decide()`の呼び出しのいずれも外部I/O・DNS・socket接続を発生させない。`ImageGenerationFallbackDecision`の`repr` / `str` / `dataclasses.asdict()` / `dataclasses.astuple()`は、いずれも本package内で定義した固定ラベル文字列（`category`のEnum member）以外を出力しない。
+
+### Runtime Zero Diff
+
+`main.py` / `src/image_resolver.py` / `src/outputs/`（全ファイル） / `src/pipeline/`（全ファイル） / `scripts/`（全ファイル）を個別走査し、いずれも新規packageへ一切参照していないことを確認した。既存`ai_image_generation` / `openai_image_generation` / `wordpress_media` / `generated_image_wordpress_media` / `article_featured_media` / `article_featured_media_orchestration` / `image_generation_config` / `generated_image_filename_policy` / `article_image_prompt_construction` / `article_featured_media_composition`はいずれも無改修・未配線（消費者不在の先行実装）。`requirements.txt` / `.env.example` / `main.py`はいずれも無変更である。
+
+### Test Review・Code Review・Regressionの実績
+
+新規E2E（`tests/test_e2e_v6_19_0_image_generation_fallback_policy_foundation.py`）は25 prefix・254アサーション・254/254 PASS（終了コード0、警告0、skip 0、Tracebackなし）。`clean subprocess`によるopenai未import決定的検証と、test本体プロセス内での`socket.getaddrinfo` / `socket.socket.connect`のin-process遮断検証を含む。累積Regression Inventory（既存21ファイル：`test_e2e_v1_11_0_save_result.py`・`test_e2e_v5_9_0_*.py`・`test_e2e_v6_0_0_*.py`〜`test_e2e_v6_18_0_*.py`、2790/2790 PASS）とあわせた新規E2E込みの合計は3044/3044 PASS。正式Regression Inventoryは`tests/test_e2e_*.py`全件の無差別実行ではなく、既存Release precedentに基づく22ファイルである。Architecture Reviewは1〜3回目「Changes Required」を経て4回目「Approved with Suggestions」（Blocking 0・Major 0、Minor 3・Suggestion 2）。Production Code Reviewは「Approved with Suggestions」（Blocking 0・Major 0、Minor 3件：ハッシュ不可能なreason値でのTypeError・自己参照的assertion・`__init__.py`のAST検証未対象、Suggestion 2件：分類表の型契約検証・件数表記の不整合、いずれもProduction Implementation Correctionで解消）。Formal Regressionは正式Inventory22ファイルを個別実行し、既存21ファイル2790/2790 PASS（baseline完全維持）＋新規254/254 PASS＝総合3044/3044 PASSと確認した（外部API実接続0件、network使用0件、credential使用0件、Git状態不変）。venv Environment Repairにより、Formal Regression実行前に判明した指定venvの`openai`未導入（`requirements.txt`の`openai>=2.46.0,<3.0.0`を満たしていなかった環境不整合、本Releaseの回帰ではない）を、同バージョン範囲内の`openai 2.48.0`導入により解消した。
+
+### Out of Scope／Future Extension
+
+Runtime Wiring、`apply()`の実行、callerによる元例外の無変換再送出の実装、記事ループ全体の停止可否の決定、retry、idempotency、`WordPressMediaUploadError`のreason分類（DI-10）、OpenAI `REQUEST_REJECTED`の細分化（DI-11）、observability／loggingの実装（DI-5）は、いずれも本Release候補の対象外である（詳細は`docs/design/image_generation_fallback_policy_foundation.md` 7章）。DI-10・DI-11はいずれもDI-4 Runtime Wiring着手前の正式な再評価（ORD-1）を必須とし、現契約を受容する場合は未完了のままDI-4へ進める（ORD-2）。CONTINUE対象の拡大を望む場合、または現在の可用性低下（分類不能な失敗の伝播）を受容できない場合に限り、該当DIの完了がDI-4着手の前提となる（ORD-3・ORD-4）。Future Extension候補（Article Featured Media Runtime Wiring・Publish Composition Root Foundation・DI-10・DI-11・Media Upload Retry／Idempotency Foundation・WordPress Unused Media Cleanup Foundation）の順序・Release分割方針は確定事項として固定しない。詳細は`docs/ROADMAP.md`。
+
+詳細は`docs/design/image_generation_fallback_policy_foundation.md`
+（Architecture Design・Architecture Review 1〜4・Architecture Amendment 1〜3・Production Implementation・Production Code Review・Production Implementation Correction・venv Environment Repair・Formal Regression・Documentation Integration・Release Reviewの経緯を含む）を参照。

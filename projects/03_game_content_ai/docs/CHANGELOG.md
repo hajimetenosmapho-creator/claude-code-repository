@@ -361,6 +361,192 @@
 
 ---
 
+## [v6.19.0] - 2026-07-27 ★ Image Generation Fallback Policy Foundation
+
+> **本Entryの時点でのRelease状態**：Architecture Design Completed／Architecture Review 1
+> Changes Required／Architecture Amendment 1 Completed／Architecture Review 2 Changes
+> Required／Architecture Amendment 2 Completed／Architecture Review 3 Changes Required／
+> Architecture Amendment 3 Completed／Architecture Review 4 Approved with Suggestions／
+> Production Implementation Completed／New E2E PASS／Production Code Review Approved
+> with Suggestions／Production Implementation Correction Completed／venv Environment
+> Repair Completed／Formal Regression Completed／Documentation Integration Completed／
+> **Release Review：Approved with Suggestions（Blocking 0件・Major 0件・Minor 0件・
+> Suggestion 2件：S-1 設計書Status欄の指示語「本工程」・S-2 Release Review状態表記の
+> 不統一。いずれもRelease Review反映工程で解消）**。
+> **Release：Completed**。
+
+### Added
+
+- 新規独立package`src/image_generation_fallback_policy/`：`ArticleFeaturedMediaOrchestrator.apply()`
+  （v6.14.0）実行中の失敗に対し、featured mediaなしで記事投稿を継続する
+  （`CONTINUE_WITHOUT_FEATURED_MEDIA`）か、呼び出し側が元の例外を無変換で再送出する
+  （`PROPAGATE_ORIGINAL_ERROR`）かを決定する、provider中立・consumer-lessのpolicy
+  Foundation（Deferred Item DI-1）
+  - `src/image_generation_fallback_policy/__init__.py`：package rootから
+    Public API 4 symbolのみを公開
+  - `src/image_generation_fallback_policy/image_generation_fallback_policy.py`：
+    `ImageGenerationFailureCategory`（Enum、5値）・`ImageGenerationFallbackAction`
+    （Enum、2値）・`ImageGenerationFallbackDecision`（`@dataclass(frozen=True)`）・
+    `decide_image_generation_fallback()`
+- `tests/test_e2e_v6_19_0_image_generation_fallback_policy_foundation.py`
+  新規作成（25 Scenario prefix、254アサーション、254/254 PASS）
+- `docs/design/image_generation_fallback_policy_foundation.md`新規作成：
+  Repository Survey・Architecture Design・Architecture Review 1〜4・Architecture
+  Amendment 1〜3・Production Implementation・Production Code Review・Production
+  Implementation Correction・venv Environment Repair・Formal Regression・
+  Documentation Integrationの経緯を含む
+
+### Changed
+
+- 既存Production Codeの変更なし。`main.py`変更なし。`requirements.txt`変更なし
+  （新規dependency追加なし。既存宣言`openai>=2.46.0,<3.0.0`のまま）
+
+### Public API
+
+- `ImageGenerationFailureCategory`（Enum）：`IMAGE_GENERATION_FAILED` /
+  `IMAGE_GENERATION_REQUEST_REJECTED` / `IMAGE_GENERATION_NOT_AUTHORIZED` /
+  `MEDIA_UPLOAD_FAILED` / `UNCLASSIFIED`の5値
+- `ImageGenerationFallbackAction`（Enum）：`CONTINUE_WITHOUT_FEATURED_MEDIA` /
+  `PROPAGATE_ORIGINAL_ERROR`の2値
+- `ImageGenerationFallbackDecision(category)`（`@dataclass(frozen=True)`。
+  保存fieldは`category`1件のみ。`action`はcategoryから導出されるread-only
+  derived property）
+- `decide_image_generation_fallback(error: Exception) ->
+  ImageGenerationFallbackDecision`（module-level function、引数1件）
+
+### Contract概要
+
+- OpenAI reason 9値を4／1／2／2へ分類：`TIMEOUT` / `CONNECTION` / `RATE_LIMIT` /
+  `SERVER_ERROR`（`frozenset`のallow-list）→`IMAGE_GENERATION_FAILED`→
+  `CONTINUE_WITHOUT_FEATURED_MEDIA`。`REQUEST_REJECTED`→
+  `IMAGE_GENERATION_REQUEST_REJECTED`→`PROPAGATE_ORIGINAL_ERROR`。
+  `AUTHENTICATION` / `PERMISSION_DENIED`→`IMAGE_GENERATION_NOT_AUTHORIZED`→
+  `PROPAGATE_ORIGINAL_ERROR`。`INVALID_RESPONSE` / `UNKNOWN`→`UNCLASSIFIED`→
+  `PROPAGATE_ORIGINAL_ERROR`
+- `WordPressMediaUploadError`（全件）→`MEDIA_UPLOAD_FAILED`→
+  `PROPAGATE_ORIGINAL_ERROR`（message解析は行わない）
+- 未知reason・reason属性欠落・ハッシュ不可能なreason値（`list` / `dict` /
+  `set`等）・上記2型以外の全Exception→`UNCLASSIFIED`→
+  `PROPAGATE_ORIGINAL_ERROR`（安全側default）
+- allow-list方式のため、v6.11.0が将来reasonを追加しても新しい値は自動的に
+  安全側へ落ちる（deny-list不採用）
+- `_ACTION_BY_CATEGORY`（素の`dict`）への直接subscriptで`action`を導出し、
+  `.get(default)`による丸め込みは行わない
+- `try`/`except`を1つも持たず、受け取った例外を再送出・wrap・変換しない。
+  送出する唯一の例外は、入力が`Exception`のinstanceでない場合の固定message
+  `TypeError`
+
+### Runtime Zero Diff
+
+- `main.py` / `src/image_resolver.py` / `src/outputs/`（全ファイル） /
+  `src/pipeline/`（全ファイル） / `scripts/`（全ファイル）を個別走査し、
+  いずれも新規packageへ一切参照していないことを確認
+- 既存`ai_image_generation` / `openai_image_generation` / `wordpress_media` /
+  `generated_image_wordpress_media` / `article_featured_media` /
+  `article_featured_media_orchestration` / `image_generation_config` /
+  `generated_image_filename_policy` / `article_image_prompt_construction` /
+  `article_featured_media_composition`はいずれも無改修・未配線
+  （消費者不在の先行実装）
+
+### Security／Dependency
+
+- raw exception・例外message・args・prompt・credential・provider応答本文・
+  image bytesのいずれも保持しない
+- 分類のため`openai_image_generation`の`OpenAIImageGenerationError` /
+  `OpenAIImageGenerationErrorReason`、`wordpress_media`の
+  `WordPressMediaUploadError`のみをimportし、`openai` SDKを直接importしない
+- `os` / `logging` / `requests` / `socket`をimportせず、module import・
+  `decide()`呼び出しのいずれも外部I/O・DNS・socket接続を発生させない
+- `ImageGenerationFallbackDecision`の`repr` / `str` / `dataclasses.asdict()` /
+  `dataclasses.astuple()`は、本package内で定義した固定ラベル文字列以外を
+  出力しない
+
+### Tested
+
+- `tests/test_e2e_v6_19_0_image_generation_fallback_policy_foundation.py`：
+  25 Scenario prefix（API-／ACTION-／CAT-／MAP-／IMM-／CONT-／UNCLS-／
+  REJECT-／PROP-／WPUP-／REASON-／NOPARSE-／UNK-／DEFENSE-／TYPEERR-／
+  BASE-／PURE-／SEC-／NOEXC-／DEP-／IMPORT-／SOCKET-／RUNTIME-／
+  COMPAT-／ENV-）・254アサーション・254/254 PASS（終了コード0、警告0、
+  skip 0、Tracebackなし）。`clean subprocess`によるopenai未import決定的検証、
+  test本体プロセス内での`socket.getaddrinfo` / `socket.socket.connect`の
+  in-process遮断検証を含む
+- Formal Regression（累積Regression Inventory方式、既存21ファイル＋新規
+  v6.19.0 E2E、計22ファイルを個別実行。`tests/`配下の全E2Eの無差別実行は
+  していない）：
+  - 既存21ファイル（`docs/CHANGELOG.md` v6.18.0 Testedセクション記載の正式対象、
+    v1.11.0・v5.9.0・v6.0.0〜v6.18.0）：2790/2790 PASS（Release 6.18 baseline
+    完全維持、新規差分なし）
+  - 新規v6.19.0 E2E：254/254 PASS
+  - 総合：3044/3044 PASS。全22ファイル終了コード0、FAIL 0、SKIP 0、
+    既知差分0、外部API実接続0、Git状態不変
+- Architecture Review 1：「Changes Required」（Blocking 1件・Major 3件、
+  Minor 3件・Suggestion 3件、いずれもArchitecture Amendment 1で解消）
+- Architecture Amendment 1：「Completed」（B-1・M-1・M-2・M-3・m-1〜m-3・
+  S-1〜S-3すべてに対応）
+- Architecture Review 2：「Changes Required」（Blocking 0件・Major 1件、
+  Minor 3件・Suggestion 2件、いずれもArchitecture Amendment 2で解消）
+- Architecture Amendment 2：「Completed」（M2-1・m-A〜m-C・S2-A・S2-Bすべてに
+  対応）
+- Architecture Review 3：「Changes Required」（Blocking 0件・Major 2件、
+  Minor 1件・Suggestion 1件、いずれもArchitecture Amendment 3で解消）
+- Architecture Amendment 3：「Completed」（M3-1・M3-2・m3-A・S3-Aすべてに
+  対応）
+- Architecture Review 4：「Approved with Suggestions」（Blocking 0件・Major
+  0件、Minor 3件は本Review工程内で限定修正により解消済み、Suggestion 2件）
+- Production Implementation：「Completed」
+- Production Code Review：「Approved with Suggestions」（Blocking 0件・Major
+  0件、Minor 3件：m-1「ハッシュ不可能なreason値でTypeErrorが送出される」・
+  m-2「`REASON-SPLIT`が自己参照的assertionだった」・m-3「`__init__.py`が
+  禁止import AST検証の対象外だった」、Suggestion 2件：s-1「分類表の型契約
+  検証がない」・s-2「件数表記の不整合」）
+- Production Implementation Correction：「Completed」（m-1〜m-3・s-1の4件を
+  限定修正。Architecture・Public API・Category→Action写像・allow-list
+  4 reasonはいずれも無変更。修正後の新規E2Eは254/254 PASS）
+- venv Environment Repair：「Completed」（指定venvに`openai`が未導入で
+  Formal Regressionが1件目のv6.11.0 E2Eで停止していた環境不整合を検出。
+  `requirements.txt`の`openai>=2.46.0,<3.0.0`範囲内の`openai 2.48.0`を
+  導入して解消。Repositoryファイルへの影響なし）
+- Formal Regression：「Completed」（正式Inventory22ファイル、3044/3044
+  PASS、FAIL 0、SKIP 0、終了コード異常0、既知差分0、network使用0、
+  credential使用0、Git状態不変）
+- Documentation Integration：Completed（`docs/ROADMAP.md` /
+  `docs/architecture.md` / 本Entry / 正式設計書へ反映済み。件数表記を
+  正式値（Scenario prefix 25・AC項目31件・新規E2E 254アサーション・
+  Formal Regression Inventory 22ファイル・総アサーション3044）へ統一。
+  設計書§13.4／§13.5を、Correctionで実装済みのハッシュ不可能なreason値の
+  安全側分類契約を反映するよう明確化）
+- Release Review：「Approved with Suggestions」（Blocking 0件・Major 0件、
+  Minor 0件・Suggestion 2件：S-1「設計書Status欄の指示語『本工程』が工程を
+  一意に指さない」・S-2「Release Review状態表記が文書間でPending／Not
+  Startedと不統一」、いずれもRelease Review反映工程で限定修正により解消。
+  Public API・Failure Taxonomy・Error Contract・Security・Runtime Zero
+  Diffのいずれにも問題なし。Architectureからの逸脱なし）
+
+### Environment Note
+
+- Formal Regression実施前に、指定venv（`projects/03_game_content_ai/venv/`）へ
+  `openai`パッケージが未導入であることを検出した（`requirements.txt`は
+  `openai>=2.46.0,<3.0.0`を正しく宣言していたが、venv構築時にインストール
+  されていなかったローカル環境固有の不整合）
+- `openai>=2.46.0,<3.0.0`の範囲内で`openai 2.48.0`を導入し解消した。
+  `requirements.txt`・Production Code・testsへの変更は伴わない
+- 本事象はRelease 6.19.0のProduction Codeまたはtestが原因の回帰ではなく、
+  ローカルvenvの構築状態に起因する一過性の環境問題であり、解消済みである。
+  恒久的なKnown Issueとしては登録しない
+
+### Scope
+
+- Consumer-less Foundation・既存production code無改修・既存test無改修・
+  main.py非配線・実HTTP通信なし・実課金なし・外部API実接続0・Runtime Zero
+  Diff維持
+- Out of Scope：Runtime Wiring（DI-4）・`apply()`実行・callerによる元例外の
+  再送出の実装・記事ループ制御・retry・idempotency・
+  `WordPressMediaUploadError`のreason分類（DI-10）・OpenAI
+  `REQUEST_REJECTED`の細分化（DI-11）・observability／loggingの実装（DI-5）
+
+---
+
 ## [v6.18.0] - 2026-07-21 ★ Article Featured Media Composition Root Foundation
 
 > **本Entryの時点でのRelease状態**：Architecture Design Completed／Architecture Review 1

@@ -957,8 +957,11 @@
   「filenameの構築方法」、v6.17.0 Article Image Prompt Construction Foundationにより
   「promptの構築方法」、v6.18.0 Article Featured Media Composition Root Foundationにより
   「dependency構築・接続」という前提がそれぞれ追加で充足された（v6.14.0〜v6.18.0は
-  いずれもRelease Review Approved済み）。ただし画像生成のFallback Policy（Image Generation Fallback
-  Policy、次候補）は依然未着手であり、本Wiringへ直行できる状態には至っていない）：
+  いずれもRelease Review Approved済み）。**画像生成のFallback Policy（Image Generation
+  Fallback Policy、v6.19.0）はRelease Review（Approved with Suggestions）まで完了し、
+  Release 6.19として完了した**。ただしORD-1（DI-4着手前の正式な再評価）は本Wiring
+  着手前に必須のまま残っており、DI-10／DI-11の扱い（ORD-2〜ORD-4）を含めてあらためて
+  再評価したうえで着手を判断する）：
   v6.14.0の`ArticleFeaturedMediaOrchestrator.apply()`を、v6.18.0の
   `ArticleFeaturedMediaCompositionRoot`経由で実際に`main.py` / `image_resolver.py`等の
   Production Runtimeへ接続する後続Wiring。一括のReleaseとするか複数Releaseへ分割するか、
@@ -972,9 +975,57 @@
   LogManager／AnalyticsManager／OutputManager／PublishingConfig／SnsConfig等）を
   対象とする本命の`Publish Composition Root Foundation`は本Release完了後も引き続き
   未着手である。Article Featured Media Runtime Wiringの前提として検討されうる
-- [ ] **Image Generation Fallback Policy**（次候補）：画像生成・Upload失敗時に記事投稿を継続するか
-  中止するかの業務判断を確立するFoundation。v6.18.0の`None`＋`is_available()`採用は、
-  本Foundation未着手のままFallback判断を先取りしないための意図的な設計判断である
+- [x] **Image Generation Fallback Policy**（v6.19.0）：
+  `ArticleFeaturedMediaOrchestrator.apply()`実行中の失敗に対し、
+  featured mediaなしで記事投稿を継続する（`CONTINUE_WITHOUT_FEATURED_MEDIA`）か、
+  呼び出し側が元の例外を無変換で再送出する（`PROPAGATE_ORIGINAL_ERROR`）かを決定する、
+  provider中立・consumer-lessのpolicy Foundation。v6.18.0の`None`＋`is_available()`採用が
+  先取りしなかったFallback判断を、Runtimeへ配線せずに確立する。新規独立package
+  `src/image_generation_fallback_policy/`（`__init__.py`・
+  `image_generation_fallback_policy.py`）。Public APIは`ImageGenerationFailureCategory`
+  （5値：`IMAGE_GENERATION_FAILED`／`IMAGE_GENERATION_REQUEST_REJECTED`／
+  `IMAGE_GENERATION_NOT_AUTHORIZED`／`MEDIA_UPLOAD_FAILED`／`UNCLASSIFIED`）・
+  `ImageGenerationFallbackAction`（2値：`CONTINUE_WITHOUT_FEATURED_MEDIA`／
+  `PROPAGATE_ORIGINAL_ERROR`）・`ImageGenerationFallbackDecision`（`@dataclass(frozen=True)`、
+  保存fieldは`category`1件のみ、`action`はcategoryから導出されるread-only derived
+  property）・`decide_image_generation_fallback(error: Exception) ->
+  ImageGenerationFallbackDecision`の4 symbol。OpenAI reasonの`TIMEOUT`／`CONNECTION`／
+  `RATE_LIMIT`／`SERVER_ERROR`の4値のみを`frozenset`のallow-listで`CONTINUE`対象とし、
+  それ以外（`REQUEST_REJECTED`・`AUTHENTICATION`／`PERMISSION_DENIED`・
+  `INVALID_RESPONSE`／`UNKNOWN`・`WordPressMediaUploadError`・未知reason・未知Exception）は
+  すべて安全側の`PROPAGATE_ORIGINAL_ERROR`とする。allow-list方式のため、v6.11が将来reasonを
+  追加しても新しい値は自動的に安全側へ落ちる。raw exception・message・prompt・credential・
+  provider応答本文・image bytesはいずれも保持しない。`try`/`except`を持たず、受け取った
+  例外を再送出・wrap・変換しない。既存Production Code（`main.py`／orchestrator／
+  composition root／OpenAI adapter／WordPress uploader）はいずれも無改修・未参照の
+  Consumer-lessであり、Runtime Zero Diffを維持する。Architecture Design〜Architecture
+  Review 4（4回の反復、Blocking 0・Major 0・Minor 3・Suggestion 2で収束、
+  Approved with Suggestions）・Production Implementation・Production Code Review
+  （Approved with Suggestions）・Production Implementation Correction（Minor 3件・
+  Suggestion 1件を限定修正）・Formal Regression（正式Inventory22ファイル、
+  3044/3044 PASS、既存21ファイルbaseline 2790/2790完全維持＋新規v6.19 254/254 PASS）・
+  Documentation Integrationを完了し、Release Review（Approved with Suggestions、
+  Blocking 0件・Major 0件、Minor 0件・Suggestion 2件：S-1 設計書Status欄の指示語
+  「本工程」の限定修正、S-2 Release Review状態表記（Pending／Not Started）の
+  「Approved with Suggestions」への統一。いずれもRelease Review反映工程で解消）を
+  経て、Release 6.19として完了した
+  （`docs/design/image_generation_fallback_policy_foundation.md`）。
+  Deferred：`WordPressMediaUploadError`のreason分類はDI-10、OpenAI
+  `REQUEST_REJECTED`の細分化（Content Policy拒否とmodel不存在の分離）はDI-11として
+  独立させ、いずれもDI-4 Runtime Wiring着手前の正式な再評価（ORD-1）を必須とした
+  （ORD-2〜ORD-4：現契約を受容するならDI-10／DI-11未完了でも着手可、CONTINUE対象の
+  拡大または現在の可用性低下の不受容時に限り完了が前提となる）
+- [ ] **WordPress Media Upload Failure Reason Classification（DI-10）**（次候補・未着手）：
+  `WordPressMediaUploadError`へ、v6.11.0 `OpenAIImageGenerationErrorReason`と同型の
+  分類Enum（型・HTTPステータスのみに基づき、message解析を行わない）を純追加する。
+  v6.9.0のPublic API変更を伴うため独立Releaseを要する。Image Generation Fallback
+  Policy（v6.19.0）のDI-4着手前再評価（ORD-1）の対象
+- [ ] **OpenAI Image Generation Request Rejection Reason Refinement（DI-11）**
+  （次候補・未着手）：v6.11.0 `_classify_api_error()`が単一の`REQUEST_REJECTED`へ
+  集約している複数のProvider例外型を、記事固有の失敗（Content Policy拒否）と
+  全記事へ反復するsystemic failure（model不存在・model提供終了）へ細分化する。
+  v6.11.0のPublic API変更（Enum値追加）を伴うため独立Releaseを要する。Image
+  Generation Fallback Policy（v6.19.0）のDI-4着手前再評価（ORD-1）の対象
 - [ ] **Media Upload Retry／Idempotency Foundation**（次候補）：Retry Queueのmedia_id保持field
   拡張、重複Upload防止、idempotency keyの確立。既存`RetryQueueItem`にmedia_id相当のfieldが
   存在しないことを踏まえ独立検討する
