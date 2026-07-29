@@ -4292,3 +4292,88 @@ Runtime Wiring、`apply()`の実行、callerによる元例外の無変換再送
 
 詳細は`docs/design/image_generation_fallback_policy_foundation.md`
 （Architecture Design・Architecture Review 1〜4・Architecture Amendment 1〜3・Production Implementation・Production Code Review・Production Implementation Correction・venv Environment Repair・Formal Regression・Documentation Integration・Release Reviewの経緯を含む）を参照。
+
+---
+
+## Article Featured Media Runtime Foundation層（`src/article_featured_media_runtime/`、v6.20.0）
+
+> **本節はRelease Review完了時点の記録である。新規E2E（standalone script形式、23 prefix：API-／STATUS-／RESULT-／ARTICLETYPE-／DISABLED-／APPLIED-／ARGS-／SEQ-／CONT-／PROP-／IDENT-／NOMUT-／TRY-／BASE-／AST-／URL-／NOIMPACT-／SEC-／DEP-／IMPORT-／SOCKET-／RUNTIME-／COMPAT-、197アサーション、197/197 PASS、終了コード0、stderr空）・累積Formal Regression（正式Inventory23ファイル：`test_e2e_v1_11_0_save_result.py`・`test_e2e_v5_9_0_*.py`・`test_e2e_v6_0_0_*.py`〜`test_e2e_v6_20_0_*.py`、既存22ファイル3044/3044 PASS＋新規v6.20.0 197/197 PASS＝総合3241/3241 PASS、FAIL 0・SKIP 0・終了コード異常0・既知差分0・外部接続0）とも完全PASSした。Architecture Review 1（「Changes Required」、Blocking 1・Major 2・Minor 5・Suggestion 3）→ Amendment 1 → Architecture Review 2（「Approved with Suggestions」、Blocking 0・Major 0・Minor 2・Suggestion 1）→ Amendment 2の2回の反復を経て収束した。Production Code Review（「Approved with Suggestions」、Blocking 0・Major 0・Minor 1：A-1契約（非`ArticleData`入力時の`ValueError`）未検証、Suggestion 3件）で検出されたMinor 1件・Suggestion 1件はProduction Implementation Correctionで解消した（`ARTICLETYPE-`・`API-FROM-ENV-GATE-ON-FAILFAST`を追加）。残り2件のSuggestion（`SEC-`の一部が構造的に検証力を持たない・monkeypatchベースのテストに陽性対照がない）は非Blockingとして残存する。Formal Regression・Documentation Integrationを経て、Release Review（「Approved with Suggestions」、Blocking 0・Major 0・Minor 2件：RR-M-1「ROADMAP Entryの`[x]`とRelease未実施表現の一時併存」（v6.17.0のRR-M-1と同型）・RR-M-2「設計書冒頭の画像系Foundation件数誤記（10→11）」、Suggestion 1件：RR-S-A「E2E docstring Scenario一覧が`ARTICLETYPE-`を含まず22件のままだった」、いずれもDocumentation Integration Finalizeで解消）を経て、**Release 6.20として完了した（Release：Completed）。**
+
+### Purpose
+
+Release 6.9.0〜6.19.0で整備された画像系11 Foundationを、`main.py`が唯一参照するFacadeとして単一責務にまとめる。v6.19.0 `decide_image_generation_fallback()`の唯一のconsumerであり、Deferred Item DI-4（Article Featured Media Runtime Wiring）を2 Releaseへ分割した前半（Foundation）に相当する。`main.py`への実接続（後半のRuntime Wiring）はv6.21.0の対象であり、本層は既存Foundation群と同じくConsumer-lessである。
+
+### Package Boundary
+
+`src/article_featured_media_runtime/`は、Gate評価の委譲・prompt構築の呼び出し・filename構築の呼び出し・Orchestrator呼び出し・fallback policy消費の5点のみに責務を限定する。`main.py` / `image_resolver.py` / `outputs` / `pipeline` / `scripts` / `ai` / `scheduler` / `retry_*`関連の既存コードのいずれからも参照されない（Consumer-less Foundation）。依存先は`article_featured_media_composition`（v6.18.0）・`article_image_prompt_construction`（v6.17.0）・`generated_image_filename_policy`（v6.16.0）・`image_generation_fallback_policy`（v6.19.0）・`outputs`（`ArticleData`）の5 packageのみであり、`os` / `logging` / `requests` / `socket`をimportしない。
+
+### Public API
+
+```python
+class ArticleFeaturedMediaRuntimeStatus(Enum):
+    DISABLED = "DISABLED"
+    APPLIED = "APPLIED"
+    CONTINUED_WITHOUT_FEATURED_MEDIA = "CONTINUED_WITHOUT_FEATURED_MEDIA"
+
+
+@dataclass(frozen=True)
+class ArticleFeaturedMediaRuntimeResult:
+    article: ArticleData
+    status: ArticleFeaturedMediaRuntimeStatus
+    category: ImageGenerationFailureCategory | None = None
+
+
+class ArticleFeaturedMediaRuntime:
+    def __init__(self, root) -> None: ...
+
+    @classmethod
+    def from_env(cls) -> "ArticleFeaturedMediaRuntime": ...
+
+    def is_available(self) -> bool: ...
+
+    def apply(self, article: ArticleData) -> ArticleFeaturedMediaRuntimeResult: ...
+```
+
+`__all__`は上記3 symbolのみ。`root`はConstructor Injectionでのみ受け取り、`ArticleFeaturedMediaCompositionRoot`（v6.18.0）を想定するがisinstanceによるnominal型検証は行わない（Duck Typing。v6.12.0 `GeneratedImageWordPressMediaUploader`のprecedentに従う）。`from_env()` / `is_available()`はそれぞれ`ArticleFeaturedMediaCompositionRoot.from_env()` / `root.is_available()`への完全委譲のみであり、Gate評価ロジック・Fail Fast `ValueError`生成ロジックを再実装しない。
+
+### Control Flow／Failure Taxonomy消費
+
+`apply()`は次の固定順序で実行する。
+
+```text
+isinstance(article, ArticleData)検証（Falseなら固定message ValueError）
+    → is_available()（Gate評価、root.is_available()への委譲）
+    → False: Result(article=<引数と同一>, status=DISABLED, category=None) を返す
+    → True:
+        construct_article_image_prompt(article.seo_title, article.excerpt)（v6.17.0、tryの外）
+        generate_image_filename(article.seo_title, root.image_mime_type)（v6.16.0、tryの外）
+        try:
+            root.orchestrator.apply(article, prompt, filename)（v6.14.0、この1呼び出しのみ）
+        except Exception as error:
+            decision = decide_image_generation_fallback(error)（v6.19.0、無改修）
+            PROPAGATE_ORIGINAL_ERROR: raise（bare raise、元例外の同一性を保ったまま再送出）
+            CONTINUE_WITHOUT_FEATURED_MEDIA: Result(article=<引数と同一・未改変>,
+                status=CONTINUED_WITHOUT_FEATURED_MEDIA, category=decision.category) を返す
+        成功時: Result(article=<orchestratorが返した新しいArticleData>, status=APPLIED, category=None) を返す
+```
+
+CONTINUE対象はv6.19.0のallow-list`TIMEOUT` / `CONNECTION` / `RATE_LIMIT` / `SERVER_ERROR`の4 reasonのみであり、本層はこれを拡大・変更しない。`BaseException`は捕捉しない（`except Exception`に限定）。`decide_image_generation_fallback()`の呼び出しは追加の`try`で囲まない（呼び出し側がExceptionのinstanceを渡す限り構造的に例外を送出しないため）。
+
+### Security Contract
+
+`ArticleFeaturedMediaRuntimeResult`は`article` / `status` / `category`の3 fieldのみを保持し、raw exception・例外message・prompt・credential・provider応答本文・生成画像bytesのいずれも保持しない。`os` / `logging` / `requests` / `socket`をimportせず、module importおよび`apply()`の呼び出しのいずれも外部I/O・DNS・socket接続を発生させない（`apply()`内部で呼び出す`root.orchestrator.apply()`が実際にHTTP通信を行うかはComposition Rootの構築内容に依存し、本層自身は通信を行わない）。`openai`のimportを引き起こさない（clean subprocessで決定的に検証）。
+
+### Runtime Zero Diff
+
+`main.py` / `src/image_resolver.py` / `src/outputs/`（全ファイル） / `src/pipeline/`（全ファイル） / `scripts/`（全ファイル）を個別走査し、いずれも新規packageへ一切参照していないことを確認した。既存の画像系Foundation11 package（v6.9.0〜v6.19.0）はいずれも無改修・未配線のまま（`main.py`への実接続はv6.21.0 Runtime Wiringの責務、未着手）。`requirements.txt` / `.env.example` / `main.py`はいずれも無変更である。
+
+### Test Review・Code Review・Regressionの実績
+
+新規E2E（`tests/test_e2e_v6_20_0_article_featured_media_runtime_foundation.py`）は23 prefix・197アサーション・197/197 PASS（終了コード0、警告0、skip 0、Tracebackなし）。Production Implementation Correctionで、Production Code Review Finding Minor-1（A-1契約：非`ArticleData`入力時の`ValueError`が未検証）を解消する`ARTICLETYPE-`シナリオ（9アサーション）と、Suggestion-1（`from_env()`Gate ON時Fail-Fast委譲が未検証）に対応する`API-FROM-ENV-GATE-ON-FAILFAST`（1アサーション）を追加した。累積Regression Inventory（既存22ファイル：`test_e2e_v1_11_0_save_result.py`・`test_e2e_v5_9_0_*.py`・`test_e2e_v6_0_0_*.py`〜`test_e2e_v6_19_0_*.py`、3044/3044 PASS）とあわせた新規E2E込みの合計は3241/3241 PASS。正式Regression Inventoryは`tests/test_e2e_*.py`全件の無差別実行ではなく、既存Release precedentに基づく23ファイルである。Architecture Reviewは1回目「Changes Required」（Blocking 1・Major 2・Minor 5・Suggestion 3）を経て2回目「Approved with Suggestions」（Blocking 0・Major 0、Minor 2・Suggestion 1）で収束。Production Code Reviewは「Approved with Suggestions」（Blocking 0・Major 0、Minor 1件：A-1契約未検証、Suggestion 3件：`from_env()`Gate ON時Fail-Fast未検証・`SEC-`の一部が構造的に検証力を持たない・monkeypatchベースのテストに陽性対照がない）。Formal Regressionは正式Inventory23ファイルを個別実行し、既存22ファイル3044/3044 PASS（baseline完全維持）＋新規197/197 PASS＝総合3241/3241 PASSと確認した（外部API実接続0件、network使用0件、credential使用0件、Git状態不変）。
+
+### Out of Scope／Future Extension
+
+`main.py`への実接続（Runtime Wiring）、既存`image_resolver.py`との併存方針の実装、記事ループ内での呼び出し配線、PROPAGATE時のMarkdown保存の実装、`total_wp_failed`セマンティクス拡張の実装、`tests/test_e2e_v6_13_0_*.py` Architecture Guardの精緻化は、いずれも本Release候補の対象外である（v6.21.0の対象、詳細は`docs/design/article_featured_media_runtime_wiring.md`）。Upload成功後の記事投稿失敗時の整合性・Retry時の重複Upload対策・既存media ID再利用・未使用Media cleanup（DI-6／DI-7）、`WordPressMediaUploadError`のreason分類（DI-10）、OpenAI `REQUEST_REJECTED`の細分化（DI-11）はいずれもDeferredのまま。DI-10／DI-11はDI-4着手前の正式な再評価（ORD-1）を本Releaseで実施済みであり、現契約を受容する場合は未完了のままv6.21.0へ進める（ORD-2）。
+
+詳細は`docs/design/article_featured_media_runtime_wiring.md`
+（Architecture Design・Architecture Review 1〜2・Architecture Amendment 1〜2・Production Implementation・Production Code Review・Production Implementation Correction・Formal Regression・Documentation Integration・Release Reviewの経緯を含む）を参照。

@@ -951,23 +951,75 @@
   非対称性はInherited Limitationとして明記し、厳格化はDeferred Item DI-9
   （Image Generation Gate Value Strict Validation）として独立検討する。`dataclasses.asdict(root)`は
   secret-safeなserializationではないことをContractとして明記した。
-- [ ] **Article Featured Media Runtime Wiring**（次候補・未着手。v6.14.0 Article Featured Media
-  Orchestration Foundationの完了により前提条件を充足。v6.15.0 Image Generation Configuration
-  Gateにより「有効／無効の切り替え」、v6.16.0 Generated Image Filename Policy Foundationにより
-  「filenameの構築方法」、v6.17.0 Article Image Prompt Construction Foundationにより
-  「promptの構築方法」、v6.18.0 Article Featured Media Composition Root Foundationにより
-  「dependency構築・接続」という前提がそれぞれ追加で充足された（v6.14.0〜v6.18.0は
-  いずれもRelease Review Approved済み）。**画像生成のFallback Policy（Image Generation
-  Fallback Policy、v6.19.0）はRelease Review（Approved with Suggestions）まで完了し、
-  Release 6.19として完了した**。ただしORD-1（DI-4着手前の正式な再評価）は本Wiring
-  着手前に必須のまま残っており、DI-10／DI-11の扱い（ORD-2〜ORD-4）を含めてあらためて
-  再評価したうえで着手を判断する）：
-  v6.14.0の`ArticleFeaturedMediaOrchestrator.apply()`を、v6.18.0の
-  `ArticleFeaturedMediaCompositionRoot`経由で実際に`main.py` / `image_resolver.py`等の
-  Production Runtimeへ接続する後続Wiring。一括のReleaseとするか複数Releaseへ分割するか、
-  `image_resolver.py` / `main.py`への変更内容、Upload成功後の記事投稿失敗時の整合性・
-  Retry時の重複Upload対策・既存media ID再利用・未使用Media cleanup・fallback方針は
-  いずれも未確定であり、独立したArchitecture Reviewを要する
+- [ ] **Article Featured Media Runtime Wiring（v6.21.0候補、DI-4後半）**（次候補・未着手。
+  v6.14.0 Article Featured Media Orchestration Foundationの完了により前提条件を充足。
+  v6.15.0 Image Generation Configuration Gateにより「有効／無効の切り替え」、v6.16.0
+  Generated Image Filename Policy Foundationにより「filenameの構築方法」、v6.17.0
+  Article Image Prompt Construction Foundationにより「promptの構築方法」、v6.18.0
+  Article Featured Media Composition Root Foundationにより「dependency構築・接続」、
+  v6.19.0 Image Generation Fallback Policyにより「失敗時の継続／伝播判断」という前提が
+  それぞれ充足された（v6.14.0〜v6.19.0はいずれもRelease Review Approved済み）。
+  **DI-4 Runtime WiringはArchitecture Design（`docs/design/
+  article_featured_media_runtime_wiring.md`）にてORD-1の正式な再評価を実施し、
+  現在の安全側fallback契約（安全に分類できない失敗はすべて元例外を伝播する）を
+  受容する（ORD-2適用）と判断した。これによりDI-10／DI-11は未完了のままDI-4へ
+  着手してよいと確定した。あわせてDI-4自体を2 Releaseへ分割することを決定し、
+  前半のFacade（Article Featured Media Runtime Foundation）はv6.20.0として
+  Production Code Review（Approved with Suggestions）・Production Implementation
+  Correction・Formal Regression（正式Inventory23ファイル、3241/3241 PASS）・
+  Documentation Integration・Release Review（Approved with Suggestions）を経て
+  **Release 6.20として完了した**。**
+  本エントリは後半（`main.py`への実接続）のv6.21.0のみを指す：v6.20.0
+  `ArticleFeaturedMediaRuntime`（`from_env()` / `is_available()` / `apply()`）を
+  `main.py`の記事ループ（`ArticleData`構築の後・`output_manager.save_all()`の前）へ
+  実際に配線し、既存`image_resolver.py`との併存（生成画像media_id ＞
+  `DEFAULT_MEDIA_ID` ＞ 0の優先順位）・PROPAGATE時のMarkdown保存（`try`/`except`
+  保護込み）・`total_wp_failed`セマンティクス拡張・`tests/test_e2e_v6_13_0_*.py`
+  Architecture Guardの精緻化（単純部分文字列一致 → AST厳密一致、設計書5.5節）を
+  実装する。Upload成功後の記事投稿失敗時の整合性・Retry時の重複Upload対策・
+  既存media ID再利用・未使用Media cleanupはv6.21.0の対象外のまま、DI-6／DI-7として
+  別途独立検討する
+- [x] **Article Featured Media Runtime Foundation**（v6.20.0）：
+  Release 6.9.0〜6.19.0で整備された画像系Foundationを、`main.py`が唯一参照する
+  Facadeとして単一責務にまとめる、DI-4 Runtime Wiringの前半（Foundation）。
+  新規独立package`src/article_featured_media_runtime/`（`__init__.py`・
+  `article_featured_media_runtime.py`）。Public APIは`ArticleFeaturedMediaRuntimeStatus`
+  （3値：`DISABLED`／`APPLIED`／`CONTINUED_WITHOUT_FEATURED_MEDIA`）・
+  `ArticleFeaturedMediaRuntimeResult`（`@dataclass(frozen=True)`、field順序
+  article/status/category、`category`はCONTINUED時のみ非None）・
+  `ArticleFeaturedMediaRuntime`（`__init__(root)` / `from_env()` / `is_available()` /
+  `apply(article)`）の3 symbol。処理順序は`isinstance`検証 → Gate評価
+  （`is_available()`） → `construct_article_image_prompt()`（v6.17.0） →
+  `generate_image_filename()`（v6.16.0） → `orchestrator.apply()`（v6.14.0、
+  `try`範囲はこの1呼び出しのみ）。失敗時は`except Exception`で捕捉し
+  `decide_image_generation_fallback()`（v6.19.0、無改修）へ委譲し、
+  `PROPAGATE_ORIGINAL_ERROR`はbare`raise`で元例外の同一性を保ったまま
+  再送出、`CONTINUE_WITHOUT_FEATURED_MEDIA`はv6.19.0のallow-list4 reason
+  （`TIMEOUT`／`CONNECTION`／`RATE_LIMIT`／`SERVER_ERROR`）のみを対象とする
+  （本Releaseでの拡大なし）。`from_env()`／`is_available()`はv6.18.0
+  `ArticleFeaturedMediaCompositionRoot`への完全委譲のみで、Gate評価・Fail Fast
+  ValueError生成ロジックを再実装しない。raw exception・prompt・credential・
+  provider応答本文・生成画像bytesのいずれも`Result`へ保持しない。既存
+  Production Code（`main.py`／画像系11 package）はいずれも無改修・未配線の
+  Consumer-lessであり、Runtime Zero Diffを維持する。Architecture Design〜
+  Architecture Review 2（2回の反復、Review 1「Changes Required」Blocking 1・
+  Major 2・Minor 5・Suggestion 3 → Amendment 1 → Review 2「Approved with
+  Suggestions」Blocking 0・Major 0・Minor 2・Suggestion 1 → Amendment 2で収束）・
+  Production Implementation・Production Code Review（Approved with
+  Suggestions、Blocking 0・Major 0・Minor 1：A-1契約未検証・Suggestion 3件）・
+  Production Implementation Correction（Minor-1・Suggestion-1を解消。
+  Suggestion-2・Suggestion-3は非Blockingのまま残存）・Formal Regression
+  （正式Inventory23ファイル、3241/3241 PASS、既存22ファイルbaseline
+  3044/3044完全維持＋新規v6.20.0 197/197 PASS）・Documentation Integrationを
+  完了した。Release Review（Approved with Suggestions、Blocking 0件・Major 0件・
+  Minor 2件：RR-M-1「ROADMAP Entryの`[x]`とRelease未実施表現の一時併存」
+  （v6.17.0のRR-M-1と同型の既知パターン、Documentation Integration Finalizeで
+  解消）・RR-M-2「設計書冒頭の画像系Foundation件数誤記（10→11、同工程で訂正）」、
+  Suggestion 1件：RR-S-A「E2E docstring Scenario一覧が`ARTICLETYPE-`を含まず
+  22件のままだった（同工程で23件へ同期）」）を経て、**Release 6.20として
+  完了した**（`docs/design/article_featured_media_runtime_wiring.md`）。
+  v6.21.0 Runtime Wiring（`main.py`への実接続）は本Releaseの対象外であり、
+  引き続き未着手のまま
 - [ ] **Publish Composition Root Foundation**（次候補）：記事生成→WordPress投稿の一連の生成・配線を
   専用に担う、`RetryCompositionRoot`と対をなすComposition Rootの新設。v6.18.0
   `ArticleFeaturedMediaCompositionRoot`は画像featured media領域に限定した先行版
