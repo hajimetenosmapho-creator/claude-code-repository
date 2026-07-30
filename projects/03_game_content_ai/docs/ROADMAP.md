@@ -951,34 +951,49 @@
   非対称性はInherited Limitationとして明記し、厳格化はDeferred Item DI-9
   （Image Generation Gate Value Strict Validation）として独立検討する。`dataclasses.asdict(root)`は
   secret-safeなserializationではないことをContractとして明記した。
-- [ ] **Article Featured Media Runtime Wiring（v6.21.0候補、DI-4後半）**（次候補・未着手。
-  v6.14.0 Article Featured Media Orchestration Foundationの完了により前提条件を充足。
-  v6.15.0 Image Generation Configuration Gateにより「有効／無効の切り替え」、v6.16.0
-  Generated Image Filename Policy Foundationにより「filenameの構築方法」、v6.17.0
-  Article Image Prompt Construction Foundationにより「promptの構築方法」、v6.18.0
-  Article Featured Media Composition Root Foundationにより「dependency構築・接続」、
-  v6.19.0 Image Generation Fallback Policyにより「失敗時の継続／伝播判断」という前提が
-  それぞれ充足された（v6.14.0〜v6.19.0はいずれもRelease Review Approved済み）。
-  **DI-4 Runtime WiringはArchitecture Design（`docs/design/
-  article_featured_media_runtime_wiring.md`）にてORD-1の正式な再評価を実施し、
-  現在の安全側fallback契約（安全に分類できない失敗はすべて元例外を伝播する）を
-  受容する（ORD-2適用）と判断した。これによりDI-10／DI-11は未完了のままDI-4へ
-  着手してよいと確定した。あわせてDI-4自体を2 Releaseへ分割することを決定し、
-  前半のFacade（Article Featured Media Runtime Foundation）はv6.20.0として
-  Production Code Review（Approved with Suggestions）・Production Implementation
-  Correction・Formal Regression（正式Inventory23ファイル、3241/3241 PASS）・
-  Documentation Integration・Release Review（Approved with Suggestions）を経て
-  **Release 6.20として完了した**。**
-  本エントリは後半（`main.py`への実接続）のv6.21.0のみを指す：v6.20.0
-  `ArticleFeaturedMediaRuntime`（`from_env()` / `is_available()` / `apply()`）を
-  `main.py`の記事ループ（`ArticleData`構築の後・`output_manager.save_all()`の前）へ
-  実際に配線し、既存`image_resolver.py`との併存（生成画像media_id ＞
-  `DEFAULT_MEDIA_ID` ＞ 0の優先順位）・PROPAGATE時のMarkdown保存（`try`/`except`
-  保護込み）・`total_wp_failed`セマンティクス拡張・`tests/test_e2e_v6_13_0_*.py`
-  Architecture Guardの精緻化（単純部分文字列一致 → AST厳密一致、設計書5.5節）を
-  実装する。Upload成功後の記事投稿失敗時の整合性・Retry時の重複Upload対策・
-  既存media ID再利用・未使用Media cleanupはv6.21.0の対象外のまま、DI-6／DI-7として
-  別途独立検討する
+- [x] **Article Featured Media Runtime Wiring**（v6.21.0、DI-4後半）：
+  v6.20.0 `ArticleFeaturedMediaRuntime`（`from_env()` / `is_available()` / `apply()`）を
+  `main.py`の記事ループへ実際に配線した、DI-4 Runtime Wiringの後半（本体）。
+  起動時に`ArticleFeaturedMediaRuntime.from_env()`を構築しFail Fast（Gate ON かつ
+  credential不足時は`ValueError`のmessageを表示して`sys.exit(1)`。message は環境変数
+  **名**のみを含み値を含まない）。記事ループ内、`ArticleData`構築の後・
+  `output_manager.save_all()`の前に、新設した module-level private helper
+  `_apply_featured_media_step()`を唯一の呼び出し箇所として配置（Gate OFF時は
+  articleを素通し、CONTINUE時はcategoryをconsoleへ1行出力して継続）。
+  PROPAGATE対象（`decide_image_generation_fallback()`がbare raiseした元例外）は
+  記事ループの`try`/`except Exception`（例外を変数へ束縛しない構造）で捕捉し、
+  もう1つのhelper`_handle_featured_media_failure()`（Markdown単独保存を内側
+  `try`/`except`で保護、失敗時は固定ラベルの警告のみでOSErrorの原文・class名は
+  出力しない）でWordPressへは投稿せず`log_article(result="failed", post_id=None)`
+  を記録・`wp_failed_count`加算のうえ次の記事へcontinueする。既存
+  `image_resolver.py`との併存により、生成画像media_id ＞ `DEFAULT_MEDIA_ID` ＞ 0
+  の優先順位が追加ロジックなしで成立する。`main.py`が参照する画像系package名は
+  `article_featured_media_runtime`のみに限定し（低レベルpackage・動的import・
+  package名の文字列リテラルはいずれも不使用）、`tests/test_e2e_v6_13_0_*.py`
+  RUNTIME-1（main.py分、単純部分文字列一致 → AST厳密一致）・
+  `tests/test_e2e_v6_20_0_*.py` RUNTIME-1a（main.py分、「参照しないこと」→
+  「参照する場合は承認済みstatic import文の行のみに限られること」）の2つの
+  Architecture Guardを、検査意図（低レベルpackageへの依存禁止）を保ったまま
+  精緻化した（設計書5.5節・5.6節）。Architecture Design〜Architecture Review 1
+  （Changes Required、Blocking 1・Major 2・Minor 5・Suggestion 3）→
+  Architecture Amendment 1（Completed）・Production Implementation・New E2E
+  （`tests/test_e2e_v6_21_0_article_featured_media_runtime_wiring.py`、
+  14 Scenario prefix・147アサーション・147/147 PASS）・Formal Regression
+  （正式Inventory24ファイル、3389/3389 PASS。既存23ファイル3242/3242完全維持
+  ＋新規v6.21.0 147/147 PASS）・Release Review 1（Changes Required、Blocking 1
+  ・Major 2・Minor 3・Suggestion 3）→ Release Review Findings Remediation
+  （B-1：Formal Regression baselineをcommit状態非依存の恒久guardへ再実装。
+  M-1：PROPAGATE後処理をhelperへ切り出しFake駆動の挙動検証を追加。M-2：起動時
+  設定検証テストをhermetic化し実HTTP／API到達を排除。m-1〜m-3・S-1〜S-2を解消）
+  → Formal Regression 2（3389/3389 PASS）→ Release Review 2（Approved with
+  Suggestions、Blocking 0・Major 0・Minor 2・Suggestion 2、Minor 2件は
+  Documentation Integration Finalizeで解消）・Documentation Integrationを経て
+  **Release 6.21として完了した**（`docs/design/
+  article_featured_media_runtime_wiring.md`）。Upload成功後の記事投稿失敗時の
+  整合性・Retry時の重複Upload対策・既存media ID再利用・未使用Media cleanupは
+  引き続き対象外のまま、DI-6／DI-7として別途独立検討する。DI-10（WordPress
+  Media Upload失敗のreason分類）／DI-11（OpenAI REQUEST_REJECTEDの細分化）は
+  ORD-2の受容判断（1.1節）どおり本Releaseでも未着手のままDeferredである
 - [x] **Article Featured Media Runtime Foundation**（v6.20.0）：
   Release 6.9.0〜6.19.0で整備された画像系Foundationを、`main.py`が唯一参照する
   Facadeとして単一責務にまとめる、DI-4 Runtime Wiringの前半（Foundation）。

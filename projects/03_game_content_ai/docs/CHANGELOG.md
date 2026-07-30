@@ -361,6 +361,170 @@
 
 ---
 
+## [v6.21.0] - 2026-07-30 ★ Article Featured Media Runtime Wiring
+
+> **本Entryの時点でのRelease状態**：Architecture Design Completed／Architecture Review 1
+> Changes Required（Blocking 1件・Major 2件・Minor 5件・Suggestion 3件）／Architecture
+> Amendment 1 Completed／Production Implementation Completed／New E2E PASS（147/147）／
+> Formal Regression Completed（24ファイル、3389/3389 PASS）／
+> **Release Review 1：Changes Required（Blocking 1件：Formal RegressionのNOIMPACT-guardが
+> commit後に無効化する実装・Major 2件：M-1「PROPAGATE経路が実挙動で未検証」・
+> M-2「起動時検証テストが`.env`非hermeticで実HTTP/API到達しうる」・Minor 3件・
+> Suggestion 3件）** → **Release Review Findings Remediation：Completed**（B-1をRelease
+> 6.21.0 baseline commit固定の恒久guardへ再実装、M-1を`_handle_featured_media_failure()`
+> helper切り出し＋Fake駆動の挙動検証で解消、M-2を画像系env変数の明示的空文字設定で
+> hermetic化、m-1〜m-3・S-1・S-2を解消、S-3は理由記録のうえ不採用）／
+> Formal Regression 2 Completed（24ファイル、3389/3389 PASS）／
+> **Release Review 2：Approved with Suggestions（Blocking 0件・Major 0件・Minor 2件：
+> Minor-1「設計書26章の総アサーション数記述が14.4節と不一致（3366→3389へ訂正）」・
+> Minor-2「設計書0.b節 v6.21.0 Statusが全項目Not Startedのまま」、Suggestion 2件：
+> Suggestion-1「LOOP-HANDLER-CALLS-HELPERが引数まで検証していない」・
+> Suggestion-2「NOIMPACT-が保護対象配下の未追跡ファイル追加を検出しない」、
+> いずれもDocumentation Integration Finalizeで解消・Suggestion 2件は今回未実装のまま
+> Review記録として残す）**。
+> **Release：Completed**。
+
+### Added
+
+- `tests/test_e2e_v6_21_0_article_featured_media_runtime_wiring.py`新規作成
+  （14 Scenario prefix：GATEOFF-／APPLIED-／CONT-／PROP-／MDOK-／MDFAIL-／
+  NOWP-／WIRE-／GUARD-／NODYN-／LOOP-／CONFIG-／NOIMPACT-／SEC-、
+  147アサーション、147/147 PASS）
+- `main.py`へ次の2つのmodule-level private helperを新設
+  - `_apply_featured_media_step(runtime, article)`：`ArticleFeaturedMediaRuntime`
+    （v6.20.0）を呼び出す唯一の箇所。CONTINUE時はcategoryをconsoleへ1行出力
+  - `_handle_featured_media_failure(...)`：PROPAGATE時の後処理。Markdown単独保存
+    （内側`try`/`except`で保護）・failed logging・console警告を担う
+    （Release Review Findings Remediation M-1対応で切り出し、Fake駆動の
+    挙動検証を可能にした）
+- `docs/design/article_featured_media_runtime_wiring.md`へ5.6節（v6.20.0
+  RUNTIME-1a Guard精緻化）・5.7節（NOIMPACT- Guardのbaseline固定）・26章
+  （v6.21.0設計反映履歴、Release Review Findings Remediationの記録）を追加
+
+### Changed
+
+- `main.py`：
+  - import追加：`from article_featured_media_runtime import ArticleFeaturedMediaRuntime,
+    ArticleFeaturedMediaRuntimeStatus`（承認済みFacadeのみのstatic import）
+  - 起動時（記事ループの前）に`ArticleFeaturedMediaRuntime.from_env()`を構築し
+    Fail Fast（Gate ON かつ credential不足時は`ValueError`のmessageを表示して
+    `sys.exit(1)`。messageは環境変数名のみを含み値を含まない）
+  - `MarkdownOutput`インスタンスを`markdown_output`として保持（PROPAGATE時の
+    直接保存用）
+  - 記事ループ内、`ArticleData`構築の後・`output_manager.save_all()`の前へ
+    `_apply_featured_media_step()`の呼び出しを追加。例外（PROPAGATE対象）は
+    `except Exception:`（変数へ束縛しない）で捕捉し`_handle_featured_media_failure()`
+    へ委譲、`wp_failed_count`加算のうえ`continue`（次の記事へ進む。runは停止しない）
+- `tests/test_e2e_v6_13_0_article_featured_media_binding_foundation.py`：
+  RUNTIME-1（main.py分の検査のみ）を単純部分文字列一致からAST厳密一致
+  （`absolute_roots`）へ精緻化。低レベルpackage`article_featured_media`への
+  直接依存禁止という検査意図は不変。他の検査（DEP-2・bind_featured_media検査・
+  image_resolver.py／wordpress_output.py分のRUNTIME-1等）は無変更
+- `tests/test_e2e_v6_20_0_article_featured_media_runtime_foundation.py`：
+  RUNTIME-1a（main.py分の検査のみ）を「article_featured_media_runtimeを
+  参照しないこと」から「参照する場合は承認済みstatic import文の行のみに
+  出現すること」へ精緻化（1→2アサーション、197→198）。RUNTIME-1b〜1e・
+  他Scenario（API-〜COMPAT-）は無変更
+- 既存Foundation package（`src/`配下の画像系11 package）・`image_resolver.py`・
+  `outputs/`・`pipeline/`・`scripts/`・`requirements.txt`・`.env.example`の変更なし
+  （Release 6.21.0 baseline commit固定比較で無変更を確認）
+
+### Contract概要
+
+- 起動時Fail Fast：Gate OFFなら以降のenv変数を一切読まず記事生成を開始。
+  Gate ONかつcredential不足なら記事生成（Claude API呼び出し）の前に停止し、
+  無駄な課金を防ぐ
+- 記事ループ内の呼び出しは`_apply_featured_media_step()`の1箇所のみ。
+  Gate OFF時はarticleを素通し（無出力・未改変）
+- CONTINUE対象（v6.19.0 allow-list 4 reason）：categoryをconsoleへ1行出力し、
+  articleは未改変のまま`save_all()`へ進む
+- APPLIED時：`featured_media_id`が更新された新しい`ArticleData`で
+  `save_all()`へ進む
+- PROPAGATE対象：WordPressへは投稿されず（`save_all()`を呼ばない）、
+  Markdownのみ直接保存（保存自体の失敗も例外を外へ出さず固定ラベル警告のみ）、
+  `log_article(result="failed", error_message=<固定ラベル>, post_id=None)`を
+  記録、`wp_failed_count`加算のうえ次の記事へ`continue`
+- 元例外は`ArticleFeaturedMediaRuntime.apply()`（v6.20.0、無改修）内で
+  bare `raise`により無変換・同一性維持のまま`main.py`へ伝播する
+  （wrap・chaining・message加工なし）
+
+### Runtime Zero Diff
+
+- 本Releaseは`main.py`についてのみRuntime Zero Diffを意図的に解除する
+- `src/image_resolver.py` / `src/outputs/`（全ファイル） / `src/pipeline/`
+  （全ファイル） / `scripts/`（全ファイル） / 既存の画像系Foundation11 package /
+  `requirements.txt` / `.env.example`はいずれも無変更であることを、
+  Release 6.21.0 baseline commit（`8d8950684a305bc93c824866578cb30c6b2e4fdd`）
+  固定比較（`git diff --quiet <baseline> -- <path>`）で確認した。この方式は
+  未stage・stage後・commit後のいずれでも同一の判定が得られる恒久guardである
+
+### Security／Dependency
+
+- 記事ループの外側`except Exception:`・`_handle_featured_media_failure()`内側の
+  `except Exception:`のいずれも例外を変数へ束縛せず、`str(error)`・
+  `type(error).__name__`は構造的に出力不能
+- 起動時Fail Fastの`str(e)`表示のみ許容（当該`ValueError`のmessageは
+  環境変数名のみを含み値を含まない）
+- ArticleLogへ記録する`error_message`は固定ラベルであり、例外由来の
+  文字列を含めない
+- 新規dependency追加なし（`requirements.txt`変更なし）
+
+### Tested
+
+- `tests/test_e2e_v6_21_0_article_featured_media_runtime_wiring.py`：
+  14 Scenario prefix（GATEOFF-／APPLIED-／CONT-／PROP-／MDOK-／MDFAIL-／
+  NOWP-／WIRE-／GUARD-／NODYN-／LOOP-／CONFIG-／NOIMPACT-／SEC-）・
+  147アサーション・147/147 PASS（終了コード0、警告0、skip 0、Tracebackなし）
+- Formal Regression（累積Regression Inventory方式、既存23ファイル＋新規
+  v6.21.0 E2E、計24ファイルを個別実行。`tests/`配下の全E2Eの無差別実行は
+  していない）：
+  - 既存23ファイル（`docs/CHANGELOG.md` v6.20.0 Testedセクション記載の正式対象
+    22ファイルに、RUNTIME-1a精緻化を適用した`test_e2e_v6_20_0_*.py`自身を
+    加えた23ファイル）：3242/3242 PASS（RUNTIME-1a精緻化による197→198の
+    想定内増加を除き、Release 6.20 baseline完全維持）
+  - 新規v6.21.0 E2E：147/147 PASS
+  - 総合：3389/3389 PASS。全24ファイル終了コード0、FAIL 0、SKIP 0、
+    既知差分0、外部API実接続0、実RSS通信0、credential使用0、Git状態不変
+- Architecture Review 1：「Changes Required」（Blocking 1件・Major 2件、
+  Minor 5件・Suggestion 3件、いずれもArchitecture Amendment 1で解消）
+- Architecture Amendment 1：「Completed」
+- Production Implementation：「Completed」
+- Formal Regression：「Completed」（正式Inventory24ファイル、3389/3389 PASS）
+- Release Review 1：「Changes Required」（Blocking 1件：NOIMPACT-guardが
+  HEAD基準のためcommit後に無効化する実装だった、Major 2件：M-1「PROPAGATE
+  経路（Markdown保存・failed logging・saved_files反映）がAST構造検証のみで
+  実挙動が未検証」・M-2「CONFIG-テストが`.env`非hermeticで実HTTP/API到達
+  経路が存在した」、Minor 3件、Suggestion 3件）
+- Release Review Findings Remediation：「Completed」
+  - B-1：NOIMPACT-をRelease 6.21.0 baseline commit（`8d8950684a305bc93c824866578cb30c6b2e4fdd`）
+    固定の恒久guardへ再実装（未stage・stage後・commit後のいずれでも同一判定）
+  - M-1：PROPAGATE後処理を`_handle_featured_media_failure()`helperへ切り出し、
+    Fake（FakeMarkdownOutput／FakeLogManager）駆動でMarkdown保存成功/失敗・
+    saved_files反映・failed logging・WordPress非到達を実挙動検証
+  - M-2：画像系env変数をpop()ではなく空文字で明示設定し`.env`非依存化。
+    RSS収集非到達を各variantで明示検証
+  - m-1：設計書12.2節・14.4節・AC-6.21-7／AC-6.21-9・Amendment履歴を整合
+  - m-2：v6.20.0 RUNTIME-1aを「のみ」の実検証（非import参照行の非存在確認）へ強化
+  - m-3：CONFIG-へGate ON・OpenAI設定済み・WP_*欠落のvariantを追加（COMPAT-4検証）
+  - S-1・S-2：反映。S-3：理由記録のうえ不採用
+- Formal Regression 2：「Completed」（正式Inventory24ファイル、3389/3389 PASS、
+  FAIL 0、SKIP 0、終了コード異常0、既知差分0、network使用0、credential使用0、
+  Git状態不変）
+- Documentation Integration：Completed（`docs/ROADMAP.md` /
+  `docs/architecture.md` / 本Entry / 正式設計書へ反映済み。件数表記を
+  正式値（Scenario prefix 14・新規E2E 147アサーション・Formal Regression
+  Inventory 24ファイル・総アサーション3389）へ統一）
+- Release Review 2：「Approved with Suggestions」（Blocking 0件・Major 0件、
+  Minor 2件：Minor-1「設計書26章の総アサーション数記述（3366）が14.4節の
+  正式値（3389）と不一致」・Minor-2「設計書0.b節 v6.21.0 Statusが全項目
+  Not Startedのまま、指示語『本工程』も残存」、いずれも本Documentation
+  Integration Finalizeで解消。Suggestion 2件：Suggestion-1「LOOP-HANDLER-CALLS-HELPERが
+  呼び出し引数まで検証していない」・Suggestion-2「NOIMPACT-が保護対象配下の
+  未追跡ファイル追加を検出しない」、いずれも実害が低いためRelease Review記録
+  としてのみ残し本Releaseでは未実装）
+
+---
+
 ## [v6.20.0] - 2026-07-29 ★ Article Featured Media Runtime Foundation
 
 > **本Entryの時点でのRelease状態**：Architecture Design Completed／Architecture Review 1

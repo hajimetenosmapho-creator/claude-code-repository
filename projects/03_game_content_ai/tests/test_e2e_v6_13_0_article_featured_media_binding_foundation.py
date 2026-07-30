@@ -829,10 +829,21 @@ _required_runtime_files = {
 }
 for _label, _path in _required_runtime_files.items():
     check_true(f"RUNTIME-1. {_label}が存在する", _path.is_file())
-    check_false(
-        f"RUNTIME-1. {_label}にarticle_featured_mediaという文字列が含まれない",
-        file_references_name(_path, "article_featured_media"),
-    )
+    if _label == "main.py":
+        # v6.21.0（設計書5.5節）: 承認済みFacade article_featured_media_runtime への
+        # static importを誤検知しないよう、単純部分文字列一致からAST厳密一致
+        # （absolute_roots）へ精緻化する。検査意図（低レベルpackage
+        # article_featured_media への直接依存禁止）は不変。
+        _details = get_import_details(_path)
+        check_false(
+            f"RUNTIME-1. {_label}が低レベルpackage article_featured_mediaを直接importしていない（AST厳密一致）",
+            "article_featured_media" in _details["absolute_roots"],
+        )
+    else:
+        check_false(
+            f"RUNTIME-1. {_label}にarticle_featured_mediaという文字列が含まれない",
+            file_references_name(_path, "article_featured_media"),
+        )
     check_false(
         f"RUNTIME-1. {_label}にbind_featured_mediaという文字列が含まれない",
         file_references_name(_path, "bind_featured_media"),

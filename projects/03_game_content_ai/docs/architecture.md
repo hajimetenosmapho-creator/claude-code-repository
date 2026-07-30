@@ -4377,3 +4377,69 @@ CONTINUE対象はv6.19.0のallow-list`TIMEOUT` / `CONNECTION` / `RATE_LIMIT` / `
 
 詳細は`docs/design/article_featured_media_runtime_wiring.md`
 （Architecture Design・Architecture Review 1〜2・Architecture Amendment 1〜2・Production Implementation・Production Code Review・Production Implementation Correction・Formal Regression・Documentation Integration・Release Reviewの経緯を含む）を参照。
+
+---
+
+## Article Featured Media Runtime Wiring層（`main.py`、v6.21.0）
+
+> **本節はRelease Review完了時点の記録である。新規E2E（standalone script形式、14 prefix：GATEOFF-／APPLIED-／CONT-／PROP-／MDOK-／MDFAIL-／NOWP-／WIRE-／GUARD-／NODYN-／LOOP-／CONFIG-／NOIMPACT-／SEC-、147アサーション、147/147 PASS、終了コード0、stderr空）・累積Formal Regression（正式Inventory24ファイル：`test_e2e_v1_11_0_save_result.py`・`test_e2e_v5_9_0_*.py`・`test_e2e_v6_0_0_*.py`〜`test_e2e_v6_21_0_*.py`、既存23ファイル3242/3242 PASS＋新規v6.21.0 147/147 PASS＝総合3389/3389 PASS、FAIL 0・SKIP 0・終了コード異常0・既知差分0・外部接続0）とも完全PASSした。Architecture Review 1（「Changes Required」、Blocking 1・Major 2・Minor 5・Suggestion 3）→ Architecture Amendment 1で収束した。Production Implementation・New E2Eの後、Release Review 1（「Changes Required」、Blocking 1件：Formal Regression baselineがcommit後に無効化するNOIMPACT-実装・Major 2件：PROPAGATE経路の実挙動未検証／起動時検証テストの`.env`非hermetic・Minor 3件・Suggestion 3件）で検出された全Findingは、Release Review Findings Remediationで解消した（NOIMPACT-をRelease 6.21.0 baseline commit固定の恒久guardへ再実装、PROPAGATE後処理を`_handle_featured_media_failure()`helperへ切り出しFake駆動の挙動検証を追加、起動時検証テストをhermetic化）。Formal Regression 2・Release Review 2（「Approved with Suggestions」、Blocking 0・Major 0、Minor 2件：設計書内の総アサーション数の記述ずれ・v6.21.0 Status欄の未更新、Suggestion 2件、いずれもDocumentation Integration Finalizeで解消）を経て、**Release 6.21として完了した（Release：Completed）。**
+
+### Purpose
+
+v6.20.0で整備された`ArticleFeaturedMediaRuntime`（Consumer-less Facade）を、`main.py`の記事生成Runtimeへ実際に接続する。Deferred Item DI-4（Article Featured Media Runtime Wiring）を2 Releaseへ分割した後半（本体）に相当し、本Releaseをもって画像featured media機能がRelease 6.9.0〜6.20.0で整備された11 FoundationとFacadeを通じて実際に動作可能になる。
+
+### Wiring Points（`main.py`）
+
+`main.py`は`article_featured_media_runtime`のみをstatic importする（低レベルpackage・動的import・package名を含む文字列リテラルはいずれも不使用）。追加した要素は次の3点のみで、既存の記事生成フロー（Claude API呼び出し・RSS収集・`save_all()`・ログ・analytics）は無変更である。
+
+```text
+起動時（記事ループの前）:
+    featured_media_runtime = ArticleFeaturedMediaRuntime.from_env()
+    → ValueError（Gate ON かつ credential不足）を捕捉し、messageを表示してsys.exit(1)
+      （messageは環境変数名のみを含み値を含まない）
+
+記事ループ内（ArticleData構築の後・output_manager.save_all()の前、1箇所のみ）:
+    try:
+        article = _apply_featured_media_step(featured_media_runtime, article)
+        # Gate OFF: articleを素通し（無出力）
+        # CONTINUE: category を console へ1行出力し、article は未改変のまま継続
+        # APPLIED: featured_media_id が更新された新しい ArticleData を継続使用
+    except Exception:  # 例外を変数へ束縛しない（SEC-2／SEC-3の構造的保証）
+        # PROPAGATE: _handle_featured_media_failure() で後処理
+        #   ・MarkdownOutput.save() を内側 try/except Exception で保護して直接保存
+        #     （保存成功時のみ saved_files・完了サマリーへ反映）
+        #   ・保存失敗時も固定ラベルの警告のみ（OSError原文・class名は非出力）
+        #   ・log_article(result="failed", error_message=<固定ラベル>, post_id=None)
+        wp_failed_count += 1
+        continue  # WordPressへは投稿されず、次の記事へ進む（run は停止しない）
+```
+
+既存`image_resolver.py`（`resolve_featured_image()` / `resolve_media_id()`）は無変更のまま併存し、`featured_media_id`は「生成画像のmedia_id ＞ `DEFAULT_MEDIA_ID` ＞ 0」の優先順位が追加ロジックなしで成立する（`bind_featured_media()`が既存値を無条件上書きするv6.13.0 Contractによる）。
+
+### Security Contract
+
+記事ループの外側`except Exception:`・`_handle_featured_media_failure()`内側の`except Exception:`のいずれも例外を変数へ束縛しないため、`str(error)`・`type(error).__name__`は構造的に出力不能である。起動時Fail Fastの`str(e)`表示のみ許容し、根拠は当該`ValueError`のmessageが環境変数名のみを含み値を含まないこと（v6.11.0／v6.9.0の`from_env()`実装）。ArticleLogへ記録する`error_message`は固定ラベル（`"featured media processing failed"`）であり、例外由来の文字列を含めない。
+
+### Architecture Guardの精緻化
+
+`main.py`が承認済みFacade `article_featured_media_runtime`をimportするようになったことに伴い、v6.20.0以前の2つのGuardが部分文字列一致により誤検知（確実にFAIL）する状態になった。いずれも検査意図（低レベルpackageまたは非import経路への依存禁止）を変えずに検出手法のみを精緻化した。
+
+- `tests/test_e2e_v6_13_0_*.py` RUNTIME-1（main.py分）：単純部分文字列一致 → AST `absolute_roots`厳密一致
+- `tests/test_e2e_v6_20_0_*.py` RUNTIME-1a（main.py分）：「参照しないこと」 → 「参照する場合は承認済みstatic import文の行のみに出現すること」（コメント・docstring・文字列リテラル経由の参照を引き続き拒否）
+
+いずれも他の対象（`src/image_resolver.py`・`src/outputs/`・`src/pipeline/`・`scripts/`分等）・同ファイル内の他検査は無変更のままである。
+
+### Runtime Zero Diffの解除範囲
+
+本Releaseは`main.py`についてのみRuntime Zero Diffを意図的に解除する。`src/image_resolver.py` / `src/outputs/`（全ファイル） / `src/pipeline/`（全ファイル） / `scripts/`（全ファイル） / 既存の画像系11 Foundation package / `requirements.txt` / `.env.example`はいずれも無変更であることを、Release 6.21.0開始時点のbaseline commit固定比較（`git diff --quiet <baseline> -- <path>`）で確認した。この比較方式は未stage・stage後・commit後のいずれでも同一の判定が得られる恒久guardである（HEAD基準の比較はcommit後に無効化するため不採用）。
+
+### Test Review・Code Review・Regressionの実績
+
+新規E2E（`tests/test_e2e_v6_21_0_article_featured_media_runtime_wiring.py`）は14 prefix・147アサーション・147/147 PASS。`main()`はClaude API・RSS収集を伴うため実行せず、`_apply_featured_media_step()` / `_handle_featured_media_failure()`をFake依存で直接駆動する挙動検証（GATEOFF-／APPLIED-／CONT-／PROP-／MDOK-／MDFAIL-／NOWP-）と、記事ループに残るglue（呼び出し位置・import契約・counter加算・continue）のAST構造検証（WIRE-／GUARD-／NODYN-／LOOP-）、hermetic subprocessによる起動時Fail Fast検証（CONFIG-、OPENAI_API_KEY欠落／WP_*欠落の2 variant）、baseline commit固定によるRuntime Zero Diff検証（NOIMPACT-）を組み合わせた。累積Regression Inventory（既存23ファイル：`test_e2e_v1_11_0_save_result.py`・`test_e2e_v5_9_0_*.py`・`test_e2e_v6_0_0_*.py`〜`test_e2e_v6_20_0_*.py`、3242/3242 PASS）とあわせた合計は3389/3389 PASS（外部API実接続0件、実RSS通信0件、credential使用0件、Git状態不変）。Release Review 1で検出されたBlocking 1件・Major 2件は、いずれもテスト実装の不備（Guardの無効化・非hermetic環境）であり、Production Code側の契約緩和は伴わずに解消した。
+
+### Out of Scope／Future Extension
+
+Upload成功後の記事投稿失敗時の整合性・Retry時の重複Upload対策・既存media ID再利用・未使用Media cleanupはDI-6／DI-7として、`WordPressMediaUploadError`のreason分類（DI-10）・OpenAI `REQUEST_REJECTED`の細分化（DI-11）は、ORD-2の受容判断（設計書1.1節）どおり本Releaseでも未着手のままDeferredである。PROPAGATE時のcategory記録・構造化ログ・metrics、連続失敗時のrun打ち切り（circuit breaker）、Gate値のstrict validation、publish全体のComposition Root化はいずれも別Deferred Itemとして残る（詳細は設計書19章）。
+
+詳細は`docs/design/article_featured_media_runtime_wiring.md`
+（Architecture Design・Architecture Review 1・Architecture Amendment 1・5.6節／5.7節・Production Implementation・New E2E・Formal Regression・Release Review 1・Release Review Findings Remediation・Formal Regression 2・Release Review 2・Documentation Integrationの経緯を含む）を参照。

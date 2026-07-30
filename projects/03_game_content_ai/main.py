@@ -48,6 +48,7 @@ from sns_config import SnsConfig, SnsPostStatus
 from outputs import OutputManager, MarkdownOutput, WordPressOutput, ArticleData, SaveResult
 from logger import LogManager, ExecutionLogEntry
 from analytics import AnalyticsManager
+from article_featured_media_runtime import ArticleFeaturedMediaRuntime, ArticleFeaturedMediaRuntimeStatus
 
 # .env ファイルを読み込む
 load_dotenv()
@@ -178,6 +179,64 @@ total_count: {len(candidates)}
     return output_path
 
 
+def _apply_featured_media_step(runtime: ArticleFeaturedMediaRuntime, article: ArticleData) -> ArticleData:
+    """
+    v6.21.0: アイキャッチ画像のfeatured media適用ステップ。
+    承認済みFacade ArticleFeaturedMediaRuntime を呼び出す唯一の箇所。
+
+    PROPAGATE対象の例外はruntime.apply()内部でbare raiseされ、無変換のまま
+    この関数の呼び出し元（main()の記事ループ）へ伝播する。
+    """
+    result = runtime.apply(article)
+    if result.status is ArticleFeaturedMediaRuntimeStatus.CONTINUED_WITHOUT_FEATURED_MEDIA:
+        print(f"    アイキャッチ画像なしで継続します（分類: {result.category.value}）")
+    return result.article
+
+
+def _handle_featured_media_failure(
+    markdown_output,
+    log_manager,
+    article: ArticleData,
+    saved_files: list,
+    *,
+    importance: str,
+    seo_title: str,
+    wp_public_url: str,
+    x_post_status,
+) -> None:
+    """
+    v6.21.0: アイキャッチ処理の失敗が伝播（PROPAGATE）したときの後処理。
+
+    WordPress へは投稿せず、Markdown のみを直接保存して「失敗」として記録する。
+    本関数は WordPress 出力を一切参照しないため、構造的に投稿は行われない。
+
+    Markdown 保存自体が失敗した場合も例外を外へ出さず、固定ラベルの警告のみを
+    表示する（例外メッセージ原文は出力しない）。記事1件の失敗として扱い、
+    run 全体は停止させない。
+    """
+    try:
+        markdown_save = markdown_output.save(article)
+    except Exception:
+        markdown_save = None
+
+    if markdown_save is not None and markdown_save.success:
+        output_path = Path(markdown_save.edit_url)
+        saved_files.append((importance, seo_title, output_path))
+        print(f"    保存: {output_path.name}")
+    else:
+        print("    警告: Markdownファイルの保存に失敗しました。")
+
+    print("    警告: アイキャッチ画像の処理に失敗したため、この記事の投稿を見送りました。")
+    log_manager.log_article(
+        article=article,
+        result="failed",
+        error_message="featured media processing failed",
+        wp_public_url=wp_public_url,
+        x_post_status=x_post_status,
+        post_id=None,
+    )
+
+
 def main():
     start_time = time.time()
     started_at_iso = datetime.now(timezone.utc).astimezone().isoformat()
@@ -210,6 +269,14 @@ def main():
     log_manager = LogManager.from_env(base_dir=Path(__file__).parent)
     # v1.12.0: ANALYTICS_ENABLED=false の場合は NullAnalyticsManager（no-op）
     analytics_manager = AnalyticsManager.from_env(base_dir=Path(__file__).parent)
+
+    # v6.21.0: アイキャッチ画像生成Runtime（Gate OFF時は無効状態のまま構築される。
+    # Gate ON かつ credential 不足の場合はここで ValueError を受けて起動時に停止する）
+    try:
+        featured_media_runtime = ArticleFeaturedMediaRuntime.from_env()
+    except ValueError as e:
+        print(f"エラー: アイキャッチ画像生成の設定が不正です: {e}")
+        sys.exit(1)
 
     client = anthropic.Anthropic(api_key=api_key)
 
@@ -294,8 +361,10 @@ def main():
         sys.exit(0)
 
     # Step 5: 記事生成・保存
+    # v6.21.0: PROPAGATE時にMarkdownのみ直接保存するためインスタンスを保持する
+    markdown_output = MarkdownOutput(output_dir=OUTPUT_DIR)
     output_manager = OutputManager(outputs=[
-        MarkdownOutput(output_dir=OUTPUT_DIR),
+        markdown_output,
         WordPressOutput.from_env(),
     ])
 
@@ -349,6 +418,25 @@ def main():
             featured_media_id=featured_media_id,
             publish_status=publish_status,
         )
+
+        # v6.21.0: featured media適用（Gate OFF時は素通し。PROPAGATE対象の失敗は
+        # ここで例外として捕捉し、WordPressへは投稿せずMarkdownのみ保存して次の記事へ進む）
+        try:
+            article = _apply_featured_media_step(featured_media_runtime, article)
+        except Exception:
+            _handle_featured_media_failure(
+                markdown_output,
+                log_manager,
+                article,
+                saved_files,
+                importance=importance,
+                seo_title=seo_title,
+                wp_public_url=wp_public_url,
+                x_post_status=x_post_status,
+            )
+            wp_failed_count += 1
+            continue
+
         # v1.11.0: save_all() が list[SaveResult] を返す
         save_results = output_manager.save_all(article)
         wp_save = next((r for r in save_results if r.is_wordpress), None)

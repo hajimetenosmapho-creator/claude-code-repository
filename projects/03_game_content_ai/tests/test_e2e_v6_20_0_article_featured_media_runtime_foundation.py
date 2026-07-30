@@ -899,8 +899,57 @@ try:
 
     print("[RUNTIME] Runtime Zero Diff")
 
+    # RUNTIME-1a（main.py）: v6.20.0時点では「参照しないこと」がRuntime Zero Diffの
+    # 証跡だった。v6.21.0（Article Featured Media Runtime Wiring）はmain.pyのみを
+    # 対象にこのZero Diffを設計上解除する（設計書15.4節）ため、本チェックは
+    # v6.21.0時点で意図的にFAILする状態になる。単純に削除・無効化するのではなく、
+    # 恒久的に保持すべき契約（main.pyが本packageを参照する場合は、承認済み
+    # static importのみに限られ、コメント・文字列・動的import等の非import経路を
+    # 経由しないこと）へ精緻化する（v6.13.0 RUNTIME-1の精緻化＝設計書5.5節と同型の
+    # 対応）。main.py以外の対象（RUNTIME-1b〜1e）はいずれの時点でも本packageを
+    # 一切参照してはならないため、従来どおり「参照しないこと」を維持する。
+    _main_path = PROJECT_ROOT / "main.py"
+    _main_source = _main_path.read_text(encoding="utf-8")
+    _main_tree = ast.parse(_main_source, filename=str(_main_path))
+
+    # 本packageをimportしているstatic import文が占める行番号の集合
+    _approved_import_linenos = set()
+    for _node in ast.walk(_main_tree):
+        _imports_pkg = False
+        if isinstance(_node, ast.Import):
+            _imports_pkg = any(
+                _a.name.split(".")[0] == "article_featured_media_runtime" for _a in _node.names
+            )
+        elif isinstance(_node, ast.ImportFrom) and _node.module and not _node.level:
+            _imports_pkg = _node.module.split(".")[0] == "article_featured_media_runtime"
+        if _imports_pkg:
+            _approved_import_linenos.update(
+                range(_node.lineno, (_node.end_lineno or _node.lineno) + 1)
+            )
+
+    # ソーステキスト上でpackage名が出現する行番号の集合
+    _reference_linenos = {
+        _i
+        for _i, _line in enumerate(_main_source.splitlines(), 1)
+        if "article_featured_media_runtime" in _line
+    }
+
+    # 「のみ」の実検証：import文の行以外にpackage名が現れてはならない
+    # （コメント・docstring・文字列リテラル・動的import経由の参照をすべて拒否する）
+    _non_import_references = sorted(_reference_linenos - _approved_import_linenos)
+    check(
+        "RUNTIME-1a. main.pyにおけるarticle_featured_media_runtimeの出現が、"
+        "承認済みstatic import文の行のみに限られる（非import参照の行番号リストが空）",
+        _non_import_references,
+        [],
+    )
+    check_true(
+        "RUNTIME-1a. main.pyが本packageを参照する場合、AST上のimport rootとして"
+        "解決される（v6.21.0 Wiring後も維持される恒久契約）",
+        (not _reference_linenos) or ("article_featured_media_runtime" in get_import_roots(_main_path)),
+    )
+
     _runtime_targets = [
-        ("RUNTIME-1a", "main.py", PROJECT_ROOT / "main.py"),
         ("RUNTIME-1b", "src/image_resolver.py", PROJECT_ROOT / "src" / "image_resolver.py"),
     ]
     for _outputs_file in sorted((PROJECT_ROOT / "src" / "outputs").glob("*.py")):

@@ -29,14 +29,15 @@
 
 | 項目 | 内容 |
 |---|---|
-| **工程** | Architecture Design → Architecture Review 1（Changes Required）→ **Architecture Amendment 1（本工程で完了）** |
-| **Architecture Review 2** | Not Started |
-| **Production Implementation** | Not Started |
-| **New E2E** | Not Started |
-| **Formal Regression** | Not Started |
-| **Documentation Integration** | Not Started |
-| **Release Review** | Not Started |
-| **Release** | Not Started |
+| **工程** | Architecture Design → Architecture Review 1（Changes Required）→ Architecture Amendment 1（Completed）→ Production Implementation → Production Implementation中の追補（5.6節・5.7節、26章参照）→ New E2E → Formal Regression → Release Review 1（Changes Required）→ Release Review Findings Remediation → Formal Regression 2 → Release Review 2（Approved with Suggestions）→ Documentation Integration |
+| **Production Implementation** | Completed（`main.py`への配線、`_apply_featured_media_step()`／`_handle_featured_media_failure()`の2 helper追加。26.2節 M-1対応で後者を切り出し） |
+| **New E2E** | Completed（`tests/test_e2e_v6_21_0_article_featured_media_runtime_wiring.py`、14 Scenario prefix・147アサーション・147/147 PASS） |
+| **Formal Regression** | Completed（正式Inventory24ファイル、3389/3389 PASS。既存23ファイル3242＋新規v6.21 147） |
+| **Release Review 1** | 「Changes Required」（Blocking 1件・Major 2件・Minor 3件・Suggestion 3件、いずれもRelease Review Findings Remediationで解消） |
+| **Release Review Findings Remediation** | Completed（B-1・M-1・M-2・m-1・m-2・m-3を解消。S-1・S-2を反映、S-3は理由を記録のうえ不採用。詳細は26.2節） |
+| **Release Review 2** | 「Approved with Suggestions」（Blocking 0件・Major 0件、Minor 2件・Suggestion 2件。Minor 2件は本Documentation Integration Finalizeで解消） |
+| **Documentation Integration** | Completed（`docs/ROADMAP.md` / `docs/architecture.md` / `docs/CHANGELOG.md` / 本設計書0.b節・26章へ反映済み） |
+| **Release** | Completed |
 
 ### 0.c Architecture Review 1 の結果と本Amendmentの対応
 
@@ -475,6 +476,65 @@ G-5  bind_featured_media 文字列検査（同RUNTIME-1、L835-838）は部分�
 Formal Regression Inventory 上のファイル数（22→23→24）には影響しない
 （既存ファイルの内容変更であり、新規ファイル追加ではない）。
 
+### 5.6 v6.20.0 RUNTIME-1a Guard の精緻化（v6.21.0 Production Implementationで判明）
+
+`tests/test_e2e_v6_20_0_article_featured_media_runtime_foundation.py` の RUNTIME-Scenario
+（`RUNTIME-1a`、`main.py` 分）は、v6.20.0 完了時点の Runtime Zero Diff（AC-6.20-11）を
+「`main.py` が `article_featured_media_runtime` という文字列を一切参照しないこと」として
+検証していた。15.4節が定めるとおり v6.21.0 は `main.py` のみ Runtime Zero Diff を意図的に
+解除するため、本Guardは v6.21.0 の Production Implementation 時点で確実に FAIL する
+（5.3節・5.5節で確認済みの v6.13.0 RUNTIME-1 の事例と同型）。
+
+v6.13.0 RUNTIME-1 と同じ方針（Guard の削除ではなく精緻化）に従い、`main.py` 分のみを
+「参照しないこと」から「参照する場合は承認済み Facade への static import のみを経由する
+こと」へ精緻化する。維持する目的（`main.py` が本packageへ非承認の経路——コメント・
+文字列・動的import等——で依存してはならないこと）は不変であり、検出範囲のみを
+Wiring後の状態に対応させる。`RUNTIME-1b`（`src/image_resolver.py`）・`RUNTIME-1c`
+（`src/outputs/`）・`RUNTIME-1d`（`src/pipeline/`）・`RUNTIME-1e`（`scripts/`）は
+`main.py` 以外のいずれの時点でも本packageを参照してはならないため、無変更のまま
+「参照しないこと」を維持する。
+
+本精緻化は 15.2節（File Change Plan）・15.3節（変更禁止範囲の例外）へ反映する。
+Production Code・v6.20.0 E2E の他Scenario（API-〜COMPAT-のRUNTIME以外）はいずれも
+無変更である。
+
+### 5.7 NOIMPACT- Guard の baseline 固定（Release Review B-1 対応）
+
+**baseline commit：`8d8950684a305bc93c824866578cb30c6b2e4fdd`（Release 6.20.0 完了時点）**
+
+14.3節の `NOIMPACT-` は「変更禁止範囲（15.3節）が本Releaseで変更されていないこと」を
+`git diff` ベースで検証する。この比較対象を `HEAD` にすると、本Releaseを commit した
+時点で `HEAD` が新しい commit へ移動し、以降は「未コミット変更が存在しないこと」しか
+検証できなくなる。すなわち保護対象への誤った変更が commit 済みで混入した場合を
+検出できず、Guard が commit 後に実質無効化する。
+
+したがって比較対象を **Release 6.21.0 開始時点の commit へ固定**する。
+
+```text
+N-1  判定式：`git diff --quiet <baseline> -- <path>`（作業ツリー vs baseline commit）。
+     git diff は staged／unstaged の双方に加え、baseline 以降の commit 済み変更も
+     差分として検出するため、未stage・stage後・commit後のいずれの状態でも
+     同一の判定が得られる
+N-2  vacuous pass 防止を2段で行う：
+       (a) 検査対象が作業ツリーに実在すること（`Path.exists()`）
+       (b) baseline commit に追跡ファイルが存在すること
+           （`git ls-tree -r --name-only <baseline> -- <path>` が非空）
+     (b) により、pathspec の綴り誤り・対象消滅による「差分なし」の空振り PASS を防ぐ。
+     あわせて baseline commit 自体が解決可能であることを
+     `git rev-parse --verify <baseline>^{commit}` で確認する
+N-3  main.py が変更済みであることは要求しない（B-1）。main.py の wiring 検証は
+     WIRE-（呼び出し位置）・GUARD-（参照package名の限定）が担う
+N-4  既存 tests については、15.3節が認める例外（v6.13.0・v6.20.0 の Guard 精緻化）
+     および本Releaseで新規追加する v6.21.0 E2E 自身の3件のみを許容する。
+     新規追加ファイルは commit 後に baseline 比較で「追加」として現れるため、
+     許容集合へ含めておく必要がある
+N-5  【将来Releaseへの申し送り】本 Guard は baseline を固定するため、保護対象を
+     正当に変更する将来Release（例：DI-10 による src/wordpress_media/ の変更）では、
+     当該Releaseの一部として baseline と許容集合を更新する。これは v6.13.0 RUNTIME-1・
+     v6.20.0 RUNTIME-1a を本Releaseが精緻化したのと同じ運用（5.5節・5.6節）であり、
+     Guard の削除・無条件緩和は行わない
+```
+
 ---
 
 ## 6. Control Flow
@@ -879,12 +939,18 @@ signature・`__all__`・戻り値型・例外契約を変更しない。
   精緻化（Amendment 1で追加、Amendment 2で正確化。5.5節・15.2節。維持する目的
   （低レベルpackageへの依存禁止）は不変だが、検出範囲は静的importのみへ
   意図的に限定される）
+・tests/test_e2e_v6_20_0_article_featured_media_runtime_foundation.py のRUNTIME-1a
+  精緻化（5.6節で追加。「参照しないこと」→「参照する場合は承認済みstatic import
+  文の行のみに出現すること」。main.py分の検査のみが対象で、RUNTIME-1b〜1eは無変更）
 ・main.pyが低レベルpackage article_featured_mediaへ動的import・文字列参照
   経由で依存しないというProduction Code契約の新規導入（Amendment 2で追加。
-  5.5節 G-4・15.2節・14.3節 NODYN-・20.2節 AC-6.21-12）
+  5.5節 G-4・15.2節・14.3節 NODYN-・20.2節 AC-6.21-12）。あわせて、承認済みFacade
+  article_featured_media_runtime についても、main.py 内での出現を静的import文に
+  限定する（コメント・docstring・文字列リテラルへ package 名を書かない。5.6節）
 ・新規E2E の追加
-・Runtime Zero Diff の解除（main.pyのみ。tests/test_e2e_v6_13_0_*.pyの精緻化は
-  Runtime Zero Diffの対象外＝テストファイルでありRuntime本体ではない）
+・Runtime Zero Diff の解除（main.pyのみ。tests/test_e2e_v6_13_0_*.py・
+  tests/test_e2e_v6_20_0_*.pyの精緻化はRuntime Zero Diffの対象外＝
+  テストファイルでありRuntime本体ではない）
 ```
 
 ---
@@ -991,9 +1057,25 @@ E2E は subprocess 内で `main` を import し、この helper のみを Fake �
 ```text
 ・現在の正式Inventory：22ファイル・3044アサーション（Release 6.19.0 時点、commit 7284ca9。
   docs/CHANGELOG.md [v6.19.0] Formal Regression記録値をbaselineとする）
-・v6.20.0 完了時：23ファイル（既存22ファイルの 3044/3044 PASS 完全維持が合格条件）
-・v6.21.0 完了時：24ファイル（うち1ファイル＝tests/test_e2e_v6_13_0_*.py は5.5節の
-  精緻化を適用した内容で計上する。ファイル数の増減はない）
+・v6.20.0 完了時：23ファイル（既存22ファイルの 3044/3044 PASS 完全維持が合格条件）・
+  総アサーション3241
+・v6.21.0 完了時：24ファイル（うち2ファイル＝tests/test_e2e_v6_13_0_*.py は5.5節の、
+  tests/test_e2e_v6_20_0_*.py は5.6節の精緻化を適用した内容で計上する。
+  ファイル数の増減はない）
+・v6.21.0 のアサーション数の期待値（Release Review Findings Remediation 反映後の実測）：
+    tests/test_e2e_v6_13_0_*.py  123（v6.20.0時点から不変。5.5節の精緻化は
+                                 アサーション数を変えない）
+    tests/test_e2e_v6_20_0_*.py  198（v6.20.0時点の197から +1。5.6節の精緻化で
+                                 RUNTIME-1a を「非import参照が存在しないこと」と
+                                 「import rootとして解決されること」の2アサーション
+                                 へ分割したことによる意図した増加）
+    tests/test_e2e_v6_21_0_*.py  147（新規。うちNOIMPACT-は5.7節のbaseline固定方式
+                                 （保護対象22件×3アサーション＋baseline解決性1＋
+                                 git利用可能性1＋tests SCOPE 1）で構成される）
+    既存23ファイル合計 3242（v6.20.0 baseline 3241 + 上記 +1）
+    総合 3389
+  上記以外の21ファイルは v6.20.0 baseline から1アサーションも増減しないことが
+  合格条件である
 
 ・v6.20.0 は Runtime Zero Diff を維持するため、既存 Architecture Guard の
   新規 FAIL は発生しない（v6.14〜v6.19 のガードはいずれも
@@ -1005,12 +1087,13 @@ E2E は subprocess 内で `main` を import し、この helper のみを Fake �
   v6.14（article_featured_media_orchestration）・v6.15（image_generation_config）・
   v6.16（generated_image_filename_policy）・v6.17（article_image_prompt_construction）・
   v6.18（article_featured_media_composition）・v6.19（image_generation_fallback_policy）の
-  各 RUNTIME-／DEP- ガードは PASS し続ける。**v6.13.0 のガードのみ、5.5節で規定する
-  精緻化（部分文字列一致 → AST厳密一致）を該当Releaseの一部として適用することで、
+  各 RUNTIME-／DEP- ガードは PASS し続ける。**v6.13.0 のガード（5.5節）と v6.20.0 自身の
+  RUNTIME-1a（5.6節）の2件のみ、規定する精緻化を該当Releaseの一部として適用することで、
   恒久 FAIL を出さずに Formal Regression baseline を維持する。**
 
-・**「Known Issue 追加ゼロ」は、v6.13.0 Guard を精緻化することによって達成する計画で
-  あり、Guard がすべて無改修のまま自然に PASS するという意味ではない**（5.3節・5.5節で訂正済み）
+・**「Known Issue 追加ゼロ」は、v6.13.0 Guard と v6.20.0 RUNTIME-1a を精緻化することに
+  よって達成する計画であり、Guard がすべて無改修のまま自然に PASS するという意味では
+  ない**（5.3節・5.5節・5.6節で訂正済み）
 
 ・Regression 確認は read-only 手段のみで行う（禁止事項：git stash・git worktree等、
   作業ツリーの退避・再構成を伴う操作は本工程を通じて一切用いない）：
@@ -1020,9 +1103,10 @@ E2E は subprocess 内で `main` を import し、この helper のみを Fake �
     (c) 必要に応じて `git show HEAD:<path>` で変更前内容を read-only 参照する
 
 ・上記 (a)〜(c) で吸収できない予期しない差分が生じた場合のみ、[KI-3]〜[KI-15] と同じ
-  形式（原因・対象・対応状況）で Known Issue として記録する。5.5節の精緻化を適用した
-  結果として生じる想定内の差分（v6.13.0ファイルの内容変更）は、この「予期しない差分」
-  には該当しない（意図した設計変更であるため）
+  形式（原因・対象・対応状況）で Known Issue として記録する。5.5節・5.6節の精緻化を
+  適用した結果として生じる想定内の差分（v6.13.0ファイル・v6.20.0ファイルの内容変更、
+  および v6.20.0ファイルのアサーション数 197→198）は、この「予期しない差分」には
+  該当しない（意図した設計変更であるため）
 ```
 
 ---
@@ -1043,8 +1127,9 @@ E2E は subprocess 内で `main` を import し、この helper のみを Fake �
 
 | 種別 | ファイル | 内容 |
 |---|---|---|
-| 変更 | `main.py` | import 追加 / 起動時 `from_env()` + Fail Fast / 記事ループ内 helper 呼び出し / PROPAGATE 分岐（Markdown保存の例外保護を含む） / MarkdownOutput 参照の保持。**（Amendment 2で追加）低レベル package `article_featured_media` への依存は静的import・動的import（`importlib`等）・文字列参照のいずれの手段によっても行わない契約とする**（5.5節 G-4。Facade `article_featured_media_runtime` の静的importのみを用いる） |
+| 変更 | `main.py` | import 追加 / 起動時 `from_env()` + Fail Fast / 記事ループ内 helper 呼び出し / PROPAGATE 分岐（Markdown保存の例外保護を含む） / MarkdownOutput 参照の保持。**（Release Review Findings Remediation で追加）PROPAGATE 時の後処理を module-level private helper `_handle_featured_media_failure()` へ切り出し、Fake依存で挙動検証可能にする（M-1対応。責務・出力・順序は切り出し前と同一）**。**（Amendment 2で追加）低レベル package `article_featured_media` への依存は静的import・動的import（`importlib`等）・文字列参照のいずれの手段によっても行わない契約とする**（5.5節 G-4。Facade `article_featured_media_runtime` の静的importのみを用いる） |
 | 変更（Amendment 1で追加。Guard精緻化） | `tests/test_e2e_v6_13_0_article_featured_media_binding_foundation.py` | RUNTIME-1（main.py分の検査のみ）を単純部分文字列一致からAST厳密一致へ精緻化する（5.5節）。**（Amendment 2で正確化）維持する目的（低レベルpackageへの依存禁止）は不変だが、検出範囲は静的importのみへ意図的に限定される**。同ファイルの他の検査は無変更 |
+| 変更（5.6節で追加。Guard精緻化） | `tests/test_e2e_v6_20_0_article_featured_media_runtime_foundation.py` | RUNTIME-1a（main.py分の検査のみ）を「article_featured_media_runtimeを参照しないこと」から「参照する場合は承認済みstatic importのみを経由すること」へ精緻化する（5.6節）。RUNTIME-1b〜1e・他Scenario（API-〜COMPAT-）は無変更 |
 | 新規 | `tests/test_e2e_v6_21_0_article_featured_media_runtime_wiring.py` | 新規E2E |
 | 更新（Documentation Integration 工程） | `docs/ROADMAP.md` / `docs/architecture.md` / `docs/CHANGELOG.md` | Release 記録 |
 
@@ -1065,12 +1150,18 @@ E2E は subprocess 内で `main` を import し、この helper のみを Fake �
 ・.env.example（S-12 により変更不要）
 ・既存 tests/ の全ファイル
 
-【Amendment 1で追加する唯一の例外】
+【Amendment 1で追加する例外】
 ・tests/test_e2e_v6_13_0_article_featured_media_binding_foundation.py のRUNTIME-1
   （main.py分の検査のみ）に限り、v6.21.0で5.5節の精緻化を適用する。
   同ファイルの他の検査（DEP-2・bind_featured_media検査・image_resolver.py／
   wordpress_output.py分のRUNTIME-1等）は無変更とする。
-  この例外を除く既存testsの全ファイルは、両Releaseを通じて無変更のままである。
+
+【5.6節で追加する例外】
+・tests/test_e2e_v6_20_0_article_featured_media_runtime_foundation.py のRUNTIME-1a
+  （main.py分の検査のみ）に限り、v6.21.0で5.6節の精緻化を適用する。
+  RUNTIME-1b〜1e、および同ファイルの他Scenario（API-〜COMPAT-）は無変更とする。
+
+上記2つの例外を除く既存testsの全ファイルは、両Releaseを通じて無変更のままである。
 ```
 
 ### 15.4 Runtime Zero Diff 解除の正確な範囲
@@ -1110,7 +1201,7 @@ v6.21.0：main.py **のみ** 解除する。
 | **R-4** | `total_wp_failed` のセマンティクス拡張（COMPAT-5）が既存の運用解釈と齟齬を生む | 低 | 16章で明示。**Repository 上で確認済みの事実として、`total_wp_failed` を読み取る consumer は現時点で存在しない**（定義：`src/logger/log_entry.py` L55、書き込み：`main.py` L408 のみ。`NewsAgent._find_latest_execution()` は `finished_at` のみを参照し `total_wp_failed` を読まない）。実害はないと判断できる根拠はこの確認済み事実に基づく。将来 consumer が追加された場合は DI-5 の構造化ログ導入時に意味の再整理を行う（19章 DEF-10） | 不要 |
 | **R-5** | APPLIED 後に WordPress 投稿が失敗すると orphan media が残る（P-4） | 低 | v6.19 R-5 と同じ判断。DI-7 の領域。本Releaseは検出も削除も行わないことを Contract として明示 | 不要 |
 | **R-6** | Gate ON での再実行により Media が重複 Upload される（R-3 of 7.6節） | 低〜中 | DI-6 の領域。19章 DEF-2。本Releaseは記事の重複可能性を悪化させない | 不要 |
-| **R-7** | **（Amendment 1で訂正）** v6.13.0 の Architecture Guard（RUNTIME-1）は、新package名 `article_featured_media_runtime` との部分文字列一致により**確実に FAIL する**（確認済み事実。5.3節） | 低（対応方針確定済み） | 5.5節で規定する Guard 精緻化（AST厳密一致への変更）で解消する。精緻化は v6.21.0 の File Change Plan（15.2節）へ正式に組み込み済み。read-only 手段（baseline比較・`git diff`・`git show`）で実測確認する（14.4節） | **v6.21.0 の Production Implementation・Formal Regression で、精緻化後のRUNTIME-1が意図どおりPASSし、かつ低レベルpackageへの直接importを引き続き拒否することを確認する** |
+| **R-7** | **（Amendment 1で訂正、5.6節で範囲拡張）** v6.13.0 の Architecture Guard（RUNTIME-1）は、新package名 `article_featured_media_runtime` との部分文字列一致により**確実に FAIL する**（確認済み事実。5.3節）。**同型の事実として、v6.20.0自身のRUNTIME-1a（main.py分）も、main.pyが本packageをimportした時点で確実にFAILする（5.6節で確認済み）** | 低（対応方針確定済み） | 5.5節・5.6節で規定するGuard精緻化（AST厳密一致・static import限定への変更）で解消する。精緻化は v6.21.0 の File Change Plan（15.2節）へ正式に組み込み済み。read-only 手段（baseline比較・`git diff`・`git show`）で実測確認する（14.4節） | **v6.21.0 の Production Implementation・Formal Regression で、精緻化後のRUNTIME-1・RUNTIME-1aが意図どおりPASSし、かつ低レベルpackageへの直接importを引き続き拒否することを確認する** |
 | **R-8** | `main.py` から helper を切り出す（14.3節）ことで、既存 `main()` の構造が変わる | 低 | 切り出すのは新規追加するステップのみであり、既存の処理順序・既存関数のsignatureは変更しない。E2E `WIRE-` で呼び出し位置を固定する | 不要 |
 
 ---
@@ -1191,13 +1282,19 @@ AC-6.21-3   PROPAGATE 時に WordPress へ投稿されず、Markdown が保存�
 AC-6.21-4   PROPAGATE が発生しても run が停止しないこと
 AC-6.21-5   console／ArticleLog に例外message・例外class名が現れないこと
 AC-6.21-6   Gate ON かつ必須env欠落時に起動時停止し、message に環境変数の値が含まれないこと
-AC-6.21-7   image_resolver.py および src/ 配下の既存ファイル（tests/test_e2e_v6_13_0_*.py の
-            RUNTIME-1精緻化を除く）が無変更であること
+AC-6.21-7   image_resolver.py および src/ 配下の既存ファイル・scripts/・requirements.txt・
+            .env.example が無変更であること（既存testsについては、tests/test_e2e_v6_13_0_*.py
+            の RUNTIME-1精緻化、tests/test_e2e_v6_20_0_*.py の RUNTIME-1a精緻化、および
+            新規追加する tests/test_e2e_v6_21_0_*.py の3件を除く）。検証は Release 6.21.0
+            baseline commit を固定した比較（`git diff --quiet <baseline> -- <path>`、
+            baseline＝`8d8950684a305bc93c824866578cb30c6b2e4fdd`）で行い、未stage・
+            stage後・commit後のいずれの状態でも同一の判定が得られること（5.7節）
 AC-6.21-8   main.py が article_featured_media_runtime 以外の画像系package名を参照しないこと
-AC-6.21-9   既存24ファイル（精緻化済みtest_e2e_v6_13_0_*.pyを含む）の Formal Regression
-            baseline が維持されること。確認は14.4節の read-only 手段（baseline比較・
-            git diff・git show）のみで行い、想定外の差分が生じた場合のみ Known Issue
-            として記録すること
+AC-6.21-9   既存24ファイル（精緻化済みtest_e2e_v6_13_0_*.py・test_e2e_v6_20_0_*.pyを含む）の
+            Formal Regression baseline が維持されること。確認は14.4節の read-only 手段
+            （baseline比較・git diff・git show）のみで行い、14.4節が明示する想定内の
+            アサーション数変化（v6.20.0ファイル 197→198）以外の想定外の差分が生じた
+            場合のみ Known Issue として記録すること
 AC-6.21-10  **（Amendment 1追加、M-2対応）** PROPAGATE後にMarkdown保存が成功する経路、
             およびMarkdown保存自体が失敗しても次の記事へ継続する経路の両方が
             検証されること（7.4節 F-3a〜F-3c）
@@ -1429,3 +1526,117 @@ Runtime Zero Diff・v6.21.0未着手・DI-10／DI-11 Deferredのいずれにも�
 **Release Reviewを経て、Release 6.20として完了した（Release：Completed）。**
 v6.21.0（Article Featured Media Runtime Wiring）は本Releaseの対象外であり、
 引き続き未着手のままである。
+
+---
+
+## 26. v6.21.0 設計反映履歴（Production Implementation 中の追補）
+
+v6.21.0 の Production Implementation 工程で判明した事項を、設計書へ反映した
+履歴を記録する（Amendment 1／2 に続く追補であり、Architecture 上の決定を
+変更するものではない）。
+
+### 26.1 5.6節の新設（v6.20.0 RUNTIME-1a Guard 精緻化）
+
+```text
+経緯  v6.21.0 の Production Implementation で main.py が Facade を import した結果、
+      v6.20.0 自身の RUNTIME-1a（main.py が article_featured_media_runtime を
+      一切参照しないこと）が確実に FAIL する状態になることが判明した。
+      5.3節・5.5節で確認済みの v6.13.0 RUNTIME-1 と同型の事象である。
+対応  5.6節を新設し、Guard の削除ではなく精緻化で解消する方針を規定した。
+      あわせて 15.2節（File Change Plan）・15.3節（変更禁止範囲の例外）・
+      17章 R-7 を整合させた。
+```
+
+### 26.2 Release Review Findings Remediation（Blocking 1／Major 2／Minor 3／Suggestion 3）
+
+Release Review（Verdict: Changes Required）で指摘された事項への対応を記録する。
+
+```text
+[Blocking]
+B-1  v6.21.0 E2E の NOIMPACT- が「main.py が git diff に現れること」を要求しており、
+     staging／commit した時点で確実に FAIL する（Formal Regression baseline を
+     恒久破壊する）うえ、SCOPE 検査が commit 後に vacuous pass へ退化していた。
+     さらに 14.3節が規定する NOIMPACT-（保護対象の**不変性**検証）と逆の検査に
+     なっていた
+     → NOIMPACT- を保護対象の不変性検証へ全面的に置き換えた。検査対象は15.3節の
+       変更禁止範囲（image_resolver.py・src/配下の全package・scripts/・
+       requirements.txt・.env.example）とし、各対象に実在確認（vacuous pass 防止）を
+       併記した。既存 tests については 15.3節が認める例外のみを許容する SCOPE 検査を
+       別途設けた。main.py の wiring 自体は WIRE-／GUARD- が検証するため、
+       git 状態への依存を完全に排除した。
+
+       【B-1 再確認工程での追加修正】初回修正では比較対象を `HEAD` としていたが、
+       本Releaseを commit すると `HEAD` が移動し、以降は「未コミット変更が存在
+       しないこと」しか検証できず、commit 済みで混入した保護対象の誤変更を
+       検出できないことが判明した（Guard が commit 後に実質無効化する）。
+       比較対象を Release 6.21.0 baseline commit
+       `8d8950684a305bc93c824866578cb30c6b2e4fdd` へ固定し、未stage・stage後・
+       commit後のいずれでも同一判定となる恒久 Guard へ是正した。あわせて
+       baseline commit の解決可能性および baseline 上の追跡ファイル存在
+       （`git ls-tree`）を vacuous pass 防止として追加し、許容 tests 集合へ
+       新規追加ファイル自身を含めた。根拠と将来Releaseへの申し送りは5.7節に規定し、
+       20.2節 AC-6.21-7 を baseline 固定方式へ更新した
+
+[Major]
+M-1  PROPAGATE 経路（Markdown保存・failed logging・saved_files 反映）が AST 構造
+     検証のみで、実挙動が一度も実行されていなかった。特に F-3c（saved_files 反映）
+     にはアサーションが存在せず、AC-6.21-10 を満たしていなかった
+     → main.py の PROPAGATE 後処理を module-level private helper
+       `_handle_featured_media_failure()` へ切り出し（責務・出力・順序は不変）、
+       E2E から Fake（FakeMarkdownOutput／FakeLogManager）で駆動できるようにした。
+       MDOK-（保存成功→saved_files 反映・failed logging）・MDFAIL-（OSError 注入／
+       success=False の双方で例外を出さず継続）・NOWP-（WordPress 出力へ非到達）を
+       挙動検証として新設した。記事ループに残る glue（wp_failed_count 加算・
+       continue）は helper へ切り出せないため、引き続き LOOP- の AST 検証で固定する
+
+M-2  CONFIG- が subprocess 環境から画像系 env を pop() していたため、main.py の
+     load_dotenv() が .env から値を補完しうる状態だった。.env に OPENAI_API_KEY を
+     設定した環境（本Releaseが有効化しようとする当の構成）では Fail Fast に到達せず、
+     RSS 収集（実HTTP通信）および実 Claude API 呼び出しへ進む経路が存在し、
+     14.1節・N-10 に抵触していた
+     → 画像系 env を pop() ではなく空文字で明示設定する方式へ変更した。
+       python-dotenv の既定（override=False）は os.environ に存在するキーを
+       .env から補完しないため、値が空でも .env の内容に影響されない。
+       あわせて「RSS 収集へ到達していないこと」を各 variant で明示検証する
+
+[Minor]
+m-1  5.6節の内容が 12.2節・14.4節・AC-6.21-7／AC-6.21-9・Amendment 履歴へ
+     未反映で、特に 14.4節の「v6.13.0 のガードのみ」が 5.6節と矛盾していた
+     → 12.2節・14.4節・20.2節を整合させ、本26章を新設した。14.4節へは
+       Remediation 反映後のアサーション数の期待値（v6.20.0ファイル 197→198、
+       既存23ファイル 3242、総合 3389）を明記した
+
+m-2  v6.20.0 RUNTIME-1a のラベルが「static import のみを経由すること」と述べる
+     一方、assertion は「参照するなら import root に含まれること」しか検証して
+     おらず、静的 import と併存する非 import 参照を検出できなかった
+     → 「のみ」を実検証する方式へ強化した（契約緩和ではなく強化）。package 名が
+       出現する行番号の集合から、本 package を import する静的 import 文が占める
+       行番号の集合を差し引き、残りが空であることを検査する。これにより
+       コメント・docstring・文字列リテラル経由の参照をすべて拒否する。
+       あわせて main.py 側は、helper の docstring から package 名の表記を外し、
+       クラス名 ArticleFeaturedMediaRuntime による記述へ改めた
+       （この結果、RUNTIME-1a は 1→2 アサーションとなり 197→198 へ増加した）
+
+m-3  COMPAT-4（Gate ON × WordPress 未設定 → 起動時 exit(1)）が未検証だった。
+     現行 CONFIG- は OPENAI_API_KEY 欠落のみを扱い、OpenAI 側で先に ValueError が
+     出るため WordPress 側の経路へ到達しなかった
+     → CONFIG- へ variant 2（Gate ON・OPENAI_API_KEY 設定済み・WP_* 欠落）を追加し、
+       非0終了・message への WP_SITE_URL の出現・ダミー OpenAI キー値の非漏洩・
+       RSS 非到達を検証する
+
+[Suggestion]
+S-1  NOIMPACT- の docstring が実際の検査内容と不一致
+     → B-1 の再実装に合わせて docstring の Scenario 構成一覧を全面更新した
+S-2  Markdown save の receiver が markdown_output であることが未検証
+     → M-1 の挙動検証で、注入した FakeMarkdownOutput の save() が呼ばれ、
+       渡される article が同一 object であることを直接検証する形で解消した
+       （AST での receiver 検査より強い保証）。あわせて NOWP- で helper が
+       WordPressOutput／OutputManager／output_manager を参照しないことを固定した
+S-3  APPLIED 時の console 出力追加（設計 D-1 の「任意で1行」）
+     → 任意項目であり DI-5（observability）の領域に接近するため、本Releaseでは
+       実装しない（18.1節 D-1 の記述どおり）
+```
+
+上記のうち Blocking 1件・Major 2件・Minor 3件は解消済み、Suggestion 3件は
+S-1・S-2 を反映し S-3 は理由を記録のうえ不採用とした。
+**DI-10／DI-11 は本 Remediation でも変更していない（Deferred のまま）。**
