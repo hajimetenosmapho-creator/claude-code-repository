@@ -1,10 +1,15 @@
 """
 WordPress Media REST API (POST /wp-json/wp/v2/media) への画像アップロードを担うモジュール。
 
+Source of Truth:
+    docs/design/wordpress_media_upload_failure_reason_classification_foundation.md
+    （Architecture Review 5：Approved with Suggestions）
+
 Consumer-less Foundation: 既存の記事投稿・アイキャッチ関連の既存コードのいずれへも配線しない。
 """
 import os
 import re
+from enum import Enum
 
 import requests
 
@@ -21,9 +26,44 @@ _ENV_USERNAME = "WP_USERNAME"
 _ENV_APP_PASSWORD = "WP_APP_PASSWORD"
 
 
+class WordPressMediaUploadErrorReason(Enum):
+    """WordPressMediaUploadErrorの安全な失敗分類。
+
+    秘密情報・Provider固有の生データ（URL・credential・response本文・
+    status codeの生値）は一切含まない、固定された分類ラベルのみで構成する。
+    """
+    # transport 層（HTTP応答を受け取れなかった）
+    TIMEOUT                = "timeout"
+    CONNECTION             = "connection"
+    # status 層（HTTP応答は受け取ったが 2xx でなかった）
+    AUTHENTICATION         = "authentication"
+    PERMISSION_DENIED      = "permission_denied"
+    ROUTE_NOT_FOUND        = "route_not_found"
+    PAYLOAD_TOO_LARGE      = "payload_too_large"
+    UNSUPPORTED_MEDIA_TYPE = "unsupported_media_type"
+    RATE_LIMIT             = "rate_limit"
+    REQUEST_REJECTED       = "request_rejected"
+    SERVER_ERROR           = "server_error"
+    # body 層（HTTP 2xx だが応答本文が利用不能）
+    INVALID_RESPONSE       = "invalid_response"
+    # 分類不能
+    UNKNOWN                = "unknown"
+
+
 class WordPressMediaUploadError(RuntimeError):
-    """WordPress Media APIへの通信・応答に関する失敗を表す唯一の専用例外。"""
-    pass
+    """WordPress Media APIへの通信・応答に関する失敗を表す唯一の専用例外。
+
+    reason属性は安全な分類ラベルのみを保持し、response生データ・URL・
+    credentialのいずれも保持しない。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        reason: WordPressMediaUploadErrorReason = WordPressMediaUploadErrorReason.UNKNOWN,
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 def _is_control_char(ch: str) -> bool:
@@ -87,6 +127,39 @@ def _build_non_2xx_message(response) -> str:
         message += " (" + ", ".join(safe_parts) + ")"
 
     return message
+
+
+def _classify_request_exception(exc: requests.RequestException) -> WordPressMediaUploadErrorReason:
+    """requestsの例外を型のみで分類する純粋関数。str(exc)・exc.argsは読まない。"""
+    # Timeout を ConnectionError より先に判定する（ConnectTimeout は両方のsubclass）。
+    if isinstance(exc, requests.Timeout):
+        return WordPressMediaUploadErrorReason.TIMEOUT
+    if isinstance(exc, requests.ConnectionError):
+        return WordPressMediaUploadErrorReason.CONNECTION
+    return WordPressMediaUploadErrorReason.UNKNOWN
+
+
+def _classify_status_code(status_code) -> WordPressMediaUploadErrorReason:
+    """HTTPステータスコードの値のみで分類する純粋関数。response本体は受け取らない。"""
+    if isinstance(status_code, bool) or not isinstance(status_code, int):
+        return WordPressMediaUploadErrorReason.UNKNOWN
+    if status_code == 401:
+        return WordPressMediaUploadErrorReason.AUTHENTICATION
+    if status_code == 403:
+        return WordPressMediaUploadErrorReason.PERMISSION_DENIED
+    if status_code == 404:
+        return WordPressMediaUploadErrorReason.ROUTE_NOT_FOUND
+    if status_code == 413:
+        return WordPressMediaUploadErrorReason.PAYLOAD_TOO_LARGE
+    if status_code == 415:
+        return WordPressMediaUploadErrorReason.UNSUPPORTED_MEDIA_TYPE
+    if status_code == 429:
+        return WordPressMediaUploadErrorReason.RATE_LIMIT
+    if 400 <= status_code < 500:
+        return WordPressMediaUploadErrorReason.REQUEST_REJECTED
+    if 500 <= status_code < 600:
+        return WordPressMediaUploadErrorReason.SERVER_ERROR
+    return WordPressMediaUploadErrorReason.UNKNOWN
 
 
 class WordPressMediaUploader:
@@ -159,48 +232,59 @@ class WordPressMediaUploader:
             )
         except requests.RequestException as exc:
             raise WordPressMediaUploadError(
-                "WordPress Media APIへの通信に失敗しました"
+                "WordPress Media APIへの通信に失敗しました",
+                reason=_classify_request_exception(exc),
             ) from exc
 
         if not (200 <= response.status_code < 300):
-            raise WordPressMediaUploadError(_build_non_2xx_message(response))
+            raise WordPressMediaUploadError(
+                _build_non_2xx_message(response),
+                reason=_classify_status_code(response.status_code),
+            )
 
         try:
             data = response.json()
         except ValueError as exc:
             raise WordPressMediaUploadError(
-                "WordPress Media APIの成功レスポンスが不正です"
+                "WordPress Media APIの成功レスポンスが不正です",
+                reason=WordPressMediaUploadErrorReason.INVALID_RESPONSE,
             ) from exc
 
         if not isinstance(data, dict):
             raise WordPressMediaUploadError(
-                "WordPress Media APIの成功レスポンスが不正です"
+                "WordPress Media APIの成功レスポンスが不正です",
+                reason=WordPressMediaUploadErrorReason.INVALID_RESPONSE,
             )
 
         media_id = data.get("id")
         if isinstance(media_id, bool) or not isinstance(media_id, int) or media_id < 1:
             raise WordPressMediaUploadError(
-                "WordPress Media APIの成功レスポンスが不正です（id）"
+                "WordPress Media APIの成功レスポンスが不正です（id）",
+                reason=WordPressMediaUploadErrorReason.INVALID_RESPONSE,
             )
 
         if "source_url" not in data:
             raise WordPressMediaUploadError(
-                "WordPress Media APIの成功レスポンスが不正です（source_url）"
+                "WordPress Media APIの成功レスポンスが不正です（source_url）",
+                reason=WordPressMediaUploadErrorReason.INVALID_RESPONSE,
             )
         source_url = data["source_url"]
         if source_url is not None and not isinstance(source_url, str):
             raise WordPressMediaUploadError(
-                "WordPress Media APIの成功レスポンスが不正です（source_url）"
+                "WordPress Media APIの成功レスポンスが不正です（source_url）",
+                reason=WordPressMediaUploadErrorReason.INVALID_RESPONSE,
             )
 
         if "mime_type" not in data:
             raise WordPressMediaUploadError(
-                "WordPress Media APIの成功レスポンスが不正です（mime_type）"
+                "WordPress Media APIの成功レスポンスが不正です（mime_type）",
+                reason=WordPressMediaUploadErrorReason.INVALID_RESPONSE,
             )
         response_mime_type = data["mime_type"]
         if response_mime_type is not None and not isinstance(response_mime_type, str):
             raise WordPressMediaUploadError(
-                "WordPress Media APIの成功レスポンスが不正です（mime_type）"
+                "WordPress Media APIの成功レスポンスが不正です（mime_type）",
+                reason=WordPressMediaUploadErrorReason.INVALID_RESPONSE,
             )
 
         return MediaUploadResult(

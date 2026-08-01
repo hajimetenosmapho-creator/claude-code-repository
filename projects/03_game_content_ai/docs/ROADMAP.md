@@ -951,6 +951,67 @@
   非対称性はInherited Limitationとして明記し、厳格化はDeferred Item DI-9
   （Image Generation Gate Value Strict Validation）として独立検討する。`dataclasses.asdict(root)`は
   secret-safeなserializationではないことをContractとして明記した。
+- [x] **WordPress Media Upload Failure Reason Classification Foundation**（v6.22.0、DI-10）：
+  `WordPressMediaUploadError`（v6.9.0）へ、構造情報（例外型・HTTPステータスコード）
+  のみに基づく分類Enumを純追加する、DI-10 の実装。新規12値Enum
+  `WordPressMediaUploadErrorReason`（`TIMEOUT`／`CONNECTION`／`AUTHENTICATION`／
+  `PERMISSION_DENIED`／`ROUTE_NOT_FOUND`／`PAYLOAD_TOO_LARGE`／
+  `UNSUPPORTED_MEDIA_TYPE`／`RATE_LIMIT`／`REQUEST_REJECTED`／`SERVER_ERROR`／
+  `INVALID_RESPONSE`／`UNKNOWN`）を`src/wordpress_media/wordpress_media_uploader.py`
+  へ追加し、`WordPressMediaUploadError.__init__(message, reason=UNKNOWN)`として
+  `reason`属性を追加した（v6.11.0`OpenAIImageGenerationErrorReason`と同型の設計。
+  ただし`reason`はv6.11.0と異なり既定値`UNKNOWN`付きの任意引数とし、既存テストの
+  1引数構築10箇所との後方互換を優先した）。`upload()`内の既存9 raise経路すべてへ
+  `reason=`をkeyword指定で付与し、`_classify_request_exception()`（`requests`例外の
+  型のみで`TIMEOUT`／`CONNECTION`／`UNKNOWN`を判定。`ConnectTimeout`が
+  `ConnectionError`と`Timeout`の両方のsubclassであるため`Timeout`を先に判定する
+  実測済みcontract）・`_classify_status_code()`（HTTPステータス値のみで残り9 reason
+  を判定。401→`AUTHENTICATION`／403→`PERMISSION_DENIED`／404→`ROUTE_NOT_FOUND`／
+  413→`PAYLOAD_TOO_LARGE`／415→`UNSUPPORTED_MEDIA_TYPE`／429→`RATE_LIMIT`／
+  その他4xx→`REQUEST_REJECTED`／5xx→`SERVER_ERROR`／範囲外・非int→`UNKNOWN`）の
+  2 module-private純粋関数を新設した。2xx応答の本文検証失敗（id／source_url／
+  mime_type不正）の5経路はすべて固定値`INVALID_RESPONSE`とする。分類はmessage・
+  `exc.args`・`response.text`／`.json()`／`.headers`／`.content`のいずれも参照せず、
+  既存9経路のmessage文字列・`from exc`・分岐条件・`upload()`のsignature・成功時の
+  `MediaUploadResult`はいずれも1文字も変更しない（Zero Behavior Change）。
+  `src/wordpress_media/__init__.py`の`__all__`を3→4 symbolへ拡張し
+  `WordPressMediaUploadErrorReason`をpackage rootから公開した。Consumer-less
+  Foundationであり、v6.19.0 `decide_image_generation_fallback()`は`reason`を
+  読まないため12値すべてで`MEDIA_UPLOAD_FAILED`／`PROPAGATE_ORIGINAL_ERROR`のまま
+  不変（CONTINUE対象拡大なし）。`main.py`・featured media policy／runtime・
+  既存の画像系Foundation11 package・`requirements.txt`／`.env.example`はいずれも
+  無改修（Runtime Zero Diff維持）。Architecture Design〜Architecture Review 5
+  （5回の反復。occurrence-context allow-list方式のAST Guard
+  `GUARD-WMUE-CONSTRUCTION-SHAPE`（識別子の出現文脈を許可7形へ限定し、
+  `getattr`／`globals()`／`functools.partial`／factory／registry等の迂回経路を
+  個別列挙せず構造的に封じる）とbaseline commit固定allow-list方式のRuntime
+  Zero Diff guard（`NOIMPACT-SCOPE`、containment／coverage分離）を確立して収束、
+  Blocking 0・Major 0・Minor 1（match-case class patternの扱いをDeferred）・
+  Suggestion 1で「Approved with Suggestions」）・Production Implementation・
+  Implementation Review 1（Approved with Suggestions、Blocking 0・Major 0・
+  Minor 4・Suggestion 3）・Implementation Amendment 1（NOPARSE-検査への`str(exc)`
+  検出追加・vacuous assertion実質化・DEP allow-list対象を`wordpress_media_uploader.py`
+  単体へ明確化・dead code削除・陽性対照6形独立化を実施、316→324アサーション）・
+  Implementation Review 2（Approved with Suggestions、Blocking 0・Major 0・
+  Minor 1・Suggestion 1）・Formal Regression（正式Inventory25ファイル、
+  3713/3713 PASS。既存24ファイルbaseline 3389/3389完全維持＋新規v6.22.0
+  324/324 PASS）・Documentation Integration・Release Review（Verdict:
+  **Approved with Suggestions**。Blocking 0・Major 0・Minor 3件（RR-M-1〜
+  RR-M-3：設計書14.4〜14.6節の記述が実績と不整合だった内部ドキュメント
+  整合の問題で、Production Code・tests・Formal Regressionには影響なし。
+  いずれもFinalizeで解消）・Suggestion 1件（RR-S-1：設計書タイトル表記、
+  precedentに合わせ記録のみで不採用））を経て
+  （`docs/design/wordpress_media_upload_failure_reason_classification_foundation.md`）
+  **Release 6.22として完了した。**
+  既存E2E4ファイルの更新（`test_e2e_v6_9_0_*.py`／`test_e2e_v6_19_0_*.py`／
+  `test_e2e_v6_20_0_*.py`／`test_e2e_v6_21_0_*.py`、いずれも期待値・ラベル・
+  極性の差し替えのみでアサーション追加削除は0件）を含め、Formal Regression
+  baselineの数値的完全性を維持した。Deferred：`REQUEST_REJECTED`のさらなる
+  細分化はDI-11、`WordPressMediaUploadError`のreason分類自体は本Releaseで解消
+  したためDI-10は完了、Media Upload Retry／IdempotencyはDI-6、WordPress Unused
+  Media CleanupはDI-7として引き続き独立検討する。match-case class pattern
+  （`case WordPressMediaUploadError():`）をGuardのallow-listへ含めるか否かは
+  Deferredのまま次Releaseへ持ち越す
 - [x] **Article Featured Media Runtime Wiring**（v6.21.0、DI-4後半）：
   v6.20.0 `ArticleFeaturedMediaRuntime`（`from_env()` / `is_available()` / `apply()`）を
   `main.py`の記事ループへ実際に配線した、DI-4 Runtime Wiringの後半（本体）。
@@ -1082,11 +1143,6 @@
   独立させ、いずれもDI-4 Runtime Wiring着手前の正式な再評価（ORD-1）を必須とした
   （ORD-2〜ORD-4：現契約を受容するならDI-10／DI-11未完了でも着手可、CONTINUE対象の
   拡大または現在の可用性低下の不受容時に限り完了が前提となる）
-- [ ] **WordPress Media Upload Failure Reason Classification（DI-10）**（次候補・未着手）：
-  `WordPressMediaUploadError`へ、v6.11.0 `OpenAIImageGenerationErrorReason`と同型の
-  分類Enum（型・HTTPステータスのみに基づき、message解析を行わない）を純追加する。
-  v6.9.0のPublic API変更を伴うため独立Releaseを要する。Image Generation Fallback
-  Policy（v6.19.0）のDI-4着手前再評価（ORD-1）の対象
 - [ ] **OpenAI Image Generation Request Rejection Reason Refinement（DI-11）**
   （次候補・未着手）：v6.11.0 `_classify_api_error()`が単一の`REQUEST_REJECTED`へ
   集約している複数のProvider例外型を、記事固有の失敗（Content Policy拒否）と

@@ -991,9 +991,14 @@ try:
     import image_generation_fallback_policy as _v619_pkg
 
     check(
-        "COMPAT-V609. wordpress_media.__all__が不変",
+        "COMPAT-V609. wordpress_media.__all__がDI-10のreason分類Enumを含む",
         sorted(_v609_pkg.__all__),
-        sorted(["MediaUploadResult", "WordPressMediaUploadError", "WordPressMediaUploader"]),
+        sorted([
+            "MediaUploadResult",
+            "WordPressMediaUploadError",
+            "WordPressMediaUploadErrorReason",
+            "WordPressMediaUploader",
+        ]),
     )
     check(
         "COMPAT-V610. ai_image_generation.__all__が不変",

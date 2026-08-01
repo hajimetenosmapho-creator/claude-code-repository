@@ -3073,6 +3073,11 @@ AI Image Generation Foundation・Generated Image → WordPress Media Upload Wiri
 詳細は`docs/design/wordpress_media_upload_foundation.md`
 （Architecture Design・Test Design（Changes Required×2を経て確定）・Code Review指摘反映の経緯を含む）を参照。
 
+**`WordPressMediaUploadError`のreason分類（`WordPressMediaUploadErrorReason`、
+構造情報のみに基づく12値taxonomy）はv6.22.0で追加された（Release Review
+Finalize、RR-M-3対応）。詳細は本ファイルの「WordPress Media Upload Failure
+Reason Classification Foundation層（v6.22.0）」節を参照。**
+
 ## AI Image Generation Contract Foundation層（`src/ai_image_generation/`、v6.10.0 実装完了）
 
 > **本節は実装完了時点の記録である。新規E2E（37シナリオ・70ケース・78アサーション・78/78 PASS）・既存Regression（v1.11.0〜v6.9.0 1514/1514 PASS、新規E2E込み合計1592/1592 PASS）とも完全PASSし、Architecture Review（3回目「Approved」）・Test Review（2回目「Approved」）・Code Review（2回目「Approved」）・Release Review（Approved）を経ている。**
@@ -4443,3 +4448,198 @@ Upload成功後の記事投稿失敗時の整合性・Retry時の重複Upload対
 
 詳細は`docs/design/article_featured_media_runtime_wiring.md`
 （Architecture Design・Architecture Review 1・Architecture Amendment 1・5.6節／5.7節・Production Implementation・New E2E・Formal Regression・Release Review 1・Release Review Findings Remediation・Formal Regression 2・Release Review 2・Documentation Integrationの経緯を含む）を参照。
+
+## WordPress Media Upload Failure Reason Classification Foundation層（`src/wordpress_media/`、v6.22.0）
+
+> **本節はRelease Review Finalize完了時点の記録である。Release Reviewは
+> Approved with Suggestions（Blocking 0件・Major 0件・Minor 3件：RR-M-1〜RR-M-3、
+> いずれも設計書14.4〜14.6節の記述と実績の不整合に関する内部ドキュメント整合の
+> 問題でありFinalizeで解消・Suggestion 1件：RR-S-1、記録のみで不採用）で完了し、
+> Release 6.22として完了した。** 新規E2E（standalone script形式、
+> `tests/test_e2e_v6_22_0_wordpress_media_upload_failure_reason_classification_foundation.py`、
+> API-／SIG-／CTOR-／NOVAL-／REQEXC-／STATUS-／REASON-R1〜R9／MSG-／COND-／
+> SUCCESS-／CHAIN-／NOPARSE-／GUARD-／SEC-／POLICY-／DEP-／SOCKET-／NOIMPACT-／
+> COMPAT-／COMPAT-DEP- の各Scenario prefix、324アサーション、324/324 PASS、終了コード0、
+> stderr空）・累積Formal Regression（正式Inventory25ファイル：
+> `test_e2e_v1_11_0_save_result.py`・`test_e2e_v5_9_0_*.py`・`test_e2e_v6_0_0_*.py`〜
+> `test_e2e_v6_22_0_*.py`、既存24ファイル3389/3389 PASS＋新規v6.22.0 324/324 PASS＝
+> 総合3713/3713 PASS、FAIL 0・SKIP 0・終了コード異常0・既知差分0・外部接続0）とも
+> 完全PASSした。Architecture Review 1（「Changes Required」、Blocking 1・Major 2・
+> Minor 4・Suggestion 3）→ Architecture Amendment 1 → Architecture Review 2
+> （「Changes Required」、Blocking 0・Major 1・Minor 5・Suggestion 3）→ Architecture
+> Amendment 2 → Architecture Review 3（「Changes Required」、Blocking 0・Major 1・
+> Minor 5・Suggestion 3）→ Architecture Amendment 3 → Architecture Review 4
+> （「Changes Required」、Blocking 1・Major 0・Minor 4・Suggestion 2）→ Architecture
+> Amendment 4 → Architecture Review 5（「Approved with Suggestions」、Blocking 0・
+> Major 0・Minor 1・Suggestion 1）の5回の反復を経て収束した。Production
+> Implementation・Implementation Review 1（「Approved with Suggestions」、
+> Blocking 0・Major 0・Minor 4・Suggestion 3）→ Implementation Amendment 1
+> （NOPARSE-検査への`str(exc)`検出追加・vacuous assertion実質化・DEP allow-list
+> 対象明確化・dead code削除・陽性対照6形独立化、316→324アサーション）→
+> Implementation Review 2（「Approved with Suggestions」、Blocking 0・Major 0・
+> Minor 1・Suggestion 1）を経てFormal Regressionを完了し、Documentation
+> Integrationを完了した。**Release Review：Approved with Suggestions（Blocking 0・
+> Major 0・Minor 3：RR-M-1〜RR-M-3、Suggestion 1：RR-S-1）。Release：Completed。**
+
+### 概要
+
+Release 6.9.0で導入された`WordPressMediaUploadError`（`src/wordpress_media/`）へ、
+構造情報（例外型・HTTPステータスコード）のみに基づく分類Enum
+`WordPressMediaUploadErrorReason`を純追加する、Deferred Item DI-10 の実装である。
+v6.11.0 `OpenAIImageGenerationErrorReason`と同型の設計判断（Enum・`reason`属性・
+分類関数の型/値ベース判定）を踏襲しつつ、既存テストコードとの後方互換（1引数
+構築10箇所）を理由に`reason`を既定値`UNKNOWN`付きの任意引数とする点で意図的に
+逸脱した（10.2節 D-1）。**Consumer-less Foundationであり、v6.19.0
+`decide_image_generation_fallback()`は`reason`属性を一切読まないため、
+CONTINUE対象の拡大は本Releaseでは行っていない。**
+
+### Public API
+
+`src/wordpress_media/wordpress_media_uploader.py`：
+
+```python
+class WordPressMediaUploadErrorReason(Enum):
+    TIMEOUT                = "timeout"
+    CONNECTION             = "connection"
+    AUTHENTICATION         = "authentication"
+    PERMISSION_DENIED      = "permission_denied"
+    ROUTE_NOT_FOUND        = "route_not_found"
+    PAYLOAD_TOO_LARGE      = "payload_too_large"
+    UNSUPPORTED_MEDIA_TYPE = "unsupported_media_type"
+    RATE_LIMIT             = "rate_limit"
+    REQUEST_REJECTED       = "request_rejected"
+    SERVER_ERROR           = "server_error"
+    INVALID_RESPONSE       = "invalid_response"
+    UNKNOWN                = "unknown"
+
+
+class WordPressMediaUploadError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        reason: WordPressMediaUploadErrorReason = WordPressMediaUploadErrorReason.UNKNOWN,
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
+```
+
+`src/wordpress_media/__init__.py`の`__all__`を3→4 symbolへ拡張し、
+`WordPressMediaUploadErrorReason`をpackage rootから公開した（D-3。v6.11.0が
+`OpenAIImageGenerationErrorReason`を公開しているのと同じPublic API形状の対称性）。
+HTTPステータスコード自体は属性として公開しない（D-2。既に`_build_non_2xx_message()`
+のmessageへ含まれており、生値の公開はtaxonomyの迂回を招くため）。`__init__`は
+`reason`のvalidationを一切行わない（D-4。例外構築中の新たな例外送出を避けるため。
+v6.19.0 policyは`getattr(error, "reason", None)`による防御的読み取りを既に実装済み）。
+
+### Taxonomy と mapping
+
+分類は2つのmodule-private純粋関数が担う。いずれも`raise`しない・副作用を持たない・
+`message`／`exc.args`／`response.text`／`.json()`／`.headers`／`.content`を
+参照しない（G-3'）。
+
+- `_classify_request_exception(exc)`：`requests`例外の型のみで判定。
+  `ConnectTimeout`が`ConnectionError`と`Timeout`の両方のsubclassである実測事実
+  （project venv、`requests` 2.34.2で確認）に基づき、`Timeout`を`ConnectionError`
+  より先に判定する（v6.11.0 `_classify_api_error()`の`APITimeoutError`/
+  `APIConnectionError`判定順序と同型のcontract）。`TIMEOUT`／`CONNECTION`／
+  それ以外は`UNKNOWN`の3値のみを返す。
+- `_classify_status_code(status_code)`：HTTPステータス値のみで判定。
+  401→`AUTHENTICATION`、403→`PERMISSION_DENIED`、404→`ROUTE_NOT_FOUND`、
+  413→`PAYLOAD_TOO_LARGE`、415→`UNSUPPORTED_MEDIA_TYPE`、429→`RATE_LIMIT`、
+  その他4xx→`REQUEST_REJECTED`、5xx→`SERVER_ERROR`、範囲外・非int（bool含む）
+  →`UNKNOWN`（防御的分岐。`Response.status_code`は常にintのためproduction
+  経路では到達不能だが、全域関数であることを保証するために保持する）。
+
+`upload()`内の既存9 raise経路と`reason`の対応：
+
+| 経路 | 発生条件 | reason |
+|---|---|---|
+| R-1 | `requests.post()`が`RequestException`送出 | `_classify_request_exception(exc)` |
+| R-2 | 非2xx応答 | `_classify_status_code(response.status_code)` |
+| R-3 | 2xx応答の`.json()`が`ValueError` | `INVALID_RESPONSE`（固定） |
+| R-4 | 2xx応答のJSONが`dict`でない | `INVALID_RESPONSE`（固定） |
+| R-5 | `id`が欠落／`bool`／非`int`／`< 1` | `INVALID_RESPONSE`（固定） |
+| R-6 | `source_url`キー欠落 | `INVALID_RESPONSE`（固定） |
+| R-7 | `source_url`が`None`でも`str`でもない | `INVALID_RESPONSE`（固定） |
+| R-8 | `mime_type`キー欠落 | `INVALID_RESPONSE`（固定） |
+| R-9 | `mime_type`が`None`でも`str`でもない | `INVALID_RESPONSE`（固定） |
+
+R-3〜R-9は「2xx応答だが本文が契約を満たさない」という同一層の失敗であり、
+外部由来の構造情報を持たないため固定値`INVALID_RESPONSE`とする（区別する
+情報が存在しない。細分化はDEF-6.22-5として将来検討）。
+
+### Compatibility／Zero Behavior Change
+
+既存9 raise経路の**message文字列は1文字も変更していない**（`_build_non_2xx_message()`
+の出力形式を含む）。`from exc`によるchaining（R-1・R-3）・分岐条件（`if`式）・
+`upload()`のsignature・戻り値型・成功時の`MediaUploadResult`構築はいずれも不変
+であることを、HEAD版とのAST式単位の照合で確認した。既存テスト4ファイル
+（X-1〜X-6、11.2節）の更新は期待値・ラベル文言・極性の差し替えのみで、
+アサーションの追加・削除は0件：
+
+- `test_e2e_v6_9_0_*.py`（X-1）：`PM-3b`の`__all__`期待値を3→4 symbolへ
+- `test_e2e_v6_19_0_*.py`（X-2・X-3）：`COMPAT-V69-*`の期待値・ラベル、
+  `COMPAT-WP-NO-REASON-ATTR`の極性反転
+- `test_e2e_v6_20_0_*.py`（X-4）：`COMPAT-V609`の期待値・ラベル
+- `test_e2e_v6_21_0_*.py`（X-5・X-6）：`NOIMPACT-UNCHANGED`→`NOIMPACT-SCOPE`
+  （allow-list containment方式への精緻化。案C）、`_allowed_test_changes`を3→6件へ
+
+### Security／no-message-parsing
+
+分類関数・例外インスタンスのいずれもURL・credential・response本文・
+HTTPステータスの生値を保持しない（I-2・SEC-3・SEC-4）。message解析
+（`str(exc)`／`exc.args`／`response.text`／`.json()`／`.headers`／`.content`
+への参照）は分類関数内で構造的に禁止し、AST検査（`NOPARSE-`prefix）で
+検証する。対象は`_classify_request_exception`／`_classify_status_code`の
+2関数のみであり、`_build_non_2xx_message()`／`upload()`内の既存
+`response.json()`呼び出しは対象外（そちらは分類ではなく既存の正当な処理）。
+
+### Runtime Zero Diff
+
+`main.py`／`src/image_generation_fallback_policy/`／
+`src/article_featured_media_runtime/`／既存の画像系Foundation11 package
+（`src/wordpress_media/`を除く）／`src/outputs/`／`src/logger/`／`scripts/`／
+`requirements.txt`／`.env.example`はいずれも無変更である。baseline commit
+（`578af6bdaeec23dd0c145a57384369ede433e3e4`、Release 6.21.0完了時点）固定の
+allow-list方式guard（`NOIMPACT-SCOPE`）で、`src/wordpress_media`のみ設計書が
+宣言した2ファイル（`__init__.py`／`wordpress_media_uploader.py`）以外の差分が
+ないことを、containment（`changed ⊆ allowed`）とcoverage（`allowed ⊆ changed`）
+の両方向から検証した。
+
+### Test Review／Architecture Review 経緯の要点
+
+occurrence-context allow-list方式のAST Guard`GUARD-WMUE-CONSTRUCTION-SHAPE`
+（識別子`WordPressMediaUploadError`がAST上に現れてよい文脈をクラス定義／
+`raise`直下の直接構築／引数注釈／戻り値注釈／`AnnAssign`注釈／`except`節／
+`isinstance`・`issubclass`第2引数の7形へ限定し、それ以外の出現をすべて
+違反とする）は、Architecture Review 3で「禁止形を列挙するdeny-list方式は
+`getattr`／`globals()`／`functools.partial`／factory・helper・registry経由等の
+迂回を個別に閉じきれない」ことが実測で判明したため、方式転換により確立した。
+Architecture Review 4・5では型位置allow-listの拡張とdocstring除外（v6.11.0
+Reason Enum docstring precedentと同型）を追加した。Implementation Review 2の
+Minor 1件（設計書17章とAC-6.22-13の禁止参照一覧の同期不完全。`message`項目の
+記載漏れ）はDocumentation Integrationで解消した。
+
+### Deferred
+
+- `WordPressMediaUploadError`のreason分類自体はDI-10として本Releaseで完了した
+- OpenAI `REQUEST_REJECTED`の細分化はDI-11として引き続き独立検討する
+- Media Upload Retry／IdempotencyはDI-6、WordPress Unused Media CleanupはDI-7
+  として引き続き独立検討する
+- `REQUEST_REJECTED`（その他4xx）・`INVALID_RESPONSE`のさらなる細分化は
+  将来Release候補として設計書19章に記録する
+- match-case class pattern（`case WordPressMediaUploadError():`）がGuardの
+  allow-listに含まれず過剰拒否となりうる点はArchitecture Review 5 Minor
+  （M5-1）として記録し、現行production codeには該当形が存在せず緊急性は
+  低いため、本Releaseでは変更せずDeferredのまま次Releaseへ持ち越す
+- `_scan_noparse_violations()`の`str(...)`検出がAC-6.22-13の例示（`str(exc)`）
+  より広く任意の`str(...)`呼び出しを禁止する実装になっている点は
+  Implementation Review 2 Suggestion（S2R-1）として記録し（設計書
+  DEF-6.22-15）、両分類関数に正当な`str()`呼び出しは存在せず実害はないため、
+  本Releaseではtest fileを変更せずDeferredのまま次Releaseへ持ち越す
+
+詳細は`docs/design/wordpress_media_upload_failure_reason_classification_foundation.md`
+（Architecture Design・Architecture Review 1〜5・Architecture Amendment 1〜4・
+Production Implementation・New E2E・Implementation Review 1・Implementation
+Amendment 1・Implementation Review 2・Formal Regression・Documentation
+Integrationの経緯を含む）を参照。

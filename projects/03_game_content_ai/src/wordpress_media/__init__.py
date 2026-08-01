@@ -8,11 +8,13 @@ Retry Runtime関連の既存コードのいずれへも依存しない。
 from .media_upload_result import MediaUploadResult
 from .wordpress_media_uploader import (
     WordPressMediaUploadError,
+    WordPressMediaUploadErrorReason,
     WordPressMediaUploader,
 )
 
 __all__ = [
     "MediaUploadResult",
     "WordPressMediaUploadError",
+    "WordPressMediaUploadErrorReason",
     "WordPressMediaUploader",
 ]

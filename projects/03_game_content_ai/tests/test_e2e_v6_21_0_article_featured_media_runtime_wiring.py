@@ -867,6 +867,16 @@ _protected_paths = [
     ".env.example",
 ]
 
+# v6.22.0（DI-10）が Architecture Design で正式に宣言した「保護対象内での意図的変更」。
+# 既定は空集合（＝従来と同じ「差分ゼロ」の意味）。src/wordpress_media のみ非空。
+# 設計書11.7.1節「採用する精緻化（案C：allow-list 方式）」参照。
+_allowed_source_changes = {
+    "src/wordpress_media": frozenset({
+        "src/wordpress_media/__init__.py",
+        "src/wordpress_media/wordpress_media_uploader.py",
+    }),
+}
+
 for _rel in _protected_paths:
     # vacuous pass防止その1：検査対象が作業ツリーに実在すること
     check_true(f"NOIMPACT-EXISTS[{_rel}]. 検査対象が作業ツリーに実在する", (PROJECT_ROOT / _rel).exists())
@@ -883,23 +893,39 @@ for _rel in _protected_paths:
         f"NOIMPACT-BASELINE-TRACKED[{_rel}]. baseline commitに追跡ファイルが存在する",
         _ls_proc.returncode == 0 and bool(_ls_proc.stdout.strip()),
     )
-    # baseline commit と作業ツリーの比較（staged／unstaged／commit済みのすべてを含む）
-    _diff_proc = subprocess.run(
-        ["git", "diff", "--quiet", BASELINE_COMMIT, "--", _rel],
+    # baseline commit と作業ツリーの差分ファイル集合が allow-list の範囲内であること
+    # （containment: changed ⊆ allowed）。allowed が空集合の場合、差分ゼロと論理的に
+    # 等価であり検査強度は不変（設計書11.7.1節）。--relative により project root 相対
+    # の POSIX パスを git 自身に生成させる（v6.21.0 の basename 正規化より厳密）。
+    _scope_diff_proc = subprocess.run(
+        ["git", "diff", "--name-only", "--relative", BASELINE_COMMIT, "--", _rel],
         cwd=str(PROJECT_ROOT),
         capture_output=True,
+        text=True,
         timeout=30,
     )
-    check(f"NOIMPACT-UNCHANGED[{_rel}]. baseline commitからの差分がない", _diff_proc.returncode, 0)
+    _scope_changed = {line.strip() for line in _scope_diff_proc.stdout.splitlines() if line.strip()}
+    _scope_allowed = _allowed_source_changes.get(_rel, frozenset())
+    check(
+        f"NOIMPACT-SCOPE[{_rel}]. baseline commitからの差分がallow-listの範囲内である",
+        sorted(_scope_changed - _scope_allowed),
+        [],
+    )
 
-# 既存testsは、設計書15.3節が認める2つの例外（v6.13.0／v6.20.0のGuard精緻化）以外に
-# 差分があってはならない
+# 既存testsは、設計書15.3節が認める2つの例外（v6.13.0／v6.20.0のGuard精緻化）に加え、
+# v6.22.0（DI-10）が正式に宣言した3件（v6.9.0／v6.19.0の既存アサーション更新、
+# および新規E2E自身）以外に差分があってはならない（設計書11.7.3節）
 _allowed_test_changes = {
     # 設計書15.3節が認めるGuard精緻化の例外2件
     "test_e2e_v6_13_0_article_featured_media_binding_foundation.py",
     "test_e2e_v6_20_0_article_featured_media_runtime_foundation.py",
     # 本Releaseで新規追加するE2E自身（commit後はbaseline比較で「追加」として現れる）
     "test_e2e_v6_21_0_article_featured_media_runtime_wiring.py",
+    # v6.22.0（DI-10）が既存アサーションを更新するファイル2件（X-1・X-2/X-3）
+    "test_e2e_v6_9_0_wordpress_media_upload_foundation.py",
+    "test_e2e_v6_19_0_image_generation_fallback_policy_foundation.py",
+    # v6.22.0（DI-10）の新規E2E自身
+    "test_e2e_v6_22_0_wordpress_media_upload_failure_reason_classification_foundation.py",
 }
 _tests_diff = subprocess.run(
     ["git", "diff", "--name-only", BASELINE_COMMIT, "--", "tests"],
@@ -915,7 +941,8 @@ _changed_tests = {
     if line.strip()
 }
 check(
-    "NOIMPACT-TESTS-SCOPE. tests/の差分が許容3件（15.3節の例外2件＋新規v6.21 E2E）の範囲内",
+    "NOIMPACT-TESTS-SCOPE. tests/の差分が許容6件（15.3節の例外2件＋v6.21 E2E＋"
+    "v6.22.0が更新する既存2件＋v6.22 E2E自身）の範囲内",
     sorted(_changed_tests - _allowed_test_changes),
     [],
 )

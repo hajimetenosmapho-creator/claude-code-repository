@@ -361,6 +361,174 @@
 
 ---
 
+## [v6.22.0] - 2026-08-01 ★ WordPress Media Upload Failure Reason Classification Foundation
+
+> **本Entryの時点でのRelease状態**：Architecture Design Completed／Architecture
+> Review 1〜4（各回「Changes Required」、Amendment 1〜4で収束）／Architecture
+> Review 5：**Approved with Suggestions**（Blocking 0件・Major 0件・Minor 1件：
+> M5-1「match-case class patternがGuard allow-list非対応」（Deferred、DEF-6.22参照）・
+> Suggestion 1件：S5-1「NOIMPACT-のpath検査対象の一言明記」）／Production
+> Implementation Completed／New E2E PASS（324/324）／Implementation Review 1：
+> **Approved with Suggestions**（Blocking 0件・Major 0件・Minor 4件：m1「NOPARSE-が
+> str(exc)を検出しない」・m2「NOPARSE-SCOPEがvacuous assertion」・m3「DEP検査対象の
+> 表現が実装と不一致」・m4「dead code 2件」、Suggestion 3件：s1「NOPARSE陽性対照の
+> 6形独立化」・s2「MSG-R2カバレッジ拡張」・s3「SEC-1/2整理」）→ **Implementation
+> Amendment 1：Completed**（m1〜m4を解消、s1採用・s2不採用・s3維持。新規E2E
+> 316→324アサーション）／Implementation Review 2：**Approved with Suggestions**
+> （Blocking 0件・Major 0件、Minor 1件：M2R-1「17章NOPARSE-禁止一覧とAC-6.22-13の
+> `message`項目が非同期」、Suggestion 1件：S2R-1「str(...)検出範囲がAC-13の例示より
+> 広いことの実装意図未記載」）／Formal Regression Completed（正式Inventory25ファイル、
+> 3713/3713 PASS：既存24ファイル3389/3389 PASS＋新規v6.22.0 324/324 PASS）／
+> Documentation Integration：Completed（本Entry。M2R-1を17章へ`message`追加で解消、
+> S2R-1をDEF-6.22-15としてDeferred記録。test fileは変更なし）。
+> **Release Review：Approved with Suggestions**（Blocking 0件・Major 0件・
+> Minor 3件：RR-M-1「設計書14.5節がArchitecture Amendment 4時点の記述のまま
+> Documentation Integration完了実績と矛盾」・RR-M-2「設計書14.4／14.6節の
+> ROADMAP `[ ]`→`[x]`更新方針・architecture.md節名が実運用と乖離」・
+> RR-M-3「architecture.mdのv6.9.0節へのreason分類ポインタ追記が未実施」、
+> いずれもFinalizeで解消。Suggestion 1件：RR-S-1「設計書タイトル『— Architecture
+> Design』表記」、precedentに合わせ記録のみで不採用）。
+> **Release：Completed。**
+
+### Added
+
+- `tests/test_e2e_v6_22_0_wordpress_media_upload_failure_reason_classification_foundation.py`
+  新規作成（Scenario prefix：API-／SIG-／CTOR-／NOVAL-／REQEXC-／STATUS-／
+  REASON-R1〜R9／MSG-／COND-／SUCCESS-／CHAIN-／NOPARSE-／GUARD-／SEC-／
+  POLICY-／DEP-／SOCKET-／NOIMPACT-／COMPAT-／COMPAT-DEP-、324アサーション、
+  324/324 PASS。Implementation Review 1時点は316アサーションで、Implementation
+  Amendment 1でNOPARSE-系8アサーションを追加し324へ増加）
+- `src/wordpress_media/wordpress_media_uploader.py`へ`WordPressMediaUploadErrorReason`
+  Enum（12値：`TIMEOUT`／`CONNECTION`／`AUTHENTICATION`／`PERMISSION_DENIED`／
+  `ROUTE_NOT_FOUND`／`PAYLOAD_TOO_LARGE`／`UNSUPPORTED_MEDIA_TYPE`／`RATE_LIMIT`／
+  `REQUEST_REJECTED`／`SERVER_ERROR`／`INVALID_RESPONSE`／`UNKNOWN`）を新規追加
+- `_classify_request_exception(exc)`／`_classify_status_code(status_code)`の
+  2 module-private純粋関数を新規追加（`requests`例外の型・HTTPステータス値の
+  みで分類し、message／`exc.args`／`response.text`／`.json()`／`.headers`／
+  `.content`のいずれも参照しない）
+- `docs/design/wordpress_media_upload_failure_reason_classification_foundation.md`
+  新規作成（Architecture Design〜Documentation Integrationの全経緯を記録）
+
+### Changed
+
+- `src/wordpress_media/wordpress_media_uploader.py`：
+  - `WordPressMediaUploadError.__init__(message, reason=WordPressMediaUploadErrorReason.UNKNOWN)`
+    を新規追加（`reason`属性を保持。既定値`UNKNOWN`は既存テストの1引数構築
+    10箇所との後方互換のため。validationは行わない）
+  - 既存9 raise経路すべてへ`reason=`をkeyword指定で追加。**message文字列・
+    `from exc`・`if`条件式・`upload()`のsignature・成功時の`MediaUploadResult`は
+    いずれも1文字も変更していない**（HEAD版とAST式単位で照合し完全一致を確認）
+  - module docstringへSource of Truth（本設計書）を追記
+- `src/wordpress_media/__init__.py`：`WordPressMediaUploadErrorReason`のimportと
+  `__all__`への追加（3→4 symbol）
+- 既存E2E 4ファイル（X-1〜X-6、期待値・ラベル文言・極性の差し替えのみ。
+  アサーション追加・削除は0件）：
+  - `tests/test_e2e_v6_9_0_wordpress_media_upload_foundation.py`：`PM-3b`の
+    `__all__`期待値を3→4 symbolへ
+  - `tests/test_e2e_v6_19_0_image_generation_fallback_policy_foundation.py`：
+    `COMPAT-V69-ALL-UNCHANGED`→`COMPAT-V69-ALL-WITH-REASON`（期待値・ラベル）、
+    `COMPAT-WP-NO-REASON-ATTR`の`check_false`→`check_true`（極性反転）
+  - `tests/test_e2e_v6_20_0_article_featured_media_runtime_foundation.py`：
+    `COMPAT-V609`の期待値・ラベル
+  - `tests/test_e2e_v6_21_0_article_featured_media_runtime_wiring.py`：
+    `NOIMPACT-UNCHANGED[<path>]`→`NOIMPACT-SCOPE[<path>]`（allow-list
+    containment方式への精緻化。案C。`_allowed_source_changes`を新設し
+    `src/wordpress_media`のみ意図2ファイルを登録）、`_allowed_test_changes`を
+    3→6件へ拡張
+- 既存の画像系Foundation11 package（`src/wordpress_media`を除く）・`main.py`・
+  `src/outputs/`・`src/logger/`・`scripts/`・`requirements.txt`・`.env.example`の
+  変更なし（Release 6.21.0 baseline commit固定比較で無変更を確認）
+
+### Contract概要
+
+- taxonomy 12値は「観測された構造の分類」であり、根本原因・是正actionとの
+  1対1対応を保証しない（Inherited Limitations、10.1.2節）
+- `upload()`内の既存9 raise経路とreasonの対応：R-1（RequestException）→
+  `_classify_request_exception(exc)`、R-2（非2xx）→
+  `_classify_status_code(response.status_code)`、R-3〜R-9（2xx応答の本文契約
+  違反：json ValueError／非dict／id不正／source_url欠落・型不正／mime_type
+  欠落・型不正）→固定値`INVALID_RESPONSE`
+- `_classify_request_exception`は`requests.Timeout`を`requests.ConnectionError`
+  より先に判定する（`ConnectTimeout`が両方のsubclassである実測事実に基づく
+  contract。project venv、`requests` 2.34.2で確認）
+- v6.19.0 `decide_image_generation_fallback()`は`WordPressMediaUploadError`を
+  型のみで判定し`reason`属性を読まないため、12 reasonすべてで
+  `MEDIA_UPLOAD_FAILED`／`PROPAGATE_ORIGINAL_ERROR`のまま不変
+  （CONTINUE対象拡大なし）
+- `WordPressMediaUploadErrorReason`はpackage rootから公開（`__all__`）、
+  HTTPステータスコード自体は属性として公開しない
+
+### Runtime Zero Diff
+
+- 本Releaseは`src/wordpress_media/`（`__init__.py`／`wordpress_media_uploader.py`
+  の2ファイルのみ）についてのみRuntime Zero Diffを意図的に解除する
+- `main.py`／`src/image_generation_fallback_policy/`／
+  `src/article_featured_media_runtime/`／既存の画像系Foundation11 package／
+  `src/outputs/`／`src/logger/`／`scripts/`／`requirements.txt`／`.env.example`
+  はいずれも無変更であることを、Release 6.21.0 baseline commit
+  （`578af6bdaeec23dd0c145a57384369ede433e3e4`）固定比較（occurrence-context
+  allow-list方式：containment `changed ⊆ allowed` ＋ coverage `allowed ⊆ changed`）
+  で確認した
+
+### Security／Dependency
+
+- 分類関数はresponse object・例外objectのいずれも保持しない。reason valueは
+  URL・credential・response本文・HTTPステータス生値を含まない固定ラベルのみ
+- 分類における message 解析（`str(exc)`／`message`／`exc.args`／
+  `response.text`／`.json()`／`.headers`／`.content`への参照）を構造的に禁止し、
+  AST検査（`NOPARSE-` prefix、対象は分類関数2本のみ）で検証
+- `src/wordpress_media/wordpress_media_uploader.py`のimportは
+  `os`／`re`／`enum`／`requests`／`.media_upload_result`のみ（AST検査、
+  `DEP-` prefix）
+- 新規dependency追加なし（`requirements.txt`変更なし）
+
+### Tested
+
+- `tests/test_e2e_v6_22_0_wordpress_media_upload_failure_reason_classification_foundation.py`：
+  324アサーション、324/324 PASS（終了コード0、警告0、skip 0、Tracebackなし）
+- Formal Regression（正式Inventory25ファイルを個別実行。`tests/`配下の全E2Eの
+  無差別実行はしていない）：
+  - 既存24ファイル（`test_e2e_v1_11_0_save_result.py`・`test_e2e_v5_9_0_*.py`・
+    `test_e2e_v6_0_0_*.py`〜`test_e2e_v6_21_0_*.py`）：3389/3389 PASS
+    （Release 6.21.0 baseline完全維持）
+  - 新規v6.22.0 E2E：324/324 PASS
+  - 総合：**3713/3713 PASS**。全25ファイル終了コード0、FAIL 0、SKIP 0、
+    既知差分0、外部API実接続0、network使用0、credential使用0、Git状態不変
+- Architecture Review 1〜4：各回「Changes Required」（詳細は設計書0.4〜0.7節）、
+  Architecture Amendment 1〜4でいずれも収束
+- Architecture Review 5：「Approved with Suggestions」（Blocking 0件・Major 0件、
+  Minor 1件：M5-1（match-case class pattern、Deferred）、Suggestion 1件：S5-1）
+- Production Implementation：「Completed」
+- Implementation Review 1：「Approved with Suggestions」（Blocking 0件・Major 0件、
+  Minor 4件：m1〜m4、Suggestion 3件：s1〜s3）
+- Implementation Amendment 1：「Completed」（m1〜m4解消、s1採用・s2不採用・s3維持）
+- Implementation Review 2：「Approved with Suggestions」（Blocking 0件・Major 0件、
+  Minor 1件：M2R-1、Suggestion 1件：S2R-1）
+- Formal Regression：「Completed」（正式Inventory25ファイル、3713/3713 PASS）
+- Documentation Integration：Completed（`docs/ROADMAP.md` / `docs/architecture.md` /
+  本Entry / 正式設計書へ反映済み。M2R-1を設計書17章へ`message`追加で解消し
+  AC-6.22-13と完全同期。S2R-1は設計書19章`DEF-6.22-15`としてDeferred記録、
+  test fileは変更していない）
+- Release Review：「Approved with Suggestions」（Blocking 0件・Major 0件、
+  Minor 3件：RR-M-1・RR-M-2・RR-M-3、Suggestion 1件：RR-S-1）。Formal Regression
+  再実行（正式Inventory25ファイル、3713/3713 PASS）で既存3389／新規324とも
+  再確認済み
+- Release Review Finalize：「Completed」
+  - RR-M-1：設計書14.5節を「Architecture Amendment 4時点（歴史的記録）」へ
+    改め、14.1〜14.4が実施済みであることを明記（0.2節・0.10節との矛盾を解消）
+  - RR-M-2：設計書14.4節へ「ROADMAPは Release Review 承認まで `[ ]` を維持し
+    Finalize時に `[x]` へ更新する」運用を明記し、実際に`docs/ROADMAP.md`の
+    DI-10エントリを`[x]`へ更新。14.6節見出しを「Release Review Finalizeで
+    適用済み」へ改め、architecture.md節名が正式名称（Foundation層）と一致
+    するよう明記
+  - RR-M-3：`docs/architecture.md`のv6.9.0「WordPress Media Upload Foundation層」
+    節末尾へ、reason分類（v6.22.0追加）を指すポインタを追記
+  - RR-S-1：設計書タイトル「— Architecture Design」表記は、v6.21.0設計書と
+    同一precedentのため変更せず記録のみとした
+- Release：「Completed」
+
+---
+
 ## [v6.21.0] - 2026-07-30 ★ Article Featured Media Runtime Wiring
 
 > **本Entryの時点でのRelease状態**：Architecture Design Completed／Architecture Review 1

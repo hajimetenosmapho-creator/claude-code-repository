@@ -209,7 +209,12 @@ check_true(
 check(
     "PM-3b. __all__完全一致",
     sorted(wordpress_media.__all__),
-    sorted(["MediaUploadResult", "WordPressMediaUploadError", "WordPressMediaUploader"]),
+    sorted([
+        "MediaUploadResult",
+        "WordPressMediaUploadError",
+        "WordPressMediaUploadErrorReason",
+        "WordPressMediaUploader",
+    ]),
 )
 print()
 

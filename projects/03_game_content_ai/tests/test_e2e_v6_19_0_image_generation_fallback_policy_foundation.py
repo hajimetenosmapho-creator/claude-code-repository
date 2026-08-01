@@ -1295,16 +1295,21 @@ try:
 
     import wordpress_media as _v69_pkg
     check(
-        "COMPAT-V69-ALL-UNCHANGED. v6.9の__all__が不変",
+        "COMPAT-V69-ALL-WITH-REASON. v6.9の__all__がDI-10のreason分類Enumを含む",
         sorted(_v69_pkg.__all__),
-        sorted(["MediaUploadResult", "WordPressMediaUploadError", "WordPressMediaUploader"]),
+        sorted([
+            "MediaUploadResult",
+            "WordPressMediaUploadError",
+            "WordPressMediaUploadErrorReason",
+            "WordPressMediaUploader",
+        ]),
     )
 
     _wp_error_instance = WordPressMediaUploadError("compat check")
-    check_false(
+    check_true(
         "COMPAT-WP-NO-REASON-ATTR. WordPressMediaUploadErrorインスタンスにreason属性が"
-        "追加されていない（N-17の遵守。DI-10実施時にこのScenarioは既知差分として"
-        "更新対象となる。20章 DI-10参照）",
+        "追加されている（DI-10実施済み。本Scenarioは既知差分としてN-17の遵守から"
+        "反転した。20章 DI-10参照）",
         hasattr(_wp_error_instance, "reason"),
     )
 
