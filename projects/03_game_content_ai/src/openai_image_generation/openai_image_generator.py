@@ -55,7 +55,12 @@ _MSG_EMPTY_DECODE_RESULT = "OpenAI Images APIのレスポンスのデコード�
 
 class OpenAIImageGenerationErrorReason(Enum):
     """OpenAIImageGenerationErrorの安全な失敗分類。秘密情報・Provider固有の生データは
-    一切含まない、固定された分類ラベルのみで構成する。"""
+    一切含まない、固定された分類ラベルのみで構成する。
+
+    v6.23.0（DI-11前半）で、要求拒否系の4つのSDK例外型を個別のreasonへ細分化した。
+    REQUEST_REJECTEDは後方互換のため削除せず保持する（productionからは
+    到達しなくなるが、値・意味・下流の写像はいずれも従来どおり）。
+    """
     AUTHENTICATION = "authentication"
     PERMISSION_DENIED = "permission_denied"
     RATE_LIMIT = "rate_limit"
@@ -65,6 +70,11 @@ class OpenAIImageGenerationErrorReason(Enum):
     SERVER_ERROR = "server_error"
     INVALID_RESPONSE = "invalid_response"
     UNKNOWN = "unknown"
+    # ─── v6.23.0 追加（既存9値の後ろへ追加する。既存の定義順は変更しない）───
+    BAD_REQUEST = "bad_request"
+    RESOURCE_NOT_FOUND = "resource_not_found"
+    CONFLICT = "conflict"
+    UNPROCESSABLE_ENTITY = "unprocessable_entity"
 
 
 class OpenAIImageGenerationError(RuntimeError):
@@ -101,6 +111,23 @@ def _classify_api_error(exc: "openai.APIError"):
     一切読み取らない。分類は例外の型（isinstance）のみに基づく。
     raiseは行わない。具体的なsubclassから一般的なAPIError（catch-all）の
     順に判定する。
+
+    ── 例外引数の使用形に関する契約（I-EXC-1、設計書7.8節）──
+    本関数の中で引数 exc を使ってよいのは isinstance(exc, ...) の第1引数
+    としてのみである。exc.<属性>・exc[...]・str(exc)・repr(exc)・vars(exc)・
+    getattr(exc, ...)・hasattr(exc, ...)・isinstance以外の関数への引き渡し・
+    比較・演算・return・代入・collection格納は、いずれも禁止する。
+    属性名を列挙して禁止するのではなく「許可される使用形はこの1つだけ」と
+    定めているため、SDKが将来追加する未知の属性も自動的に禁止側へ落ちる。
+    この契約はE2EのNOPARSE- guardがAST検査で機械的に強制する。
+
+    ── 判定順序の契約（設計書7.3節）──
+    APITimeoutErrorはAPIConnectionErrorのsubclassであるため、必ず先に判定する
+    （v6.11から継承する既存contract）。v6.23.0で追加した4型（BadRequestError／
+    NotFoundError／ConflictError／UnprocessableEntityError）は、いずれも
+    APIStatusErrorの直接subclassであり相互にsubclass関係を持たないため、
+    4型どうしの順序は結果に影響しない（openai 2.46.0で実測確認済み）。
+    それでも将来のSDK変更を検出できるよう、判定位置は現行のまま固定する。
     """
     import openai
 
@@ -130,11 +157,28 @@ def _classify_api_error(exc: "openai.APIError"):
             "OpenAI APIへの接続に失敗しました",
             OpenAIImageGenerationErrorReason.CONNECTION,
         )
-    if isinstance(exc, (openai.BadRequestError, openai.NotFoundError,
-                         openai.ConflictError, openai.UnprocessableEntityError)):
+    # v6.23.0（DI-11前半）: 従来はこの4型を単一のタプルで判定し
+    # REQUEST_REJECTEDへ集約していた。messageは4型とも従来と完全に同一の
+    # 文字列を維持し、reasonのみを細分化する（設計書7.6節のmessage凍結）。
+    if isinstance(exc, openai.BadRequestError):
         return (
             "OpenAI APIへのリクエストが不正です（Content Policy等による生成拒否を含む）",
-            OpenAIImageGenerationErrorReason.REQUEST_REJECTED,
+            OpenAIImageGenerationErrorReason.BAD_REQUEST,
+        )
+    if isinstance(exc, openai.NotFoundError):
+        return (
+            "OpenAI APIへのリクエストが不正です（Content Policy等による生成拒否を含む）",
+            OpenAIImageGenerationErrorReason.RESOURCE_NOT_FOUND,
+        )
+    if isinstance(exc, openai.ConflictError):
+        return (
+            "OpenAI APIへのリクエストが不正です（Content Policy等による生成拒否を含む）",
+            OpenAIImageGenerationErrorReason.CONFLICT,
+        )
+    if isinstance(exc, openai.UnprocessableEntityError):
+        return (
+            "OpenAI APIへのリクエストが不正です（Content Policy等による生成拒否を含む）",
+            OpenAIImageGenerationErrorReason.UNPROCESSABLE_ENTITY,
         )
     if isinstance(exc, openai.InternalServerError):
         return (

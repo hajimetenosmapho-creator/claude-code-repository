@@ -18,9 +18,15 @@ package（`ai_image_generation` / `article_featured_media_orchestration` /
 
 本packageは try／except を1つも持たず、受け取った例外を再送出・wrap・変換
 しない。分類は例外の型（isinstance）と `OpenAIImageGenerationError.reason`
-（v6.11が secret-free と定めた分類Enum）の同一性比較（`is`）のみに基づき、
+（v6.11が secret-free と定めた分類Enum）の同一性比較（`is`）および
+module-level allow-list（`frozenset`）への所属判定のみに基づき、
 例外message・provider応答本文・HTTPステータスコードのいずれも読み取らない
 （設計書13.2節・13.5節）。
+
+v6.23.0（DI-11前半）で `_REJECTED_REASONS` を追加し、v6.11が細分化した
+要求拒否系4 reason と既存の REQUEST_REJECTED をまとめて
+`IMAGE_GENERATION_REQUEST_REJECTED` へ写像する。継続対象
+（`_CONTINUABLE_REASONS` の4値）は変更していない。
 """
 from __future__ import annotations
 
@@ -95,6 +101,22 @@ _CONTINUABLE_REASONS = frozenset({
     OpenAIImageGenerationErrorReason.SERVER_ERROR,
 })
 
+# 「要求そのものが拒否された」ことを表す reason の allow-list（設計書10.5節）。
+# v6.23.0（DI-11前半）でv6.11のREQUEST_REJECTEDが4値へ細分化されたため、
+# 単一値の同一性照合（is）から集合照合へ変更した。
+# _CONTINUABLE_REASONSと同じくallow-list（deny-listではない）であるため、
+# v6.11が将来さらにreasonを追加しても、新しい値はこの集合にも
+# _CONTINUABLE_REASONSにも属さず、自動的にUNCLASSIFIED（安全側）へ落ちる。
+# REQUEST_REJECTEDはproductionからは生成されなくなったが、外部から構築された
+# 場合に従来と同一の結論を返すため、集合に残す（後方互換）。
+_REJECTED_REASONS = frozenset({
+    OpenAIImageGenerationErrorReason.REQUEST_REJECTED,
+    OpenAIImageGenerationErrorReason.BAD_REQUEST,
+    OpenAIImageGenerationErrorReason.RESOURCE_NOT_FOUND,
+    OpenAIImageGenerationErrorReason.CONFLICT,
+    OpenAIImageGenerationErrorReason.UNPROCESSABLE_ENTITY,
+})
+
 
 @dataclass(frozen=True)
 class ImageGenerationFallbackDecision:
@@ -138,7 +160,10 @@ def decide_image_generation_fallback(
         if reason is OpenAIImageGenerationErrorReason.AUTHENTICATION \
                 or reason is OpenAIImageGenerationErrorReason.PERMISSION_DENIED:
             category = ImageGenerationFailureCategory.IMAGE_GENERATION_NOT_AUTHORIZED
-        elif reason is OpenAIImageGenerationErrorReason.REQUEST_REJECTED:
+        elif (
+            isinstance(reason, OpenAIImageGenerationErrorReason)
+            and reason in _REJECTED_REASONS
+        ):
             category = ImageGenerationFailureCategory.IMAGE_GENERATION_REQUEST_REJECTED
         elif (
             isinstance(reason, OpenAIImageGenerationErrorReason)

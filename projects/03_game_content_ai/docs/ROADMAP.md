@@ -951,6 +951,60 @@
   非対称性はInherited Limitationとして明記し、厳格化はDeferred Item DI-9
   （Image Generation Gate Value Strict Validation）として独立検討する。`dataclasses.asdict(root)`は
   secret-safeなserializationではないことをContractとして明記した。
+- [x] **OpenAI Image Generation API Rejection Reason Classification Foundation**
+  （v6.23.0、DI-11前半）：v6.11.0 `_classify_api_error()`が単一の`REQUEST_REJECTED`へ
+  集約していた4つのSDK例外型を、**SDK例外型だけを根拠として**4値へ細分化した、
+  DI-11 前半の実装。`OpenAIImageGenerationErrorReason`を**9値→13値**へ拡張し、
+  `BAD_REQUEST`（`openai.BadRequestError`／HTTP 400）／`RESOURCE_NOT_FOUND`
+  （`openai.NotFoundError`／404）／`CONFLICT`（`openai.ConflictError`／409）／
+  `UNPROCESSABLE_ENTITY`（`openai.UnprocessableEntityError`／422）を追加した。
+  **既存`REQUEST_REJECTED`は後方互換のため削除・改名せず保持する**（value
+  `"request_rejected"`のまま。productionからは生成されなくなるが、外部から
+  構築した場合の下流の結論は従来と完全に同一）。既存9値のname・value・**定義順**は
+  1文字も変更していない。分類は`isinstance`のみに基づき、**response body・
+  message・HTTPステータスコード・例外の属性値はいずれも読み取らない**。
+  この契約は例外引数の使用形を`isinstance(exc, ...)`の第1引数のみに限る
+  **positive allow-list方式のAST guard（I-EXC-1）**で機械的に強制しており、
+  禁止属性を列挙しないためSDKが将来追加する未知属性も自動的に禁止される。
+  `src/image_generation_fallback_policy/image_generation_fallback_policy.py`へ
+  `_REJECTED_REASONS`（`frozenset`・5値＝`REQUEST_REJECTED`＋新4値）を新設し、
+  5値すべてを`IMAGE_GENERATION_REQUEST_REJECTED`＋`PROPAGATE_ORIGINAL_ERROR`へ
+  明示的に写像した。category splitは**4/1/2/2 → 4/5/2/2**となり、
+  **CONTINUE対象（`_CONTINUABLE_REASONS`）は既存4値のまま1値も拡大していない**
+  （`IMAGE_GENERATION_FAILED`へ写像されるreasonが4件のままであることが直接証拠）。
+  exception message（4型とも同一文字列を凍結）・exception chaining（`from None`）・
+  public signature・成功経路・`main.py`はいずれも不変であり、**Runtime Action
+  Zero Diff（Z-1〜Z-8）**が成立する。ただし**public `.reason`は対象4型で意図的に
+  変更される**ため、本Releaseを「Production Behavior Zero Diff」とは表現しない。
+  Architecture Review（Approved with Findings、Blocking 0・Major 0・Minor 4・
+  Suggestion 2）・Test Review（初回 Approved with Suggestions／再判定
+  **Changes Required**：NOPARSE guardがdeny-list方式であり「例外型のみで分類」を
+  完全保証できないという未解消Major 1件）・Test Review Findings反映
+  （deny-list → **positive allow-list方式**への転換で解消）・Production
+  Implementation・限定テスト（1313/1313 PASS）・Formal Regression（正式Inventory
+  **26ファイル、4053/4053 PASS**。既存25ファイル3721/3721 PASS＋新規v6.23.0
+  332/332 PASS。FAIL 0・SKIP 0・全ファイル終了コード0・外部API実接続0件）・
+  Release Review（Verdict: **Approved with Suggestions**。Blocking 0・Major 0・
+  Minor 1件（RR-M-1：NOIMPACT陽性対照2件が実guard値を参照しない恒真式。guard本体の
+  coverage／equality検査は健全でありProduction behavior・安全性・Runtime Action
+  Zero Diffへの影響なし。DEF-6.23-12としてDeferred化）・Suggestion 2件
+  （RR-S-1／RR-S-2：いずれも記録のみで修正不要））を経て
+  （`docs/design/openai_image_generation_api_rejection_reason_classification_foundation.md`）
+  **Release 6.23として完了した。**
+  既存E2E 4ファイルの更新（`test_e2e_v6_11_0_*.py`／`test_e2e_v6_19_0_*.py`／
+  `test_e2e_v6_21_0_*.py`／`test_e2e_v6_22_0_*.py`）を含め、assertion件数の変動は
+  **v6.19.0の254→262（+8。Enum値追加に対する期待表駆動ループの構造的追随）のみ**で
+  あり、v6.11.0（248）・v6.21.0（147）・v6.22.0（324）はいずれも件数不変である。
+  v6.21.0／v6.22.0のbaseline固定guardはGR-1〜GR-11に従いallow-listとラベルのみを
+  更新し（`_protected_paths` 22件・`BASELINE_COMMIT`はいずれも不変）、v6.23.0は
+  GR-6に従い自身のbaseline（`8fd8453`）を固定した専用guardを持つ。
+  **Deferred：** v6.22から継承したS2R-1（DEF-6.22-15）は本Releaseで**完了**
+  （`test_e2e_v6_22_0_*.py`へ説明コメントを追記。AST等価性により検査ロジック不変を
+  確認済み）。M5-1（match-case class patternのguard allow-list扱い）は本Releaseが
+  構築形guardを必要としなかったため**判断機会が発生せず継続**。DI-11後半
+  （`UNKNOWN`の2経路分離・`INVALID_RESPONSE`の細分化）はDEF-6.23-3／DEF-6.23-4、
+  message改訂はDEF-6.23-1、CONTINUE拡大（ORD-3の領域）はDEF-6.23-2、
+  NOIMPACT陽性対照の実値化はDEF-6.23-12として、それぞれ独立検討する
 - [x] **WordPress Media Upload Failure Reason Classification Foundation**（v6.22.0、DI-10）：
   `WordPressMediaUploadError`（v6.9.0）へ、構造情報（例外型・HTTPステータスコード）
   のみに基づく分類Enumを純追加する、DI-10 の実装。新規12値Enum
@@ -1143,12 +1197,17 @@
   独立させ、いずれもDI-4 Runtime Wiring着手前の正式な再評価（ORD-1）を必須とした
   （ORD-2〜ORD-4：現契約を受容するならDI-10／DI-11未完了でも着手可、CONTINUE対象の
   拡大または現在の可用性低下の不受容時に限り完了が前提となる）
-- [ ] **OpenAI Image Generation Request Rejection Reason Refinement（DI-11）**
-  （次候補・未着手）：v6.11.0 `_classify_api_error()`が単一の`REQUEST_REJECTED`へ
-  集約している複数のProvider例外型を、記事固有の失敗（Content Policy拒否）と
-  全記事へ反復するsystemic failure（model不存在・model提供終了）へ細分化する。
-  v6.11.0のPublic API変更（Enum値追加）を伴うため独立Releaseを要する。Image
-  Generation Fallback Policy（v6.19.0）のDI-4着手前再評価（ORD-1）の対象
+- [ ] **OpenAI Image Generation Request Rejection Reason Refinement 後半（DI-11後半）**
+  （次候補・未着手）：DI-11の前半（`REQUEST_REJECTED`のSDK例外型による4値細分化）は
+  **v6.23.0で完了**した（上記参照）。後半として次の2点が残る。①`UNKNOWN`の2経路分離
+  （`openai.APIError` catch-all経路と`except Exception`経路の区別。DEF-6.23-3）。
+  ②`INVALID_RESPONSE`の細分化（単発の応答破損とprovider／SDKのスキーマ変更の区別。
+  DEF-6.23-4）。いずれも`generate()`の制御フロー変更または
+  `_validate_response_structure()`の戻り値契約変更を伴うため、v6.23.0の
+  「Enum値追加＋分類分岐追加」という閉じた形を崩す。独立Releaseを要する。
+  なお**Content Policy拒否の判別（`CONTENT_POLICY_REJECTED`の新設）は
+  例外型だけでは判定不能**であり、response bodyの`code`解析を要するため
+  解析禁止contract（G-8）に抵触する。DEF-6.23-6として別途独立検討する
 - [ ] **Media Upload Retry／Idempotency Foundation**（次候補）：Retry Queueのmedia_id保持field
   拡張、重複Upload防止、idempotency keyの確立。既存`RetryQueueItem`にmedia_id相当のfieldが
   存在しないことを踏まえ独立検討する

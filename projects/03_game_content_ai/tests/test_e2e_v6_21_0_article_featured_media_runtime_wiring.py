@@ -875,6 +875,16 @@ _allowed_source_changes = {
         "src/wordpress_media/__init__.py",
         "src/wordpress_media/wordpress_media_uploader.py",
     }),
+    # v6.23.0（DI-11前半）が Architecture Design で正式に宣言した意図的変更。
+    # GR-9：保護対象パスへ触れるReleaseは、それ以前に存在するすべての
+    # baseline固定guardのallow-listを更新する。GR-4：登録できるのは
+    # 当該Releaseの設計書File Change Planが宣言したファイルのみ。
+    "src/openai_image_generation": frozenset({
+        "src/openai_image_generation/openai_image_generator.py",
+    }),
+    "src/image_generation_fallback_policy": frozenset({
+        "src/image_generation_fallback_policy/image_generation_fallback_policy.py",
+    }),
 }
 
 for _rel in _protected_paths:
@@ -926,6 +936,9 @@ _allowed_test_changes = {
     "test_e2e_v6_19_0_image_generation_fallback_policy_foundation.py",
     # v6.22.0（DI-10）の新規E2E自身
     "test_e2e_v6_22_0_wordpress_media_upload_failure_reason_classification_foundation.py",
+    # v6.23.0（DI-11前半）が更新する既存E2E（v6_19_0は上記に既出）と新規E2E自身
+    "test_e2e_v6_11_0_openai_image_generation_adapter_foundation.py",
+    "test_e2e_v6_23_0_openai_image_generation_api_rejection_reason_classification_foundation.py",
 }
 _tests_diff = subprocess.run(
     ["git", "diff", "--name-only", BASELINE_COMMIT, "--", "tests"],
@@ -941,8 +954,8 @@ _changed_tests = {
     if line.strip()
 }
 check(
-    "NOIMPACT-TESTS-SCOPE. tests/の差分が許容6件（15.3節の例外2件＋v6.21 E2E＋"
-    "v6.22.0が更新する既存2件＋v6.22 E2E自身）の範囲内",
+    "NOIMPACT-TESTS-SCOPE. tests/の差分がallow-listの範囲内である"
+    "（GR-7に従い許容件数はラベルへ埋め込まない）",
     sorted(_changed_tests - _allowed_test_changes),
     [],
 )

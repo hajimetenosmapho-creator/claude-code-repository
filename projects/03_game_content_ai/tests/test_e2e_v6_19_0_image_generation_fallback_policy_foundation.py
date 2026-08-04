@@ -697,14 +697,20 @@ try:
         "PERMISSION_DENIED": ImageGenerationFailureCategory.IMAGE_GENERATION_NOT_AUTHORIZED,
         "INVALID_RESPONSE": ImageGenerationFailureCategory.UNCLASSIFIED,
         "UNKNOWN": ImageGenerationFailureCategory.UNCLASSIFIED,
+        # v6.23.0（DI-11前半）で追加された4 reason。いずれもREQUEST_REJECTEDと
+        # 同一のcategoryへ写像される（設計書7.5.1節の全数写像表）。
+        "BAD_REQUEST": ImageGenerationFailureCategory.IMAGE_GENERATION_REQUEST_REJECTED,
+        "RESOURCE_NOT_FOUND": ImageGenerationFailureCategory.IMAGE_GENERATION_REQUEST_REJECTED,
+        "CONFLICT": ImageGenerationFailureCategory.IMAGE_GENERATION_REQUEST_REJECTED,
+        "UNPROCESSABLE_ENTITY": ImageGenerationFailureCategory.IMAGE_GENERATION_REQUEST_REJECTED,
     }
     check(
-        "REASON-ENUM-COUNT. OpenAIImageGenerationErrorReasonが9値である",
+        "REASON-ENUM-COUNT. OpenAIImageGenerationErrorReasonが13値である（v6.23.0で9→13）",
         len(_ALL_REASONS),
-        9,
+        13,
     )
     check(
-        "REASON-COVERAGE-COMPLETE. 全9値が期待分類表と過不足なく一致する",
+        "REASON-COVERAGE-COMPLETE. 全13値が期待分類表と過不足なく一致する",
         {r.name for r in _ALL_REASONS},
         set(_expected_category_by_reason_name.keys()),
     )
@@ -734,7 +740,10 @@ try:
 
     check(
         "REASON-SPLIT-4-1-2-2. decide()の実測結果を集計した結果、"
-        "reason 9値が4/1/2/2で分割される（m-2対応：自己参照ではなく実測値を集計）",
+        "reason 13値がFAILED/REQUEST_REJECTED/NOT_AUTHORIZED/UNCLASSIFIED = "
+        "4/5/2/2で分割される（v6.23.0でREQUEST_REJECTED側が1→5。"
+        "FAILED側は4のまま不変＝CONTINUE非拡大の直接証拠。"
+        "m-2対応：自己参照ではなく実測値を集計。Scenario IDは据え置き）",
         {
             ImageGenerationFailureCategory.IMAGE_GENERATION_FAILED:
                 _actual_by_category_count.get(ImageGenerationFailureCategory.IMAGE_GENERATION_FAILED, 0),
@@ -747,15 +756,16 @@ try:
         },
         {
             ImageGenerationFailureCategory.IMAGE_GENERATION_FAILED: 4,
-            ImageGenerationFailureCategory.IMAGE_GENERATION_REQUEST_REJECTED: 1,
+            ImageGenerationFailureCategory.IMAGE_GENERATION_REQUEST_REJECTED: 5,
             ImageGenerationFailureCategory.IMAGE_GENERATION_NOT_AUTHORIZED: 2,
             ImageGenerationFailureCategory.UNCLASSIFIED: 2,
         },
     )
     check(
-        "REASON-SPLIT-TOTAL-9. 実測分類の合計が9件であり、欠落・重複がない（m-2対応）",
+        "REASON-SPLIT-TOTAL-9. 実測分類の合計が13件であり、欠落・重複がない"
+        "（v6.23.0で9→13。m-2対応。Scenario IDは据え置き）",
         sum(_actual_by_category_count.values()),
-        9,
+        13,
     )
     check(
         "REASON-SPLIT-NO-STRAY-CATEGORY. 実測分類が上記4 Category以外へ"
@@ -1288,9 +1298,10 @@ try:
         sorted(["OpenAIImageGenerator", "OpenAIImageGenerationError", "OpenAIImageGenerationErrorReason"]),
     )
     check(
-        "COMPAT-V611-REASON-COUNT-9. OpenAIImageGenerationErrorReasonが依然9値である",
+        "COMPAT-V611-REASON-COUNT-9. OpenAIImageGenerationErrorReasonが13値である"
+        "（v6.23.0 DI-11前半による既知差分。9→13。Scenario IDは据え置き）",
         len(list(OpenAIImageGenerationErrorReason)),
-        9,
+        13,
     )
 
     import wordpress_media as _v69_pkg

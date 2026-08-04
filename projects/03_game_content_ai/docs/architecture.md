@@ -4643,3 +4643,224 @@ Minor 1件（設計書17章とAC-6.22-13の禁止参照一覧の同期不完全�
 Production Implementation・New E2E・Implementation Review 1・Implementation
 Amendment 1・Implementation Review 2・Formal Regression・Documentation
 Integrationの経緯を含む）を参照。
+
+> **v6.23.0 追記**：本層が確立した`WordPressMediaUploadErrorReason`（12値）は
+> v6.23.0でも**一切変更していない**（v6.23.0のE2E `COMPAT-WP-REASON-12`／
+> `COMPAT-WP-ALL`で12値・`__all__` 4 symbolの不変を確認済み）。
+> 上記Deferredのうち**S2R-1（DEF-6.22-15）はv6.23.0で完了**した
+> （`tests/test_e2e_v6_22_0_*.py`へ説明コメントを追記。Release Reviewが
+> `_scan_noparse_violations()`のASTがHEADと完全一致することを確認しており、
+> 検査ロジック・`_FORBIDDEN_ATTRS`・assertion件数はいずれも不変）。
+> **M5-1は継続**（v6.23.0は構築形guardを必要とせず判断機会が発生しなかった）。
+> **DI-11はv6.23.0で前半（`REQUEST_REJECTED`のSDK例外型による4値細分化）が完了**し、
+> 後半（`UNKNOWN`の2経路分離・`INVALID_RESPONSE`の細分化）が残る。
+> 詳細は次節「OpenAI Image Generation API Rejection Reason Classification Foundation層」。
+
+---
+
+## OpenAI Image Generation API Rejection Reason Classification Foundation層（`src/openai_image_generation/` ＋ `src/image_generation_fallback_policy/`、v6.23.0）
+
+> **本節はRelease Review Finalize完了時点の記録である。Release Reviewは
+> Approved with Suggestions（Blocking 0件・Major 0件・Minor 1件：RR-M-1
+> （v6.23 E2EのNOIMPACT陽性対照2件が実guard値を参照しない恒真式。guard本体の
+> coverage／equality検査は健全でありProduction behavior・安全性・Runtime Action
+> Zero Diffへの影響なし。DEF-6.23-12としてDeferred化し本Releaseでは修正しない）・
+> Suggestion 2件：RR-S-1／RR-S-2（いずれも記録のみ・修正不要））で完了し、
+> Release 6.23として完了した。** 新規E2E（standalone script形式、
+> `tests/test_e2e_v6_23_0_openai_image_generation_api_rejection_reason_classification_foundation.py`、
+> API-／COMPAT-REJECTED-／CLS-／ORDER-／E2E-／MSG-／CHAIN-／POLICY-／REJECTSET-／
+> CONT-／ZERODIFF-／RUNTIME-／NOPARSE-／SEC-／DEP-／NOEXC-／COMPAT-／NOIMPACT-／
+> SOCKET-／ENV- の各Scenario prefix、**332アサーション、332/332 PASS**、終了コード0）・
+> 累積Formal Regression（正式Inventory**26ファイル**：`test_e2e_v1_11_0_save_result.py`・
+> `test_e2e_v5_9_0_*.py`・`test_e2e_v6_0_0_*.py`〜`test_e2e_v6_23_0_*.py`、
+> **既存25ファイル3721/3721 PASS＋新規v6.23.0 332/332 PASS＝総合4053/4053 PASS**、
+> FAIL 0・SKIP 0・終了コード異常0・外部接続0）とも完全PASSした。
+> **既知差分は`test_e2e_v6_19_0_*.py`の254→262（+8。Enum値追加に対する
+> `_ALL_REASONS`駆動ループ2箇所の構造的追随）のみ**であり、v6.11.0（248）・
+> v6.21.0（147）・v6.22.0（324）はいずれも件数不変、他21ファイルもv6.22.0実績から
+> 変動なし。設計時の見込み値（N = 332／3721／4053）はすべて実測と一致し乖離0件。
+> Architecture Review（「Approved with Findings」、Blocking 0・Major 0・Minor 4・
+> Suggestion 2）→ Test Review 初回（「Approved with Suggestions」、Blocking 0・
+> Major 2・Minor 4・Suggestion 2）→ Test Review 再判定（「**Changes Required**」、
+> 未解消Major 1：NOPARSE guardがdeny-list方式であり未知属性を検出できない）→
+> Test Review Findings反映（**positive allow-list方式への転換**で解消）→
+> Production Implementation → 限定テスト（1313/1313 PASS）→ Formal Regression →
+> Release Review という経緯を経ている。
+
+### Purpose
+
+v6.11.0 `_classify_api_error()`が単一の`REQUEST_REJECTED`へ集約していた4つのSDK
+例外型を、**SDK例外型だけを根拠として**4値へ細分化する（DI-11前半）。
+記事固有の失敗と全記事へ反復するsystemic failureを将来区別できるようにするための
+**分類手段の確立**が目的であり、**判断（CONTINUE／PROPAGATE）は一切変更しない**。
+
+```
+openai SDK 例外
+        │
+        ▼
+_classify_api_error(exc)   ← exc は isinstance(exc, ...) の第1引数としてのみ使用可（I-EXC-1）
+        │
+        ├─ BadRequestError          (400) → BAD_REQUEST            ★v6.23.0
+        ├─ NotFoundError            (404) → RESOURCE_NOT_FOUND     ★v6.23.0
+        ├─ ConflictError            (409) → CONFLICT               ★v6.23.0
+        ├─ UnprocessableEntityError (422) → UNPROCESSABLE_ENTITY   ★v6.23.0
+        └─ （既存6型 ＋ catch-all は不変）
+        │
+        ▼
+OpenAIImageGenerationError(message【凍結】, reason)
+        │
+        ▼
+decide_image_generation_fallback(error)        ← v6.19.0
+        │
+        ├─ reason ∈ _REJECTED_REASONS（5値）★v6.23.0で新設
+        │      → IMAGE_GENERATION_REQUEST_REJECTED / PROPAGATE_ORIGINAL_ERROR
+        ├─ reason ∈ _CONTINUABLE_REASONS（4値・不変）
+        │      → IMAGE_GENERATION_FAILED / CONTINUE_WITHOUT_FEATURED_MEDIA
+        └─ その他 → UNCLASSIFIED / PROPAGATE_ORIGINAL_ERROR
+```
+
+### Package Boundary
+
+**新規packageは作成しない。** 既存2packageの各1ファイルのみを変更する。
+
+```
+src/openai_image_generation/
+    openai_image_generator.py        ← 変更（Enum 4値追加・分類分岐4分割）
+    __init__.py                      ← 無変更（新symbolなし。__all__は3 symbolのまま）
+
+src/image_generation_fallback_policy/
+    image_generation_fallback_policy.py  ← 変更（_REJECTED_REASONS新設・分岐条件）
+    __init__.py                      ← 無変更（__all__は4 symbolのまま）
+```
+
+### reason taxonomy（9値 → 13値）
+
+既存9値の**name・value・定義順は1文字も変更していない**。新4値は末尾へ追加する。
+
+| # | name | value | 由来（SDK例外型／HTTP） |
+|---|---|---|---|
+| 1〜5 | `AUTHENTICATION`／`PERMISSION_DENIED`／`RATE_LIMIT`／`TIMEOUT`／`CONNECTION` | 既存 | 既存（不変） |
+| 6 | `REQUEST_REJECTED` | `request_rejected` | **後方互換のため保持**。productionからは生成されない |
+| 7〜9 | `SERVER_ERROR`／`INVALID_RESPONSE`／`UNKNOWN` | 既存 | 既存（不変） |
+| 10 | **`BAD_REQUEST`** | `bad_request` | `openai.BadRequestError`／400 |
+| 11 | **`RESOURCE_NOT_FOUND`** | `resource_not_found` | `openai.NotFoundError`／404 |
+| 12 | **`CONFLICT`** | `conflict` | `openai.ConflictError`／409 |
+| 13 | **`UNPROCESSABLE_ENTITY`** | `unprocessable_entity` | `openai.UnprocessableEntityError`／422 |
+
+`REQUEST_REJECTED`を削除しない理由は、①`__all__`経由で公開されたPublic APIであること、
+②既存E2Eが直接構築していること、③production到達不能な公開値は害がないこと、
+④将来SDKが新しい4xx型を追加した際の受け皿として再利用できること、である。
+
+### 分類契約（例外型のみ・positive allow-list guard）
+
+分類は`isinstance`のみに基づき、**response body・exception message・HTTPステータス
+コード・例外の属性値はいずれも読み取らない**。この契約は
+**例外引数使用形のpositive allow-list方式AST guard（I-EXC-1）**で機械的に強制する。
+
+```
+【I-EXC-1】_classify_api_error() の関数本体において、例外引数を表す識別子の
+          出現は次の唯一の形に限られる。
+
+              isinstance( <exc> , ... )   ← <exc> が第1引数の位置にあること
+
+          これ以外のあらゆる出現文脈は違反とする。
+          例外引数名はハードコードせず、第1 positional parameter から AST で決定する。
+```
+
+**禁止属性を列挙しない**ため、SDKが将来追加する未知属性（`exc.<new_attr>`）も
+自動的に禁止側へ落ちる。これはv6.22.0の`GUARD-WMUE-CONSTRUCTION-SHAPE`が
+「識別子の出現文脈をallow-listで縛ることで迂回形の個別列挙を不要にした」のと
+**同型の設計**である。Test Reviewが**deny-list方式（禁止属性列挙）では未知属性を
+検出できない**と指摘（再判定Major）したことを受けて転換した。
+
+guardは陽性対照16形・陰性対照4形を持ち、Release Reviewの独立検証では
+**さらに28の追加攻撃形（別名束縛`_is = isinstance; _is(exc, X)`・ネスト関数
+クロージャ・`lambda`・引数再束縛・`exc.args[0]`・`type(exc)`・`%`演算子等）を
+すべて検出**し、正当形5形はすべて通過した（偽陽性0）。
+本番実装は`exc`のName出現**10件・全件allow形・違反0件**である。
+
+検査対象は`_classify_api_error()`の`ast.FunctionDef`本体のみに限定する
+（module全体へ適用すると`generate()`の`self`・`_build_generated_image()`の
+`response`が偽陽性となることを実測確認済み）。
+
+### fallback policyの全数写像（13値）
+
+`_REJECTED_REASONS`（`frozenset`・5値＝`REQUEST_REJECTED`＋新4値）を新設し、
+5値すべてを`IMAGE_GENERATION_REQUEST_REJECTED`＋`PROPAGATE_ORIGINAL_ERROR`へ
+写像する。category splitは**4/1/2/2 → 4/5/2/2**となる。
+
+`_CONTINUABLE_REASONS`と同じく**allow-list**（deny-listではない）であるため、
+v6.11が将来さらにreasonを追加しても新値は自動的に`UNCLASSIFIED`（安全側）へ
+落ちるというv6.19.0のC-17性質を破壊しない。
+
+**CONTINUE対象（`_CONTINUABLE_REASONS`の4値）は1値も拡大していない。**
+`IMAGE_GENERATION_FAILED`へ写像されるreasonが4件のままであることが直接証拠であり、
+v6.19.0の既存assertion `CONT-EXACTLY-4`が**期待値を変更せずPASSし続ける**ことでも
+確認される。
+
+### Runtime Action Zero Diff（Z-1〜Z-8）
+
+> **本Releaseは「Production Behavior Zero Diff」とは表現しない。**
+> public属性`OpenAIImageGenerationError.reason`は対象4型に対して**意図的に別の値に
+> なる**ため、Production behavior全体が不変であるとは記載できない。安全性の根拠は
+> 「観測可能な挙動が変わらないこと」ではなく、**「reasonを読む消費者がv6.19 policy
+> ただ1つであり、その写像を同時に更新したため下流の結論が変わらないこと」**である。
+
+主張するZero Diffは次の8点に限定される。
+
+| ID | 内容 |
+|---|---|
+| **Z-1** | Runtime Action Zero Diff（13 reasonすべてで`action`・`status`がv6.22.0時点と一致） |
+| **Z-2** | Category Zero Diff（`decision.category`が一致。policy更新は**Zero Diffを維持するための変更**） |
+| **Z-3** | main.py Zero Diff（バイト単位で差分なし） |
+| **Z-4** | Message Zero Diff（4型とも同一文字列を凍結） |
+| **Z-5** | Chaining Zero Diff（`raise ... from None`により`__cause__`／`__context__`が到達不能） |
+| **Z-6** | Signature Zero Diff（`__init__(message, reason)`・`reason`は既定値なしの必須引数のまま） |
+| **Z-7** | Success-path Zero Diff（`GeneratedImage`生成経路が不変） |
+| **Z-8** | CONTINUE Set Zero Diff（`_CONTINUABLE_REASONS`が4値のまま） |
+
+Enum追加とpolicy更新は**不可分**であり、片側のみの実装・rollbackは禁止する。
+policy未更新の場合は`ZERODIFF-SDK-CATEGORY`／`POLICY-CATEGORY`／`REJECTSET-EXACT`／
+`ZERODIFF-PARTIAL-ENUM-ONLY`が同時FAILする。Enum未追加の場合は
+`_REJECTED_REASONS`の定義時に`AttributeError`となりmodule import段階で全体FAILする。
+
+### baseline固定guard（GR-1〜GR-11）
+
+v6.21.0／v6.22.0のbaseline固定guardは、GR-9（保護対象パスへ触れるReleaseは
+それ以前のすべてのbaseline固定guardのallow-listを更新する）に従い
+allow-listとラベルのみを更新した。`_protected_paths`（22件）・`BASELINE_COMMIT`は
+いずれも**不変**であり（GR-1・GR-2）、assertion件数も変わっていない（GR-5）。
+ラベルからは許容件数の表現を除去した（GR-7）。
+
+v6.23.0はGR-6に従い、自身のbaseline（`8fd845348d1ee4c80db8de2942da5f99c2bcf0fd`）を
+固定した専用guardを持ち、`src/openai_image_generation`と
+`src/image_generation_fallback_policy`の2パスについて
+**equality（containment `changed ⊆ allowed` ∧ coverage `allowed ⊆ changed`）**を
+検査する。これにより`__init__.py`を誤って変更した場合も機械的に検出される。
+
+### 本Releaseの対象外
+
+`UNKNOWN`の2経路分離・`INVALID_RESPONSE`の細分化（いずれもDI-11後半）、
+`CONTENT_POLICY_REJECTED`の新設（例外型だけでは判定不能であり、response bodyの
+`code`解析を要するため解析禁止contractに抵触する）、CONTINUE対象の拡大
+（ORD-3の領域）、exception messageの改訂、`status_code`の属性公開、
+observability／logging（DI-5）、retry／idempotency（DI-6）、
+orphan media cleanup（DI-7）は、いずれも本Releaseの対象外である。
+
+### Deferred（本Release時点）
+
+- **S2R-1（DEF-6.22-15）：本Releaseで完了**
+- **M5-1：継続**（本Releaseは構築形guardを必要とせず判断機会が発生しなかった）
+- **DEF-6.23-1〜11：継続**（message改訂／CONTINUE拡大／DI-11後半／
+  Content Policy判別／`status_code`公開／DI-5へのreason記録／
+  zero-diff guardの共有レジストリ化／NOPARSE guardの他関数展開／
+  v6.19の件数埋め込みScenario ID改名 ほか）
+- **DEF-6.23-12（新規・Release Review RR-M-1由来）**：v6.23 E2Eの
+  NOIMPACT陽性対照2件を実`_changed`／allow-list値に基づく検証へ置き換えるかを、
+  次にv6.23のNOIMPACT guardへ触れるReleaseで判断する。本Releaseでは修正しない
+- **DEF-TR-1：破棄済み**（deny-list方式の廃止により論点ごと消滅）
+
+詳細は`docs/design/openai_image_generation_api_rejection_reason_classification_foundation.md`
+（Architecture Design・Architecture Review・Test Review 初回／再判定・
+Test Review Findings反映・Production Implementation・限定テスト・
+Formal Regression・Release Review・Documentation Integrationの経緯を含む）を参照。

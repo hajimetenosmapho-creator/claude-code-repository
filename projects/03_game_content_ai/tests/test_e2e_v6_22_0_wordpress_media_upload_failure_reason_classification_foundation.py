@@ -543,6 +543,13 @@ def _scan_noparse_violations(func_node) -> list:
             _f = node.func
             if isinstance(_f, ast.Attribute) and _f.attr == "json":
                 violations.append(f"L{node.lineno}:.json()")
+            # S2R-1（DEF-6.22-15）の解消：ここでは str() の引数を限定せず、
+            # 対象2関数内の「任意の」str(...)呼び出しを禁止している。
+            # AC-6.22-13の例示は str(exc) だが、引数名で絞ると
+            # str(exc.args[0]) 等の等価な迂回を許してしまう。両分類関数には
+            # 正当な str() 呼び出しが存在しないため、引数を問わず一律に
+            # 禁止するほうが安全側であり、将来どちらの関数へも一貫して
+            # 適用できる。これは意図的な設計判断であり、検査漏れではない。
             if isinstance(_f, ast.Name) and _f.id == "str":
                 violations.append(f"L{node.lineno}:str(...)")
         if isinstance(node, ast.Name) and node.id == "message":
@@ -1075,6 +1082,17 @@ _allowed_source_changes = {
         "src/wordpress_media/__init__.py",
         "src/wordpress_media/wordpress_media_uploader.py",
     }),
+    # v6.23.0（DI-11前半）が Architecture Design で正式に宣言した意図的変更。
+    # GR-9：保護対象パスへ触れるReleaseは、それ以前に存在するすべての
+    # baseline固定guardのallow-listを更新する。GR-4：登録できるのは
+    # 当該Releaseの設計書File Change Planが宣言したファイルのみ。
+    # equality（coverage）検査はv6.23自身のguardが担う（GR-6）。
+    "src/openai_image_generation": frozenset({
+        "src/openai_image_generation/openai_image_generator.py",
+    }),
+    "src/image_generation_fallback_policy": frozenset({
+        "src/image_generation_fallback_policy/image_generation_fallback_policy.py",
+    }),
 }
 
 for _rel in _protected_paths:
@@ -1149,6 +1167,9 @@ _allowed_test_changes = {
     "test_e2e_v6_20_0_article_featured_media_runtime_foundation.py",
     "test_e2e_v6_21_0_article_featured_media_runtime_wiring.py",
     "test_e2e_v6_22_0_wordpress_media_upload_failure_reason_classification_foundation.py",
+    # v6.23.0（DI-11前半）が更新する既存E2Eと新規E2E自身（GR-9）
+    "test_e2e_v6_11_0_openai_image_generation_adapter_foundation.py",
+    "test_e2e_v6_23_0_openai_image_generation_api_rejection_reason_classification_foundation.py",
 }
 _tests_diff_proc = subprocess.run(
     ["git", "diff", "--name-only", BASELINE_COMMIT, "--", "tests"],
@@ -1163,7 +1184,8 @@ _changed_tests = {
     if line.strip()
 }
 check(
-    "NOIMPACT-TESTS-SCOPE. tests/の差分が許容5件の範囲内である",
+    "NOIMPACT-TESTS-SCOPE. tests/の差分がallow-listの範囲内である"
+    "（GR-7に従い許容件数はラベルへ埋め込まない）",
     sorted(_changed_tests - _allowed_test_changes),
     [],
 )
@@ -1183,7 +1205,8 @@ _untracked_tests = {
     if line.startswith("??")
 }
 check(
-    "NOIMPACT-NO-UNTRACKED-TESTS. tests/のuntracked集合が許容5件の範囲内である",
+    "NOIMPACT-NO-UNTRACKED-TESTS. tests/のuntracked集合がallow-listの範囲内である"
+    "（GR-7に従い許容件数はラベルへ埋め込まない）",
     sorted(_untracked_tests - _allowed_test_changes),
     [],
 )
