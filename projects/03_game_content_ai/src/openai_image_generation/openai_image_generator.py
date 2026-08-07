@@ -60,6 +60,12 @@ class OpenAIImageGenerationErrorReason(Enum):
     v6.23.0（DI-11前半）で、要求拒否系の4つのSDK例外型を個別のreasonへ細分化した。
     REQUEST_REJECTEDは後方互換のため削除せず保持する（productionからは
     到達しなくなるが、値・意味・下流の写像はいずれも従来どおり）。
+
+    v6.24.0（DI-11後半）で、UNKNOWNのうちgeneric except Exception経路のみを
+    UNEXPECTED_EXCEPTIONへ、INVALID_RESPONSEのうちdata／b64_json構造不正2経路のみを
+    INVALID_RESPONSE_STRUCTUREへ分離した。UNKNOWN／INVALID_RESPONSEは後方互換のため
+    削除せず保持する（productionから生成される経路は縮小するが、値・意味・下流の
+    写像はいずれも従来どおり）。
     """
     AUTHENTICATION = "authentication"
     PERMISSION_DENIED = "permission_denied"
@@ -75,6 +81,9 @@ class OpenAIImageGenerationErrorReason(Enum):
     RESOURCE_NOT_FOUND = "resource_not_found"
     CONFLICT = "conflict"
     UNPROCESSABLE_ENTITY = "unprocessable_entity"
+    # ─── v6.24.0 追加（既存13値の後ろへ追加する。既存の定義順は変更しない）───
+    UNEXPECTED_EXCEPTION = "unexpected_exception"
+    INVALID_RESPONSE_STRUCTURE = "invalid_response_structure"
 
 
 class OpenAIImageGenerationError(RuntimeError):
@@ -201,11 +210,11 @@ def _validate_response_structure(response):
     """
     data = getattr(response, "data", _MISSING)
     if not isinstance(data, list) or len(data) != 1:
-        return (_MSG_INVALID_RESPONSE_STRUCTURE, OpenAIImageGenerationErrorReason.INVALID_RESPONSE, None)
+        return (_MSG_INVALID_RESPONSE_STRUCTURE, OpenAIImageGenerationErrorReason.INVALID_RESPONSE_STRUCTURE, None)
 
     b64_json = getattr(data[0], "b64_json", _MISSING)
     if not isinstance(b64_json, str) or not b64_json:
-        return (_MSG_INVALID_RESPONSE_STRUCTURE, OpenAIImageGenerationErrorReason.INVALID_RESPONSE, None)
+        return (_MSG_INVALID_RESPONSE_STRUCTURE, OpenAIImageGenerationErrorReason.INVALID_RESPONSE_STRUCTURE, None)
 
     return (None, None, b64_json)
 
@@ -348,7 +357,7 @@ class OpenAIImageGenerator:
             error_message, error_reason = _classify_api_error(exc)
         except Exception:
             error_message = _MSG_UNEXPECTED_ERROR
-            error_reason = OpenAIImageGenerationErrorReason.UNKNOWN
+            error_reason = OpenAIImageGenerationErrorReason.UNEXPECTED_EXCEPTION
 
         if error_message is not None:
             raise OpenAIImageGenerationError(error_message, error_reason) from None

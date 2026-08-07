@@ -4800,7 +4800,7 @@ v6.19.0の既存assertion `CONT-EXACTLY-4`が**期待値を変更せずPASSし�
 
 ### Runtime Action Zero Diff（Z-1〜Z-8）
 
-> **本Releaseは「Production Behavior Zero Diff」とは表現しない。**
+> **本Releaseが保証する不変範囲はRuntime Action Zero Diff（Z-1〜Z-8）に限定される。**
 > public属性`OpenAIImageGenerationError.reason`は対象4型に対して**意図的に別の値に
 > なる**ため、Production behavior全体が不変であるとは記載できない。安全性の根拠は
 > 「観測可能な挙動が変わらないこと」ではなく、**「reasonを読む消費者がv6.19 policy
@@ -4864,3 +4864,235 @@ orphan media cleanup（DI-7）は、いずれも本Releaseの対象外である�
 （Architecture Design・Architecture Review・Test Review 初回／再判定・
 Test Review Findings反映・Production Implementation・限定テスト・
 Formal Regression・Release Review・Documentation Integrationの経緯を含む）を参照。
+
+> **v6.24.0 追記**：本層が確立した`OpenAIImageGenerationErrorReason`（13値）は、
+> v6.24.0で**末尾へ2値追加（13値→15値）された以外は一切変更していない**
+> （v6.24.0のE2E `API-PREFIX-13-UNCHANGED`で先頭13値のname・value・順序の不変を、
+> `ASTEQ-CLASSIFY-EQUAL`で`_classify_api_error()`のbaselineとのAST完全一致を、
+> それぞれ確認済み）。
+> 上記Deferredのうち**DEF-6.23-3・DEF-6.23-4はv6.24.0で完了**した
+> （`UNKNOWN`のgeneric except Exception経路のみ`UNEXPECTED_EXCEPTION`へ、
+> `INVALID_RESPONSE`のdata／b64_json構造不正2経路のみ`INVALID_RESPONSE_STRUCTURE`へ、
+> それぞれ分離。catch-all経路・Base64系2経路はいずれも既存reasonのまま維持）。
+> **DEF-6.23-12もv6.24.0で完了**した（NOIMPACT陽性対照2件を実`_changed`／
+> allow-list値に基づく検証へ置換。既存containment／coverage／equality検査は
+> 弱めていない）。**これによりDI-11は前半（v6.23.0）＋後半（v6.24.0）で完結した。**
+> **M5-1は継続**（v6.24.0も構築形guardを必要とせず判断機会が発生しなかった）。
+> **DEF-6.23-10はvalidator部分（`_validate_response_structure()`）のみv6.24.0で
+> 解消し、他の入力受け取り関数への一般化は継続**する。
+> 詳細は次節「OpenAI Image Generation Unknown and Invalid Response Reason
+> Refinement Foundation層」。
+
+---
+
+## OpenAI Image Generation Unknown and Invalid Response Reason Refinement Foundation層（`src/openai_image_generation/`、v6.24.0）
+
+> **本節はDocumentation Integration完了時点の記録である。Architecture Reviewは
+> Approved with Minor Amendments（Minor 3件・Suggestion 1件・実装前必須Gate 1件、
+> いずれも設計書へ反映）で完了し、Production実装前Gate確認（Gate 1／2／4／5：PASS、
+> Gate 3：AST実測によりRequired Amendment 1件を検出・反映しPASS）を経て
+> Production Implementationへ進行した。** 新規E2E（standalone script形式、
+> `tests/test_e2e_v6_24_0_openai_image_generation_unknown_and_invalid_response_reason_refinement_foundation.py`、
+> API-／UNK-／RESP-／B64-／SPLIT-／COMPAT-／POLICY-／CONT-／ZERODIFF-／
+> POLICYFILE-／ASTEQ-／NOVALPARSE-／CHAIN-／MSG-／SIG-／DEP-／COMPATAPI-／
+> NOIMPACT-／SOCKET-／ENV- の各Scenario prefix、**346アサーション、346/346 PASS**、
+> 終了コード0）・累積Formal Regression（正式Inventory**27ファイル**：
+> `test_e2e_v1_11_0_save_result.py`・`test_e2e_v5_9_0_*.py`・
+> `test_e2e_v6_0_0_*.py`〜`test_e2e_v6_24_0_*.py`、**既存26ファイル4072/4072 PASS＋
+> 新規v6.24.0 346/346 PASS＝総合4418/4418 PASS**、FAIL 0・SKIP 0・終了コード異常0・
+> 外部接続0）とも完全PASSした。**既知差分は`test_e2e_v6_19_0_*.py`の262→272（+10）と
+> `test_e2e_v6_23_0_*.py`の332→341（+9）のみ**であり、v6.11.0（248）・v6.21.0（147）・
+> v6.22.0（324）はいずれも件数不変、他21ファイルもv6.23.0実績から変動なし。
+> `test_e2e_v6_23_0_*.py`の+9は設計時点の宣言（+3、DEF-6.23-12解消分のみ）を
+> 実測（限定テスト）で訂正した値であり、同ファイルが`test_e2e_v6_19_0_*.py`と
+> 同型の`_ALL_REASONS`駆動ループを2箇所持つことに伴う自動増（+6）が
+> 設計時点で計上漏れであったことによる。**期待値の緩和ではなく、coverage対象が
+> 13値から15値へ拡張されたことによる構造的追随**である。限定テスト実測値と
+> Formal Regression実測値は完全に一致し（乖離0）、Documentation Integrationを経て
+> 現時点に至る。Release Reviewは初回**Changes Required**（Blocking 0／Major 2／
+> Minor 3／Suggestion 4）からFindings Amendment反映・再確認（Minor 1件検出・反映）を
+> 経て、再々確認で**最終Verdict：Approved with Suggestions**（Blocking 0／Major 0／
+> Minor 0／Suggestion 6）が確定した。Code Reviewでは**Approved with Suggestions**
+> （Blocking 0／Major 0／Minor 0／Suggestion 7）を記録した。**Finalizeでs-6を解消した
+> ため、現在残存する非ブロッキングSuggestionは6件（s-1〜s-5、s-7）である。** Code
+> Review時点のVerdictおよび件数は履歴として維持する。
+> 人間による設計・実装・E2E・文書の最終承認は**完了**している。
+> **commit・pushはいずれも未実施のままである。**
+
+### Purpose
+
+v6.23.0時点で1値へ集約されていた2組の失敗経路を、reasonとして分離する（DI-11後半）。
+`UNKNOWN`は「`openai.APIError`のcatch-all経路」と「`generate()`のgeneric
+`except Exception`経路」の2つを、`INVALID_RESPONSE`は「`data`／`b64_json`構造不正」と
+「Base64デコード失敗／0バイト」の2つを、それぞれ1つのreasonへ集約していた。
+本Releaseは**新しいreasonを発明するのではなく、既にmessage単位では区別されていた
+境界をreason値へ昇格させる**ことが目的であり、**判断（CONTINUE／PROPAGATE）は
+一切変更しない**。
+
+```
+openai SDK 例外                              response構造
+        │                                            │
+        ▼                                            ▼
+_classify_api_error(exc)                _validate_response_structure(response)
+        │                                            │
+        ├─ 既存10型 → 既存10 reason（不変）          ├─ data／b64_json構造不正
+        ├─ openai.APIError catch-all → UNKNOWN（不変）│    → INVALID_RESPONSE_STRUCTURE ★v6.24.0
+        │                                            └─ 正常時 → (None, None, b64_json)（不変）
+        ▼
+generate()
+        │
+        ├─ except openai.APIError as exc: _classify_api_error(exc)（不変）
+        └─ except Exception: → UNEXPECTED_EXCEPTION ★v6.24.0
+                （旧: UNKNOWN。catch-allのUNKNOWNとは別reasonへ分離）
+        │
+        ▼
+OpenAIImageGenerationError(message【凍結】, reason)
+        │
+        ▼
+decide_image_generation_fallback(error)        ← v6.19.0（無改修）
+        │
+        ├─ reason ∈ _REJECTED_REASONS（5値・不変）
+        ├─ reason ∈ _CONTINUABLE_REASONS（4値・不変）
+        └─ その他（UNEXPECTED_EXCEPTION・INVALID_RESPONSE_STRUCTURE含む）
+               → UNCLASSIFIED / PROPAGATE_ORIGINAL_ERROR
+```
+
+### Package Boundary
+
+**新規packageは作成しない。既存1packageの1ファイルのみを変更する。**
+`image_generation_fallback_policy.py`は**無改修（0 diff）**である
+（新2 reasonがいずれもallow-list方式により自動的にUNCLASSIFIEDへ落ちるため）。
+
+```
+src/openai_image_generation/
+    openai_image_generator.py        ← 変更（Enum 2値追加・reason差し替え2箇所）
+    __init__.py                      ← 無変更（新symbolなし。__all__は3 symbolのまま）
+
+src/image_generation_fallback_policy/
+    image_generation_fallback_policy.py  ← 無変更（0 diff）
+    __init__.py                      ← 無変更
+```
+
+### reason taxonomy（13値 → 15値）
+
+既存13値の**name・value・定義順は1文字も変更していない**。新2値は末尾へ追加する。
+
+| # | name | value | 由来 |
+|---|---|---|---|
+| 1〜13 | 既存13値 | 既存 | 既存（不変。v6.11.0〜v6.23.0で確立） |
+| 14 | **`UNEXPECTED_EXCEPTION`** | `unexpected_exception` | `generate()`のgeneric `except Exception`経路 |
+| 15 | **`INVALID_RESPONSE_STRUCTURE`** | `invalid_response_structure` | `_validate_response_structure()`の`data`／`b64_json`構造不正 |
+
+`UNKNOWN`・`INVALID_RESPONSE`を削除しない理由は、①`__all__`経由で公開された
+Public APIであること、②既存E2Eが直接構築していること、③外部から構築した場合の
+下流の結論は従来と完全に同一であること、である。**両値とも production から
+到達し続ける（catch-all経路・Base64系経路が残るため）**が、到達する経路の範囲は
+縮小する。`INVALID_RESPONSE`の名称と縮小後の適用範囲の乖離はIL-6.24-1として
+後方互換上のInherited Limitationのまま受容し、改名判断はDEF-6.23-1へ合流させた。
+
+### 分類契約（安全側判定・positive allow-list guard）
+
+`_classify_api_error()`は**本Releaseで一切変更していない**（baselineとAST完全一致。
+I-EXC-1は無改修のまま有効）。`_validate_response_structure()`の外部応答値読み取りは
+**I-VAL-1**（新設）で規律される。
+
+```
+【I-VAL-1】_validate_response_structure() の関数本体において、外部応答値に
+          由来する識別子集合 R を根とする ast.Attribute が0件であること。
+
+          R は第1 positional parameter（response）を初期値とし、getattr戻り値の
+          代入先を再帰的に加える不動点集合として導出する（本Releaseの実測値：
+          R = {response, data, b64_json}）。
+
+          R に属さない識別子（内部Enumメンバ参照等）への属性アクセスは
+          対象外であり違反にならない。
+```
+
+Production実装前Gate確認のAST実測で、**関数全体で`ast.Attribute`が0件**という
+旧文言が、`_validate_response_structure()`が正当に行う内部Enum参照
+（`OpenAIImageGenerationErrorReason.INVALID_RESPONSE`等、実測2件）を
+誤って違反判定する欠陥を発見し、Rスコープ限定へ訂正した（許容対照W-5、
+陽性対照12形・陰性対照5形で機械的に保証）。`getattr`は
+`getattr(response, "data", _MISSING)`／`getattr(data[0], "b64_json", _MISSING)`の
+2件のみ、各3位置引数・keyword 0件、第2引数は`{"data","b64_json"}`のいずれか、
+という既存契約は維持する。
+
+### fallback policyの写像（無改修）
+
+新2 reason（`UNEXPECTED_EXCEPTION`／`INVALID_RESPONSE_STRUCTURE`）は
+`_REJECTED_REASONS`にも`_CONTINUABLE_REASONS`にも属さないため、
+**`image_generation_fallback_policy.py`を1バイトも変更せずに**
+`UNCLASSIFIED`＋`PROPAGATE_ORIGINAL_ERROR`へ自動的に写像される
+（v6.19.0のC-17性質：allow-list方式であるため新値は自動的に安全側へ落ちる）。
+category splitは**4/5/2/2 → 4/5/2/4**となる。
+
+**CONTINUE対象（`_CONTINUABLE_REASONS`の4値）は1値も拡大していない。**
+`IMAGE_GENERATION_FAILED`へ写像されるreasonが4件のままであることが直接証拠であり、
+v6.19.0の既存assertion `CONT-EXACTLY-4`が**期待値を変更せずPASSし続ける**ことでも
+確認される。
+
+### Runtime Action Zero Diff（Z-1〜Z-8）
+
+> **本Releaseが保証する不変範囲もRuntime Action Zero Diff（Z-1〜Z-8）に限定される。**
+> public属性`OpenAIImageGenerationError.reason`は対象2経路に対して**意図的に別の値に
+> なる**ため、Production behavior全体が不変であるとは記載できない。
+
+主張するZero Diffは次の8点に限定される。
+
+| ID | 内容 |
+|---|---|
+| **Z-1** | Runtime Action Zero Diff（15 reasonすべてで`action`がv6.23.0時点と一致） |
+| **Z-2** | Category Zero Diff（`decision.category`が一致。policy側は0 diffのため自動的に成立） |
+| **Z-3** | main.py Zero Diff（バイト単位で差分なし） |
+| **Z-4** | Message Zero Diff（全raise経路のmessage文字列が完全一致） |
+| **Z-5** | Chaining Zero Diff（`raise ... from None`により`__cause__`／`__context__`が到達不能） |
+| **Z-6** | Signature Zero Diff（`_validate_response_structure()`の3要素返却形を含め不変） |
+| **Z-7** | Success-path Zero Diff（`GeneratedImage`生成経路が不変） |
+| **Z-8** | CONTINUE Set Zero Diff（`_CONTINUABLE_REASONS`が4値のまま） |
+
+### baseline固定guard（GR-1〜GR-11）
+
+v6.21.0／v6.22.0／v6.23.0のbaseline固定guardは、GR-9に従いallow-listとラベルのみを
+更新した。`_protected_paths`（22件）・`BASELINE_COMMIT`はいずれも**不変**である。
+v6.24.0はGR-6に従い、自身のbaseline（`38e2487db5760034f4a994319350244960a42e1b`）を
+固定した専用guardを持ち、`src/openai_image_generation`の1パスについて
+**equality（containment ∧ coverage）**を検査する。Production source allow-list
+（1ファイルのみ）とtest change allow-list（6ファイル）は別変数として分離した。
+
+### 本Releaseの対象外
+
+Content Policy拒否の判別（`CONTENT_POLICY_REJECTED`の新設。response bodyの`code`解析を
+要し解析禁止contractに抵触）、CONTINUE対象の拡大（ORD-3の領域）、exception messageの
+改訂（IL-1・IL-6.24-1）、`status_code`の属性公開、observability／logging（DI-5）、
+retry／idempotency（DI-6）、orphan media cleanup（DI-7）、positive allow-list方式guardの
+他の入力受け取り関数（`_build_generated_image()`・`generate()`等）への一般化は、
+いずれも本Releaseの対象外である。
+
+### Deferred（本Release時点）
+
+- **DEF-6.23-3／DEF-6.23-4：本Releaseで完了**
+- **DEF-6.23-12：本Releaseで完了**（実値ベースの陽性対照D12-1〜D12-5へ置換）
+- **DI-11：本Releaseで完結**（前半＝v6.23.0、後半＝v6.24.0）
+- **DEF-6.23-10：validator部分のみ本Releaseで解消**。他関数への一般化は継続
+- **M5-1：継続**（本Releaseも構築形guardを必要とせず判断機会が発生しなかった）
+- **DEF-6.23-1／2／6／7／8／9／11：継続**（message改訂・CONTINUE拡大・
+  Content Policy判別・`status_code`公開・DI-5へのreason記録・zero-diff guardの
+  共有レジストリ化・v6.19の件数埋め込みScenario ID改名。**Release Review Amendment・
+  第5回改訂で訂正：`NOPARSE guardの他関数展開`はDEF-6.23-10の説明であり本7件には
+  含まれない。上のDEF-6.23-10の行を参照**）
+- **IL-6.24-1（新規）**：`INVALID_RESPONSE`の名称と範囲縮小後の適用範囲の乖離を
+  後方互換上のInherited Limitationとして受容し、改名判断はDEF-6.23-1へ合流させた
+- DI-5／DI-6／DI-7／DI-9／DEF-6.22-1：本Release対象外。既存の状態を維持
+
+**Non-Blocking Suggestions（Code Review時点7件・現在残存6件）**：Release Review・
+Code Reviewとも必須Findingは0件である。Code ReviewではSuggestion 7件を記録した。
+Finalizeでs-6（Release Review状態記載の3文書間不一致）を解消したため、現在残存する
+非ブロッキングSuggestionは6件（s-1〜s-5、s-7：signature検証の将来拡張・NOVALPARSE
+陽性対照の強化・D12-3相当の冗長性整理・Production長行の折り返し・設計書内相対表現の
+字義的不整合・I-VAL-1陰性対照W-1／W-2の重複）であり、いずれも本Releaseでは修正しない。
+Code Review時点のVerdictおよび件数は履歴として維持する。詳細は設計書19.6節〜19.8節。
+
+詳細は`docs/design/openai_image_generation_unknown_and_invalid_response_reason_refinement_foundation.md`
+（Architecture Design・Architecture Review・Production実装前Gate確認・Production
+Implementation・限定テスト・Formal Regression・Documentation Integration・
+Release Review・Code Review・人間の最終承認の経緯を含む）を参照。

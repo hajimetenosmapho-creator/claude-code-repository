@@ -1170,6 +1170,8 @@ _allowed_test_changes = {
     # v6.23.0（DI-11前半）が更新する既存E2Eと新規E2E自身（GR-9）
     "test_e2e_v6_11_0_openai_image_generation_adapter_foundation.py",
     "test_e2e_v6_23_0_openai_image_generation_api_rejection_reason_classification_foundation.py",
+    # v6.24.0（DI-11後半）の新規E2E自身（更新対象の既存E2Eはいずれも上記に既出。GR-9）
+    "test_e2e_v6_24_0_openai_image_generation_unknown_and_invalid_response_reason_refinement_foundation.py",
 }
 _tests_diff_proc = subprocess.run(
     ["git", "diff", "--name-only", BASELINE_COMMIT, "--", "tests"],

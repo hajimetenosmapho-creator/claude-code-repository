@@ -940,7 +940,10 @@ with unittest.mock.patch(_PATCH_TARGET, side_effect=_raise_if_real_client_constr
     # RESP: Response Contract（13 Scenario / 13 Case / 39 Assertion）
     # =================================================================
 
-    print("[RESP-*] Response構造異常はすべてOpenAIImageGenerationError（reason=INVALID_RESPONSE）")
+    # v6.24.0（DI-11後半）により、data／b64_json構造不正の12ケースは
+    # INVALID_RESPONSE_STRUCTUREへ細分化された。messageは従来と完全に同一の文字列を
+    # 維持する（message凍結）。Base64系（B64-*）はINVALID_RESPONSEのまま不変である。
+    print("[RESP-*] Response構造異常はすべてOpenAIImageGenerationError（reason=INVALID_RESPONSE_STRUCTURE）")
     _RESP_MSG = "OpenAI Images APIのレスポンス構造が不正です"
 
     _resp_cases = [
@@ -961,7 +964,8 @@ with unittest.mock.patch(_PATCH_TARGET, side_effect=_raise_if_real_client_constr
     for _scenario_id, _bad_response in _resp_cases:
         _r_gen, _, _ = make_resp_generator(_bad_response)
         _r_result, _r_exc = invoke(lambda g=_r_gen: g.generate("正常なprompt"))
-        check_openai_error(_scenario_id, _r_exc, OpenAIImageGenerationErrorReason.INVALID_RESPONSE, _RESP_MSG)
+        check_openai_error(_scenario_id, _r_exc,
+                           OpenAIImageGenerationErrorReason.INVALID_RESPONSE_STRUCTURE, _RESP_MSG)
         if _scenario_id == "RESP-NONE":
             _resp_none_exc = _r_exc
     print()
@@ -1099,8 +1103,11 @@ with unittest.mock.patch(_PATCH_TARGET, side_effect=_raise_if_real_client_constr
          OpenAIImageGenerationErrorReason.SERVER_ERROR, "OpenAI API側でエラーが発生しました"),
         ("ERR-GENERIC", make_generic_api_error(),
          OpenAIImageGenerationErrorReason.UNKNOWN, "OpenAI Images APIの呼び出しに失敗しました"),
+        # v6.24.0（DI-11後半）により、generic except Exception経路のみ
+        # UNEXPECTED_EXCEPTIONへ細分化された。ERR-GENERIC（openai.APIError catch-all）は
+        # UNKNOWNのまま不変である。messageは従来と完全に同一の文字列を維持する。
         ("ERR-UNKNOWN-EXC", RuntimeError("unexpected-marker"),
-         OpenAIImageGenerationErrorReason.UNKNOWN, "OpenAI Images APIの呼び出し中に予期しないエラーが発生しました"),
+         OpenAIImageGenerationErrorReason.UNEXPECTED_EXCEPTION, "OpenAI Images APIの呼び出し中に予期しないエラーが発生しました"),
     ]
     for _scenario_id, _provider_exc, _expected_reason, _expected_msg in _err_cases:
         _e_gen, _, _ = make_error_generator(_provider_exc)

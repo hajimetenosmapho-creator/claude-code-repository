@@ -542,7 +542,11 @@ try:
 
     print("[UNCLS] INVALID_RESPONSE／UNKNOWN の安全側分類")
 
-    for _reason_name in ("INVALID_RESPONSE", "UNKNOWN"):
+    # v6.24.0（DI-11後半）で追加された2 reasonも、既存2値と同じくUNCLASSIFIED（安全側）へ
+    # 落ちる。UNCLS-NOT-FAILED（IMAGE_GENERATION_FAILEDへ落ちないことの回帰防止）を
+    # 新2値へも及ぼすため、本セクションの対象へ追加する（設計書13.2節・案X）。
+    for _reason_name in ("INVALID_RESPONSE", "UNKNOWN",
+                         "UNEXPECTED_EXCEPTION", "INVALID_RESPONSE_STRUCTURE"):
         _reason = OpenAIImageGenerationErrorReason[_reason_name]
         _decision = decide_image_generation_fallback(OpenAIImageGenerationError("x", _reason))
         check(
@@ -703,14 +707,19 @@ try:
         "RESOURCE_NOT_FOUND": ImageGenerationFailureCategory.IMAGE_GENERATION_REQUEST_REJECTED,
         "CONFLICT": ImageGenerationFailureCategory.IMAGE_GENERATION_REQUEST_REJECTED,
         "UNPROCESSABLE_ENTITY": ImageGenerationFailureCategory.IMAGE_GENERATION_REQUEST_REJECTED,
+        # v6.24.0（DI-11後半）で追加された2 reason。いずれもallow-list2集合のどちらにも
+        # 属さないため、C-17の安全側性質によりUNCLASSIFIEDへ自動的に落ちる
+        # （policy側は無改修＝設計書7.5節）。
+        "UNEXPECTED_EXCEPTION": ImageGenerationFailureCategory.UNCLASSIFIED,
+        "INVALID_RESPONSE_STRUCTURE": ImageGenerationFailureCategory.UNCLASSIFIED,
     }
     check(
-        "REASON-ENUM-COUNT. OpenAIImageGenerationErrorReasonが13値である（v6.23.0で9→13）",
+        "REASON-ENUM-COUNT. OpenAIImageGenerationErrorReasonが15値である（v6.24.0で13→15）",
         len(_ALL_REASONS),
-        13,
+        15,
     )
     check(
-        "REASON-COVERAGE-COMPLETE. 全13値が期待分類表と過不足なく一致する",
+        "REASON-COVERAGE-COMPLETE. 全15値が期待分類表と過不足なく一致する",
         {r.name for r in _ALL_REASONS},
         set(_expected_category_by_reason_name.keys()),
     )
@@ -740,8 +749,9 @@ try:
 
     check(
         "REASON-SPLIT-4-1-2-2. decide()の実測結果を集計した結果、"
-        "reason 13値がFAILED/REQUEST_REJECTED/NOT_AUTHORIZED/UNCLASSIFIED = "
-        "4/5/2/2で分割される（v6.23.0でREQUEST_REJECTED側が1→5。"
+        "reason 15値がFAILED/REQUEST_REJECTED/NOT_AUTHORIZED/UNCLASSIFIED = "
+        "4/5/2/4で分割される（v6.23.0でREQUEST_REJECTED側が1→5、"
+        "v6.24.0でUNCLASSIFIED側が2→4。"
         "FAILED側は4のまま不変＝CONTINUE非拡大の直接証拠。"
         "m-2対応：自己参照ではなく実測値を集計。Scenario IDは据え置き）",
         {
@@ -758,14 +768,14 @@ try:
             ImageGenerationFailureCategory.IMAGE_GENERATION_FAILED: 4,
             ImageGenerationFailureCategory.IMAGE_GENERATION_REQUEST_REJECTED: 5,
             ImageGenerationFailureCategory.IMAGE_GENERATION_NOT_AUTHORIZED: 2,
-            ImageGenerationFailureCategory.UNCLASSIFIED: 2,
+            ImageGenerationFailureCategory.UNCLASSIFIED: 4,
         },
     )
     check(
-        "REASON-SPLIT-TOTAL-9. 実測分類の合計が13件であり、欠落・重複がない"
-        "（v6.23.0で9→13。m-2対応。Scenario IDは据え置き）",
+        "REASON-SPLIT-TOTAL-9. 実測分類の合計が15件であり、欠落・重複がない"
+        "（v6.23.0で9→13、v6.24.0で13→15。m-2対応。Scenario IDは据え置き）",
         sum(_actual_by_category_count.values()),
-        13,
+        15,
     )
     check(
         "REASON-SPLIT-NO-STRAY-CATEGORY. 実測分類が上記4 Category以外へ"
@@ -1298,10 +1308,10 @@ try:
         sorted(["OpenAIImageGenerator", "OpenAIImageGenerationError", "OpenAIImageGenerationErrorReason"]),
     )
     check(
-        "COMPAT-V611-REASON-COUNT-9. OpenAIImageGenerationErrorReasonが13値である"
-        "（v6.23.0 DI-11前半による既知差分。9→13。Scenario IDは据え置き）",
+        "COMPAT-V611-REASON-COUNT-9. OpenAIImageGenerationErrorReasonが15値である"
+        "（v6.23.0 DI-11前半で9→13、v6.24.0 DI-11後半で13→15。Scenario IDは据え置き）",
         len(list(OpenAIImageGenerationErrorReason)),
-        13,
+        15,
     )
 
     import wordpress_media as _v69_pkg

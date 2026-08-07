@@ -393,30 +393,36 @@ try:
         ("RESOURCE_NOT_FOUND", "resource_not_found"),
         ("CONFLICT", "conflict"),
         ("UNPROCESSABLE_ENTITY", "unprocessable_entity"),
+        # v6.24.0（DI-11後半）で末尾へ追加された2値。本Release（v6.23.0）の関心は
+        # 上記13値であるが、Enum 全数を対象とする検査は15値へ追随する必要がある
+        # （v6.19.0 と同型の、期待表駆動テストの構造的追随）。
+        ("UNEXPECTED_EXCEPTION", "unexpected_exception"),
+        ("INVALID_RESPONSE_STRUCTURE", "invalid_response_structure"),
     ]
     _NEW_NAMES = ["BAD_REQUEST", "RESOURCE_NOT_FOUND", "CONFLICT", "UNPROCESSABLE_ENTITY"]
     _ALL_REASONS = list(R)
 
-    check("API-COUNT-13. Enum member が13値である", len(_ALL_REASONS), 13)
+    check("API-COUNT-13. Enum member が15値である（v6.24.0 で13→15）", len(_ALL_REASONS), 15)
     check(
-        "API-NAMES-EXACT. name 集合が期待13値と一致する",
+        "API-NAMES-EXACT. name 集合が期待15値と一致する",
         sorted(r.name for r in _ALL_REASONS),
         sorted(n for n, _ in _EXPECTED_NAME_VALUE),
     )
     check(
-        "API-VALUES-EXACT. value 集合が期待13値と一致する",
+        "API-VALUES-EXACT. value 集合が期待15値と一致する",
         sorted(r.value for r in _ALL_REASONS),
         sorted(v for _, v in _EXPECTED_NAME_VALUE),
     )
     check(
         "API-VALUE-UNIQUE. value に重複がない",
         len({r.value for r in _ALL_REASONS}),
-        13,
+        15,
     )
     for _name, _value in _EXPECTED_NAME_VALUE:
         check(f"API-VALUE[{_name}]. value が {_value} である", getattr(R, _name).value, _value)
     check(
-        "API-DEFINITION-ORDER. 定義順が既存9値（v6.22.0 時点の順序）＋新4値の順である",
+        "API-DEFINITION-ORDER. 定義順が既存9値（v6.22.0 時点の順序）＋v6.23.0 の新4値"
+        "＋v6.24.0 の新2値の順である",
         [r.name for r in _ALL_REASONS],
         [n for n, _ in _EXPECTED_NAME_VALUE],
     )
@@ -658,6 +664,10 @@ try:
         "PERMISSION_DENIED": CAT.IMAGE_GENERATION_NOT_AUTHORIZED,
         "INVALID_RESPONSE": CAT.UNCLASSIFIED,
         "UNKNOWN": CAT.UNCLASSIFIED,
+        # v6.24.0（DI-11後半）で追加された2値。C-17 の allow-list 性質により
+        # policy 無改修のまま UNCLASSIFIED（安全側）へ落ちる。
+        "UNEXPECTED_EXCEPTION": CAT.UNCLASSIFIED,
+        "INVALID_RESPONSE_STRUCTURE": CAT.UNCLASSIFIED,
     }
     _EXPECTED_ACTION = {
         CAT.IMAGE_GENERATION_FAILED: ACT.CONTINUE_WITHOUT_FEATURED_MEDIA,
@@ -676,7 +686,7 @@ try:
               _d.action, _EXPECTED_ACTION[_EXPECTED_CATEGORY[_reason.name]])
 
     check(
-        "POLICY-COVERAGE-13. Enum 全13値が写像表と過不足なく一致する",
+        "POLICY-COVERAGE-13. Enum 全15値が写像表と過不足なく一致する（v6.24.0 で13→15）",
         {r.name for r in _ALL_REASONS},
         set(_EXPECTED_CATEGORY.keys()),
     )
@@ -684,8 +694,9 @@ try:
     for _cat in _actual_category.values():
         _split[_cat] = _split.get(_cat, 0) + 1
     check(
-        "POLICY-SPLIT. 実測集計が 4/5/2/2 に分割される"
-        "（FAILED 側が4のままであることが CONTINUE 非拡大の直接証拠）",
+        "POLICY-SPLIT. 実測集計が 4/5/2/4 に分割される"
+        "（v6.24.0 で UNCLASSIFIED 側が2→4。"
+        "FAILED 側が4のままであることが CONTINUE 非拡大の直接証拠）",
         {
             CAT.IMAGE_GENERATION_FAILED: _split.get(CAT.IMAGE_GENERATION_FAILED, 0),
             CAT.IMAGE_GENERATION_REQUEST_REJECTED: _split.get(CAT.IMAGE_GENERATION_REQUEST_REJECTED, 0),
@@ -696,10 +707,11 @@ try:
             CAT.IMAGE_GENERATION_FAILED: 4,
             CAT.IMAGE_GENERATION_REQUEST_REJECTED: 5,
             CAT.IMAGE_GENERATION_NOT_AUTHORIZED: 2,
-            CAT.UNCLASSIFIED: 2,
+            CAT.UNCLASSIFIED: 4,
         },
     )
-    check("POLICY-SPLIT-TOTAL. 実測分類の合計が13件である", sum(_split.values()), 13)
+    check("POLICY-SPLIT-TOTAL. 実測分類の合計が15件である（v6.24.0 で13→15）",
+          sum(_split.values()), 15)
     check(
         "POLICY-NO-STRAY-CATEGORY. 実測 category が既存4種以外へ分類されていない",
         set(_split.keys()),
@@ -729,9 +741,11 @@ try:
     )
     check(
         "REJECTSET-UNION-COVERAGE. 2つの allow-list の和が9値であり、"
-        "残り4値（AUTH／PERM／INVALID_RESPONSE／UNKNOWN）は else 経路である",
+        "残り6値（AUTH／PERM／INVALID_RESPONSE／UNKNOWN／v6.24.0 の新2値）は else 経路である"
+        "（allow-list 方式により、後続 Release の新値が自動的に安全側へ落ちることの実証）",
         sorted(r.name for r in (set(_ALL_REASONS) - _REJECTED_REASONS - _CONTINUABLE_REASONS)),
-        sorted(["AUTHENTICATION", "PERMISSION_DENIED", "INVALID_RESPONSE", "UNKNOWN"]),
+        sorted(["AUTHENTICATION", "PERMISSION_DENIED", "INVALID_RESPONSE", "UNKNOWN",
+                "UNEXPECTED_EXCEPTION", "INVALID_RESPONSE_STRUCTURE"]),
     )
     _fake_reason_error = OpenAIImageGenerationError("probe", R.TIMEOUT)
     _fake_reason_error.reason = "bad_request"          # Enum ではない文字列
@@ -744,7 +758,7 @@ try:
     _rejectset_before = frozenset(_REJECTED_REASONS)
     for _reason in _ALL_REASONS:
         decide_image_generation_fallback(OpenAIImageGenerationError("probe", _reason))
-    check("REJECTSET-IMMUTABLE. decide() を全13値へ適用した後も内容が不変である",
+    check("REJECTSET-IMMUTABLE. decide() を全15値へ適用した後も内容が不変である",
           frozenset(_REJECTED_REASONS), _rejectset_before)
     print()
 
@@ -964,7 +978,7 @@ try:
     print("[SEC] Security")
 
     check_true(
-        "SEC-VALUE-LABEL-SET. 13値の value が英小文字とアンダースコアのみで構成される"
+        "SEC-VALUE-LABEL-SET. 15値の value が英小文字とアンダースコアのみで構成される"
         "（URL・credential・応答本文を含まない）",
         all(v.replace("_", "").isascii() and v.replace("_", "").islower()
             and v.replace("_", "").isalpha() for v in (r.value for r in _ALL_REASONS)),
@@ -1205,6 +1219,9 @@ try:
         "test_e2e_v6_21_0_article_featured_media_runtime_wiring.py",
         "test_e2e_v6_22_0_wordpress_media_upload_failure_reason_classification_foundation.py",
         "test_e2e_v6_23_0_openai_image_generation_api_rejection_reason_classification_foundation.py",
+        # v6.24.0（DI-11後半）の新規E2E自身。更新対象の既存E2E
+        # （v6_11_0／v6_19_0／v6_21_0／v6_22_0）はいずれも上記に既出（GR-9）。
+        "test_e2e_v6_24_0_openai_image_generation_unknown_and_invalid_response_reason_refinement_foundation.py",
     }
     _tests_diff = subprocess.run(
         ["git", "diff", "--name-only", BASELINE_COMMIT, "--", "tests"],
@@ -1228,17 +1245,51 @@ try:
     check("NOIMPACT-NO-UNTRACKED-TESTS. tests/ の untracked が allow-list の範囲内である",
           sorted(_untracked_tests - _allowed_test_changes), [])
 
-    # 陽性対照：allow-list 機構が空振りしていないことの確認
+    # ── 陽性対照：allow-list 機構が空振りしていないことの確認（DEF-6.23-12 解消） ──
+    # v6.24.0 で、ハードコードされたリテラル集合のみを演算する恒真式2件から、
+    # 実 _changed_actual（git diff 実測出力）と実 allow-list 値を参照する
+    # D12-1〜D12-5 の5 assertion へ置換した。既存の NOIMPACT-SCOPE（containment）／
+    # -COVERAGE／-EXACT は検査ロジック・期待値・件数のいずれも変更していない（D-b）。
+    _pc_rel = "src/openai_image_generation"
+    _pc_diff = subprocess.run(
+        ["git", "diff", "--name-only", "--relative", BASELINE_COMMIT, "--", _pc_rel],
+        cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=30,
+    )
+    _changed_actual = {line.strip() for line in _pc_diff.stdout.splitlines() if line.strip()}
+    _allowed_actual = frozenset(_allowed_source_changes[_pc_rel])
+    _DUMMY = "src/openai_image_generation/__positive_control_never_exists__.py"
+    _snapshot_before = {k: frozenset(v) for k, v in _allowed_source_changes.items()}
+
+    # D12-1：実差分が非空であること（以降の陽性対照が vacuous でないことの前提）
+    check_true(
+        "NOIMPACT-POSITIVE-PRECOND-CHANGED-NONEMPTY. 実差分が非空である"
+        "（以降の陽性対照が vacuous でないことの前提）",
+        len(_changed_actual) > 0,
+    )
+    # D12-2：ダミー path が実差分に含まれないこと
+    check_false(
+        "NOIMPACT-POSITIVE-PRECOND-DUMMY-ABSENT. ダミー path が実差分に含まれない",
+        _DUMMY in _changed_actual,
+    )
+    # D12-3：実 _changed_actual に対し、allow-list を空にすると containment が違反を検出する
     check_true(
         "NOIMPACT-POSITIVE-EMPTY-ALLOWLIST. allow-list を空にすると差分が検出される"
-        "（containment 検査が有効に働いている）",
-        len({"src/openai_image_generation/openai_image_generator.py"} - frozenset()) > 0,
+        "（containment 検査が有効に働いている。実 _changed_actual を参照）",
+        len(_changed_actual - frozenset()) > 0,
     )
+    # D12-4：実 allow-list 値に未変更 path を加えると coverage が検出する
+    #        （| は新しい frozenset を生成し、元集合を破壊しない。D-a）
     check_true(
         "NOIMPACT-POSITIVE-UNCHANGED-ALLOWLIST. allow-list に書いたのに未変更なら "
-        "coverage が検出する",
-        len(frozenset({"src/openai_image_generation/never_changed.py"})
-            - {"src/openai_image_generation/openai_image_generator.py"}) > 0,
+        "coverage が検出する（実 allow-list 値を参照）",
+        len((_allowed_actual | {_DUMMY}) - _changed_actual) > 0,
+    )
+    # D12-5：陽性対照が元集合を破壊的に変更していないこと
+    check(
+        "NOIMPACT-POSITIVE-NONDESTRUCTIVE. 陽性対照が _allowed_source_changes を"
+        "破壊的に変更しない",
+        {k: frozenset(v) for k, v in _allowed_source_changes.items()},
+        _snapshot_before,
     )
     print()
 
