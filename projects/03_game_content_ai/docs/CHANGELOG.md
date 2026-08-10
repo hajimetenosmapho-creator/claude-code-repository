@@ -361,6 +361,83 @@
 
 ---
 
+## [v6.26.0] - 2026-08-11 ★ Zero-Diff Guard Registry Foundation（DEF-6.23-9）
+
+> v6.22.0 DEF-6.22-14の継続として提起され、v6.23.0で命名（DEF-6.23-9）、
+> v6.24.0で緊急度を再確認されたまま3Release連続で先送りされてきた
+> 「zero-diff guardの共有レジストリ化」を実装した。v6.21.0〜v6.24.0の
+> 4つのbaseline-fixed guardが個別に重複保持していた`_protected_paths`
+> （22件・同一集合）・`_allowed_source_changes`・`_allowed_test_changes`を
+> `tests/zero_diff_guard_registry.py`（新設）へ一元化し、GR-9
+> （保護対象パスへ触れるReleaseは、それ以前に存在するすべてのbaseline固定
+> guardのallow-listを更新する）対応を、guardファイルN件への直接編集
+> （O(N)）から、レジストリへの寄与record追加1件（O(1)）へ置き換えた。
+> `src/`本番コード・`main.py`は1バイトも変更していない（tests/配下のみの
+> Release）。新規E2E（`test_e2e_v6_26_0_zero_diff_guard_registry_foundation.py`、
+> **244アサーション、244/244 PASS**）は、v6.21.0〜v6.24.0の4guardの計算結果が
+> refactor前の値と完全一致すること（SNAPSHOT）・release間の許容範囲が
+> RELEASE_ORDER順に単調非増加であること（RATCHET、GR-9 ratchet構造の一般的
+> 検証）・4guardを実際に子プロセス実行しPASS件数（170／324／345／352）が
+> 不変であること（RUNTIME）・レジストリ自身の型不変性とネットワーク非依存
+> （hermetic）を検証する。**Formal Regression：PASS**（正式Inventory
+> **29ファイル**：v1.11.0＋v5.9.0＋v6.0.0〜v6.26.0、合計**4826/4826 PASS**、
+> FAIL 0／SKIP 0、全ファイルexit code 0。旧28ファイル分4582/4582＋新規
+> v6.26.0 244/244＝4826/4826）。実行は`.\venv\Scripts\python.exe`のみを
+> 使用し、実行後の`git status`は実行前と同一で想定外の差分はなかった。
+> 本Releaseはユーザーからの直接指示（読み取り専用調査によるDEF-6.23-9の
+> 選定を経て）に基づき実装したものであり、他Releaseと同型の多段階
+> Architecture Review／Code Review／Release Reviewは実施していない。
+> **その後、commit前にClaude自身とCodex（独立adversarial review、read-only）
+> による2者Reviewを実施し、Major 2件（`allowed_source_changes_for()`が
+> 同一protected pathへの複数寄与をoverwriteしていた点／`PROTECTED_PATHS`
+> への新規path追加がhistorical guardの`NOIMPACT-BASELINE-TRACKED`を
+> 破壊しうる点）・Minor 1件（`BASELINE_COMMITS`の可変性）・Suggestion 3件を
+> 検出し、いずれも対応済み**（union化・`MappingProxyType`化・
+> `[MERGE]`／`[CONTRACT]`／`[FAILCLOSED]`セクション追加による108アサーション
+> 増。上記の244/244・4826/4826はReview対応後の確定値）。
+> `docs/design/zero_diff_guard_registry_foundation.md`にDEF-6.23-9の背景・
+> 設計・検証結果・Review記録（§9）を記録した。
+
+### Added
+
+- `tests/zero_diff_guard_registry.py` 新規作成。共有レジストリ本体
+  （`PROTECTED_PATHS`・`RELEASE_ORDER`・`BASELINE_COMMITS`（`MappingProxyType`）・
+  release別寄与record・`allowed_source_changes_for()`・
+  `allowed_test_changes_for()`）。同一protected pathキーへの複数寄与は
+  `_merge_source_contributions()`によりfrozenset unionとして合成される
+  （Architecture/Code Review Major-1対応）。
+- `tests/test_e2e_v6_26_0_zero_diff_guard_registry_foundation.py` 新規作成
+  （Scenario prefix：STRUCT-／PIN-／SNAPSHOT-／MERGE-／RATCHET-／NOMUT-／
+  CONSOL-／RUNTIME-／SELF-／CONTRACT-／FAILCLOSED-／HERMETIC-、
+  **244アサーション、244/244 PASS**。うちMERGE-／CONTRACT-／FAILCLOSED-の
+  108アサーションはcommit前Architecture/Code Review対応で追加）。
+- `docs/design/zero_diff_guard_registry_foundation.md` 新規作成。
+
+### Changed
+
+- `tests/test_e2e_v6_21_0_article_featured_media_runtime_wiring.py`：
+  `_protected_paths`・`_allowed_source_changes`・`_allowed_test_changes`の
+  ハードコードされたリテラルを、共有レジストリからの関数呼び出しへ置換
+  （値・判定結果は完全一致。`BASELINE_COMMIT`・以降のcheckロジックは無変更）。
+- `tests/test_e2e_v6_22_0_wordpress_media_upload_failure_reason_classification_foundation.py`：同上。
+- `tests/test_e2e_v6_23_0_openai_image_generation_api_rejection_reason_classification_foundation.py`：同上。
+- `tests/test_e2e_v6_24_0_openai_image_generation_unknown_and_invalid_response_reason_refinement_foundation.py`：同上。
+- `docs/ROADMAP.md`：v6.25.0エントリの「人間による最終承認・Release Review・
+  commit・pushはいずれも本Entry時点では未実施」という記述を、HEAD `c8ee1c7`
+  として既にcommit済みである現状に合わせて修正（stale documentationの
+  是正。機能的な変更ではない）。
+- `docs/architecture.md`：同様の是正、および本Releaseの共有レジストリ層を追記。
+
+### Deferred（本Release時点）
+
+- DI-9・DEF-6.22-1・DI-6／DI-7／DI-8：いずれも対象外のまま状態を維持する。
+- v6.25.0 S-2（`_ScenarioRuntime`のobservation構築式重複）・v6.25.0
+  S-1／S-3／S-4／S-5・v6.24.0 s-1〜s-5／s-7：本Release（`_protected_paths`／
+  allow-list関連の重複排除のみ）の変更範囲に含まれないため、いずれも
+  Deferred継続。
+
+---
+
 ## [v6.25.0] - 2026-08-11 ★ Image Generation Fallback Observability Foundation（DI-5＋DEF-3）
 
 > **本Entryの時点でのRelease状態**：Architecture Design Completed／Architecture
@@ -380,8 +457,9 @@
 > 差分+36が限定回帰の構造的増分と一致することを確認済み。INV-1〜INV-7・R-5も
 > 確認済み。実行は`.\venv\Scripts\python.exe`のみ使用し、実行後の`git status`は
 > 実行前と同一で想定外の差分はなかった）。**人間による最終承認・Release Review・
-> commit・pushはいずれも本Entry時点では未実施**であり、Release自体はこれらを
-> 経て確定する。
+> commit・pushを経てRelease 6.25として確定した**（HEAD `c8ee1c7`。
+> 2026-08-11追記：この確定後の状態を前提として、DEF-6.23-9をv6.26.0として
+> 実装した）。
 
 ### Added
 

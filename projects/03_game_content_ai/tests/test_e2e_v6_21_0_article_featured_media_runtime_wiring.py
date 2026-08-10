@@ -1079,65 +1079,17 @@ check(
     0,
 )
 
-# 設計書15.3節「変更禁止範囲」に対応する対象一覧
-_protected_paths = [
-    "src/image_resolver.py",
-    "src/outputs",
-    "src/logger",
-    "src/analytics",
-    "src/pipeline",
-    "src/ai",
-    "src/scheduler",
-    "src/wordpress_media",
-    "src/ai_image_generation",
-    "src/openai_image_generation",
-    "src/generated_image_wordpress_media",
-    "src/article_featured_media",
-    "src/article_featured_media_orchestration",
-    "src/image_generation_config",
-    "src/generated_image_filename_policy",
-    "src/article_image_prompt_construction",
-    "src/article_featured_media_composition",
-    "src/image_generation_fallback_policy",
-    "src/article_featured_media_runtime",
-    "scripts",
-    "requirements.txt",
-    ".env.example",
-]
+# 設計書15.3節「変更禁止範囲」に対応する対象一覧。
+# DEF-6.23-9（v6.26.0）により、_protected_paths・_allowed_source_changes・
+# _allowed_test_changes は tests/zero_diff_guard_registry.py（共有レジストリ）
+# 側で一元管理する。GR-1（削除しない）・GR-9（ratchet構造）の性質は、
+# レジストリ側のRELEASE_ORDER上のindex比較としてそのまま保たれる。
+# 本guard自身の値・判定結果はrefactor前と完全一致する
+# （tests/test_e2e_v6_26_0_zero_diff_guard_registry_foundation.py で固定検証）。
+import zero_diff_guard_registry as _guard_registry  # noqa: E402
 
-# v6.22.0（DI-10）が Architecture Design で正式に宣言した「保護対象内での意図的変更」。
-# 既定は空集合（＝従来と同じ「差分ゼロ」の意味）。src/wordpress_media のみ非空。
-# 設計書11.7.1節「採用する精緻化（案C：allow-list 方式）」参照。
-_allowed_source_changes = {
-    "src/wordpress_media": frozenset({
-        "src/wordpress_media/__init__.py",
-        "src/wordpress_media/wordpress_media_uploader.py",
-    }),
-    # v6.23.0（DI-11前半）が Architecture Design で正式に宣言した意図的変更。
-    # GR-9：保護対象パスへ触れるReleaseは、それ以前に存在するすべての
-    # baseline固定guardのallow-listを更新する。GR-4：登録できるのは
-    # 当該Releaseの設計書File Change Planが宣言したファイルのみ。
-    "src/openai_image_generation": frozenset({
-        "src/openai_image_generation/openai_image_generator.py",
-    }),
-    # v6.25.0（DI-5＋DEF-3）が Architecture Design で正式に宣言した意図的変更。
-    # image_generation_fallback_policy へ extract_safe_reason() を追加し
-    # __init__.py の __all__ を拡張、article_featured_media_runtime へ
-    # FeaturedMediaFailureObservation・classify_propagated_failure() を追加し
-    # 同じく __init__.py を拡張、logger へ featured_media_* フィールドを追加。
-    "src/image_generation_fallback_policy": frozenset({
-        "src/image_generation_fallback_policy/image_generation_fallback_policy.py",
-        "src/image_generation_fallback_policy/__init__.py",
-    }),
-    "src/article_featured_media_runtime": frozenset({
-        "src/article_featured_media_runtime/article_featured_media_runtime.py",
-        "src/article_featured_media_runtime/__init__.py",
-    }),
-    "src/logger": frozenset({
-        "src/logger/log_entry.py",
-        "src/logger/log_manager.py",
-    }),
-}
+_protected_paths = list(_guard_registry.PROTECTED_PATHS)
+_allowed_source_changes = _guard_registry.allowed_source_changes_for("v6.21.0")
 
 for _rel in _protected_paths:
     # vacuous pass防止その1：検査対象が作業ツリーに実在すること
@@ -1174,30 +1126,9 @@ for _rel in _protected_paths:
         [],
     )
 
-# 既存testsは、設計書15.3節が認める2つの例外（v6.13.0／v6.20.0のGuard精緻化）に加え、
-# v6.22.0（DI-10）が正式に宣言した3件（v6.9.0／v6.19.0の既存アサーション更新、
-# および新規E2E自身）以外に差分があってはならない（設計書11.7.3節）
-_allowed_test_changes = {
-    # 設計書15.3節が認めるGuard精緻化の例外2件
-    "test_e2e_v6_13_0_article_featured_media_binding_foundation.py",
-    "test_e2e_v6_20_0_article_featured_media_runtime_foundation.py",
-    # 本Releaseで新規追加するE2E自身（commit後はbaseline比較で「追加」として現れる）
-    "test_e2e_v6_21_0_article_featured_media_runtime_wiring.py",
-    # v6.22.0（DI-10）が既存アサーションを更新するファイル2件（X-1・X-2/X-3）
-    "test_e2e_v6_9_0_wordpress_media_upload_foundation.py",
-    "test_e2e_v6_19_0_image_generation_fallback_policy_foundation.py",
-    # v6.22.0（DI-10）の新規E2E自身
-    "test_e2e_v6_22_0_wordpress_media_upload_failure_reason_classification_foundation.py",
-    # v6.23.0（DI-11前半）が更新する既存E2E（v6_19_0は上記に既出）と新規E2E自身
-    "test_e2e_v6_11_0_openai_image_generation_adapter_foundation.py",
-    "test_e2e_v6_23_0_openai_image_generation_api_rejection_reason_classification_foundation.py",
-    # v6.24.0（DI-11後半）の新規E2E自身（更新対象の既存E2Eはいずれも上記に既出）。
-    # GR-9：保護対象パスへ触れるReleaseは、それ以前に存在するすべての
-    # baseline固定guardのallow-listを更新する。
-    "test_e2e_v6_24_0_openai_image_generation_unknown_and_invalid_response_reason_refinement_foundation.py",
-    # v6.25.0（DI-5＋DEF-3）の新規E2E自身。GR-9に従い本guardのallow-listを更新する。
-    "test_e2e_v6_25_0_image_generation_fallback_observability_foundation.py",
-}
+# 既存testsは、共有レジストリ（DEF-6.23-9）が本Release（v6.21.0）以降の
+# window として合成する集合の範囲内以外に差分があってはならない（設計書11.7.3節）
+_allowed_test_changes = set(_guard_registry.allowed_test_changes_for("v6.21.0"))
 _tests_diff = subprocess.run(
     ["git", "diff", "--name-only", BASELINE_COMMIT, "--", "tests"],
     cwd=str(PROJECT_ROOT),

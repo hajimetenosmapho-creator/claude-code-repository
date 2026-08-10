@@ -5097,10 +5097,65 @@ Code Review時点のVerdictおよび件数は履歴として維持する。詳�
 Implementation・限定テスト・Formal Regression・Documentation Integration・
 Release Review・Code Review・人間の最終承認の経緯を含む）を参照。
 
+## Zero-Diff Guard Registry層（`tests/zero_diff_guard_registry.py`、v6.26.0）
+
+> DEF-6.23-9（v6.22.0 DEF-6.22-14の継続、v6.23.0で命名、v6.24.0で緊急度再確認）
+> の実装。v6.21.0〜v6.24.0の4 baseline-fixed guardが個別に重複保持していた
+> `_protected_paths`（22件・同一集合）・`_allowed_source_changes`・
+> `_allowed_test_changes`を一元化し、GR-9対応をO(N)からO(1)へ置き換えた。
+> `src/`本番コード・`main.py`は無改修（tests/配下のみのRelease）。新規E2E
+> （`test_e2e_v6_26_0_zero_diff_guard_registry_foundation.py`、**244アサーション、
+> 244/244 PASS**）・4guardの子プロセス実測回帰（170／324／345／352、いずれも
+> refactor前と完全一致）・**Formal Regression：PASS**（正式Inventory
+> **29ファイル**：v1.11.0＋v5.9.0＋v6.0.0〜v6.26.0、合計**4826/4826 PASS**、
+> FAIL 0／SKIP 0、全ファイルexit code 0）を経て、Release 6.26として完了した
+> （HEAD時点。本Releaseはユーザーからの直接指示に基づき実装したものであり、
+> 他Releaseと同型の多段階Architecture Review／Code Reviewは実施していない。
+> **その後、commit前にClaude自身とCodex（独立adversarial review、read-only）
+> による2者Reviewを実施し、Major 2件・Minor 1件・Suggestion 3件を検出、
+> いずれも対応済み（union化・`MappingProxyType`化・`[MERGE]`／`[CONTRACT]`／
+> `[FAILCLOSED]`セクション追加。上記244/244・4826/4826はReview対応後の
+> 確定値）。** `docs/design/zero_diff_guard_registry_foundation.md`
+> （§9にReview記録）参照。
+
+### Purpose
+
+v6.21.0〜v6.24.0の4guardが個別に重複保持していた保護対象path一覧・
+allow-listを一元化し、GR-9（保護対象パスへ触れるReleaseは、それ以前に
+存在するすべてのbaseline固定guardのallow-listを更新する）対応の保守
+コストをO(N)からO(1)へ削減する。
+
+### データモデル
+
+release別のimmutableな寄与record（`_SOURCE_CHANGE_CONTRIBUTIONS`・
+`_TEST_CHANGE_CONTRIBUTIONS`。いずれも`tuple`＋`frozenset`）と、それを
+「自身のReleaseを含む、それ以降」のwindowで合成する2つの純関数
+（`allowed_source_changes_for()`・`allowed_test_changes_for()`）から成る。
+同一protected pathキーへ複数の寄与recordが存在する場合、
+`_merge_source_contributions()`がfrozenset unionとして合成する（上書き
+しない。Architecture/Code Review Major-1対応）。将来Releaseが**既存の**
+保護対象パスへ触れる場合、新しいthresholdを持つ寄与recordを1件追加する
+だけで、既存の全guardファイルを編集せずに新しい許容範囲が自動的に
+反映される。**ただし`PROTECTED_PATHS`自体への真に新規のpath追加は、
+historical guardの`NOIMPACT-BASELINE-TRACKED`検査（各guard自身のbaseline
+commit時点でpathが追跡されていることを要求）との整合が取れないため、
+本O(1)自動追従の対象外である**（Architecture/Code Review Major-2対応）。
+詳細は `docs/design/zero_diff_guard_registry_foundation.md` §3。
+
+### 本Releaseの対象外
+
+- `src/`本番コード・`main.py`（一切触れない）
+- DI-9・DEF-6.22-1・DI-6／DI-7／DI-8
+
+### Deferred（本Release時点）
+
+- v6.25.0 Suggestion 5件（S-1〜S-5）・v6.24.0 Suggestion（s-1〜s-5・s-7）：
+  本Releaseの変更範囲（`_protected_paths`／allow-list関連の重複排除のみ）に
+  含まれないため引き続きDeferred。
+
 ## Image Generation Fallback Observability Foundation層（`src/image_generation_fallback_policy/`＋`src/article_featured_media_runtime/`＋`src/logger/`、v6.25.0）
 
-> **本節はFormal Regression完了時点の記録であり、Release 6.25.0は
-> 本節時点ではまだ確定していない。** Architecture Review 1（Changes Required、
+> Architecture Review 1（Changes Required、
 > Major 4件／Minor 2件／Suggestion 2件、最小改訂で解消）→ Architecture Review 2
 > （Approved with Suggestions、Blocking 0件／Major 0件／Minor 0件／Suggestion 2件）→
 > Test Review／Implementation前Gate確認（baseline v6.19〜v6.24、1628/1628 PASS実測）→
@@ -5118,7 +5173,7 @@ Release Review・Code Review・人間の最終承認の経緯を含む）を参�
 > 差分+36が限定回帰の構造的増分と一致することを確認済み。INV-1〜INV-7・R-5も
 > 確認済み。実行は`.\venv\Scripts\python.exe`のみ使用し、実行後の`git status`は
 > 実行前と同一で想定外の差分はなかった）。**人間による最終承認・Release Review・
-> commit・pushはいずれも本節時点では未実施である。**
+> commit・pushを経てRelease 6.25として完了した**（HEAD `c8ee1c7`）。
 
 ### Purpose
 

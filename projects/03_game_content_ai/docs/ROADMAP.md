@@ -951,8 +951,51 @@
   非対称性はInherited Limitationとして明記し、厳格化はDeferred Item DI-9
   （Image Generation Gate Value Strict Validation）として独立検討する。`dataclasses.asdict(root)`は
   secret-safeなserializationではないことをContractとして明記した。
-- [ ] **Image Generation Fallback Observability Foundation**（v6.25.0、DI-5＋DEF-3、
-  **Formal Regression PASS・Release未確定**）：Gate OFF／APPLIED／CONTINUE／
+- [x] **Zero-Diff Guard Registry Foundation**（v6.26.0、DEF-6.23-9）：
+  v6.22.0 DEF-6.22-14の継続として提起され、v6.23.0で命名（DEF-6.23-9）、
+  v6.24.0で「baseline 固定 guard が3→4件へ増え、次Release以降のO(N)保守
+  コストがさらに増大」として緊急度を再確認されたまま3Release連続で先送り
+  されてきた「zero-diff guardの共有レジストリ化」の実装。v6.21.0〜v6.24.0の
+  4つのbaseline-fixed guardが個別に重複保持していた`_protected_paths`
+  （22件・同一集合・同一順序）・`_allowed_source_changes`・
+  `_allowed_test_changes`を、新設`tests/zero_diff_guard_registry.py`
+  （release別のimmutableな寄与record＋`allowed_source_changes_for()`／
+  `allowed_test_changes_for()`の2純関数）へ一元化した。GR-9（保護対象パスへ
+  触れるReleaseは、それ以前に存在するすべてのbaseline固定guardのallow-listを
+  更新する）対応を、guardファイルN件への直接編集（O(N)）から、レジストリへの
+  寄与record追加1件（O(1)）へ置き換える。4guardファイル自身の`BASELINE_COMMIT`
+  （GR-2）・以降のcheck()ループ・ラベル文言はいずれも無変更であり、
+  `_protected_paths`・`_allowed_source_changes`・`_allowed_test_changes`の
+  **値・判定結果はrefactor前と完全一致する**（実測：170／324／345／352
+  assertionsでいずれも不変）。`src/`本番コード・`main.py`は1バイトも
+  変更していない（tests/配下のみのRelease）。新規E2E
+  （`test_e2e_v6_26_0_zero_diff_guard_registry_foundation.py`、
+  **244アサーション、244/244 PASS**）は、v6.21.0〜v6.24.0の4guardの計算結果が
+  refactor前の値と完全一致すること（SNAPSHOT）・release間の許容範囲が
+  RELEASE_ORDER順に単調非増加であること（RATCHET、GR-9 ratchet構造の一般則
+  としての検証）・4guardを実際に子プロセス実行しPASS件数が不変であること
+  （RUNTIME）・レジストリ自身の型不変性とネットワーク非依存（hermetic）を
+  検証する。**Formal Regression（正式Inventory29ファイル：v1.11.0＋v5.9.0＋
+  v6.0.0〜v6.26.0）を実施し、合計4826/4826 PASS（FAIL 0／SKIP 0、
+  全ファイルexit code 0）を確定した**（旧28ファイル分4582/4582＋新規v6.26.0
+  244/244）。実行は`.\venv\Scripts\python.exe`のみを使用し、実行後の
+  `git status`は実行前と同一で想定外の差分はなかった。本Releaseはユーザーからの
+  直接指示（読み取り専用調査によるDEF-6.23-9の選定を経て）に基づき実装した
+  ものであり、他Releaseと同型の多段階Architecture Review／Code Review／
+  Release Reviewは実施していない。**その後、commit前にClaude自身とCodex
+  （独立adversarial review、read-only）による2者Reviewを実施し、
+  Major 2件（同一protected pathへの複数寄与のoverwrite／`PROTECTED_PATHS`
+  への新規path追加によるhistorical guard破壊リスク）・Minor 1件
+  （`BASELINE_COMMITS`の可変性）・Suggestion 3件を検出し、いずれも対応した
+  （union化・`MappingProxyType`化・`[MERGE]`／`[CONTRACT]`／`[FAILCLOSED]`
+  セクション追加。上記244/244・4826/4826はReview対応後の確定値。詳細は
+  設計書§9）。** Deferred：DI-9・DEF-6.22-1・
+  DI-6／DI-7／DI-8は本Release対象外のまま状態を維持する。v6.25.0の
+  Suggestion 5件（S-1〜S-5）・v6.24.0のSuggestion（s-1〜s-5・s-7）は、本Release
+  の変更範囲（`_protected_paths`／allow-list関連の重複排除のみ）に含まれない
+  ため引き続きDeferredとする（`docs/design/zero_diff_guard_registry_foundation.md`）
+- [x] **Image Generation Fallback Observability Foundation**（v6.25.0、DI-5＋DEF-3）：
+  Gate OFF／APPLIED／CONTINUE／
   PROPAGATEという既存の画像アイキャッチ挙動を1文字も変えずに、失敗理由
   （reason）と処理区分（category／action）を**観測可能にする**、DI-5
   （failure reason observation/logging）＋DEF-3（PROPAGATE時のcategory記録）の
@@ -1001,9 +1044,9 @@
   R-5もFormal Regressionで確認済みであり、テスト実行後の`git status`は実行前と
   同一で想定外の差分はなかった。Suggestion 5件（S-1〜S-5）はいずれも非ブロッキング
   のままDeferredとする（詳細はCHANGELOG・設計書）。**人間による最終承認・
-  Release Review・commit・pushはいずれも本エントリ時点では未実施であり、Release
-  6.25としての完了はこれらを経て確定する。** DI-9・DEF-6.22-1（WordPress側
-  CONTINUE対象拡大）・DI-6／DI-7／DI-8は本Release対象外のまま状態を維持する
+  Release Review・commit・pushを経てRelease 6.25として完了した**（HEAD
+  `c8ee1c7`）。DI-9・DEF-6.22-1（WordPress側CONTINUE対象拡大）・
+  DI-6／DI-7／DI-8は本Release対象外のまま状態を維持する
   （`docs/design/image_generation_fallback_observability_foundation.md`）
 - [x] **OpenAI Image Generation Unknown and Invalid Response Reason Refinement Foundation**
   （v6.24.0、DI-11後半）：v6.23.0時点で1値へ集約されていた2組の失敗経路を、
