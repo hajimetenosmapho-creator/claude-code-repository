@@ -301,13 +301,14 @@ try:
     print("[API] Public API")
 
     check(
-        "API-ALL-EXACT. __all__ が4 symbolのみである",
+        "API-ALL-EXACT. __all__ が既存4 symbol＋v6.25.0のextract_safe_reasonの5 symbolである",
         sorted(_pkg.__all__),
         sorted([
             "ImageGenerationFailureCategory",
             "ImageGenerationFallbackAction",
             "ImageGenerationFallbackDecision",
             "decide_image_generation_fallback",
+            "extract_safe_reason",
         ]),
     )
     for _name in _pkg.__all__:
@@ -1129,15 +1130,17 @@ try:
 
     _isinstance_targets = set(get_isinstance_second_arg_names(MODULE_FILE))
     check_true(
-        "DEP-ISINSTANCE-TARGETS-LIMITED. isinstance判定の対象型がRepository内の3型＋Exceptionのみ"
+        "DEP-ISINSTANCE-TARGETS-LIMITED. isinstance判定の対象型がRepository内の4型＋Exceptionのみ"
         "（m-1対応でOpenAIImageGenerationErrorReasonへのisinstance判定を追加。"
-        "汎用組み込み例外型ではなくRepository内で公開済みのEnum型であり、"
-        "設計書13.5節が禁じる汎用型判定には該当しない）",
+        "v6.25.0のextract_safe_reason()でWordPressMediaUploadErrorReasonへの"
+        "isinstance判定を追加。汎用組み込み例外型ではなくRepository内で公開済みの"
+        "Enum型であり、設計書13.5節が禁じる汎用型判定には該当しない）",
         _isinstance_targets <= {
             "Exception",
             "OpenAIImageGenerationError",
             "OpenAIImageGenerationErrorReason",
             "WordPressMediaUploadError",
+            "WordPressMediaUploadErrorReason",
         },
     )
     for _generic_type in ("ImportError", "ValueError", "TypeError", "ModuleNotFoundError"):

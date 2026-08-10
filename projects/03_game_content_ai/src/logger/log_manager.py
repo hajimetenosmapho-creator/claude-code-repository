@@ -104,6 +104,9 @@ class LogManager:
         x_post_status=None,
         x_post_url: str = "",
         post_id: int | None = None,
+        featured_media_category: str = "",
+        featured_media_action: str = "",
+        featured_media_reason: str = "",
     ) -> None:
         """
         1記事の投稿結果を ArticleLog に記録する。
@@ -119,6 +122,10 @@ class LogManager:
             x_post_url:    X投稿後のポストURL（v1.9.0 は常に ""）
             post_id:       WordPress 投稿ID（v1.11.0: SaveResult.post_id から直接渡す）。
                            None の場合は edit_url から正規表現で抽出する（後方互換）。
+            featured_media_category: featured media fallback発生時のcategory
+                           （DI-5、v6.25.0。未発生時は""）。
+            featured_media_action:   同上のaction（未発生時は""）。
+            featured_media_reason:   同上のreason（未発生時は""）。
         """
         from outputs.taxonomy_config import resolve_taxonomy
         from sns_config import SnsPostStatus
@@ -147,6 +154,9 @@ class LogManager:
             x_post_text=article.x_post,
             x_post_status=status,
             x_post_url=x_post_url,
+            featured_media_category=featured_media_category,
+            featured_media_action=featured_media_action,
+            featured_media_reason=featured_media_reason,
         )
         path = self._get_log_path("articles", date_str)
         self._append(path, entry.to_json_line())
@@ -185,7 +195,9 @@ class NullLogManager:
     """
 
     def log_article(self, article=None, edit_url="", result="success", error_message="",
-                    wp_public_url="", x_post_status=None, x_post_url="", post_id=None) -> None:
+                    wp_public_url="", x_post_status=None, x_post_url="", post_id=None,
+                    featured_media_category="", featured_media_action="",
+                    featured_media_reason="") -> None:
         pass
 
     def log_execution(self, entry=None) -> None:

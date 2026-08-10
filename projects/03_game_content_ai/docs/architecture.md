@@ -5096,3 +5096,207 @@ Code Review時点のVerdictおよび件数は履歴として維持する。詳�
 （Architecture Design・Architecture Review・Production実装前Gate確認・Production
 Implementation・限定テスト・Formal Regression・Documentation Integration・
 Release Review・Code Review・人間の最終承認の経緯を含む）を参照。
+
+## Image Generation Fallback Observability Foundation層（`src/image_generation_fallback_policy/`＋`src/article_featured_media_runtime/`＋`src/logger/`、v6.25.0）
+
+> **本節はFormal Regression完了時点の記録であり、Release 6.25.0は
+> 本節時点ではまだ確定していない。** Architecture Review 1（Changes Required、
+> Major 4件／Minor 2件／Suggestion 2件、最小改訂で解消）→ Architecture Review 2
+> （Approved with Suggestions、Blocking 0件／Major 0件／Minor 0件／Suggestion 2件）→
+> Test Review／Implementation前Gate確認（baseline v6.19〜v6.24、1628/1628 PASS実測）→
+> Production Implementation → 新規E2E
+> （`tests/test_e2e_v6_25_0_image_generation_fallback_observability_foundation.py`、
+> **128アサーション、128/128 PASS**）→ Code Review 1（Changes Required、Blocking 0件／
+> Major 3件／Minor 2件／Suggestion 5件）→ 修正 → Code Review 2（Approved with
+> Suggestions、Blocking 0件／Major 0件／Minor 1件／Suggestion 5件。新規Minorは
+> 設計書§0／§16.7の記述不整合であり、Documentation Integrationで解消済み）→
+> Documentation Integration Completed。**限定回帰（v6.19〜v6.25の関連7ファイルのみ
+> 対象、履歴として維持）：合計1792/1792 PASS。** その後**Formal Regression：
+> PASS**（正式Inventory**28ファイル**：v1.11.0＋v5.9.0＋v6.0.0〜v6.25.0、合計
+> **4582/4582 PASS**、FAIL 0／SKIP 0、全ファイルexit code 0。うち新規v6.25.0：
+> 128/128 PASS。旧27ファイル分4454/4454は、v6.24.0時点の文書記録値4418との
+> 差分+36が限定回帰の構造的増分と一致することを確認済み。INV-1〜INV-7・R-5も
+> 確認済み。実行は`.\venv\Scripts\python.exe`のみ使用し、実行後の`git status`は
+> 実行前と同一で想定外の差分はなかった）。**人間による最終承認・Release Review・
+> commit・pushはいずれも本節時点では未実施である。**
+
+### Purpose
+
+Gate OFF／APPLIED／CONTINUE／PROPAGATEという既存の画像アイキャッチ挙動判断を
+1文字も変えずに、失敗理由（reason）と処理区分（category／action）を
+**観測可能にする**（DI-5：failure reason observation/logging ＋ DEF-3：
+PROPAGATE時のcategory記録）。判断ロジック本体（`decide_image_generation_fallback()`・
+`_ACTION_BY_CATEGORY`・`_CONTINUABLE_REASONS`）は無改修であり、本Releaseは
+**既に決定済みの判断結果を安全に記録可能な形へ変換する層を追加するのみ**である。
+
+### Package Boundary
+
+新規packageは作成しない。既存3packageへ追加のみ行う。
+
+```
+src/image_generation_fallback_policy/
+    image_generation_fallback_policy.py  ← 変更（extract_safe_reason()を追加）
+    __init__.py                          ← 変更（__all__ 4→5 symbol）
+
+src/article_featured_media_runtime/
+    article_featured_media_runtime.py    ← 変更（FeaturedMediaFailureObservation・
+                                             classify_propagated_failure()・
+                                             Result.observation fieldを追加）
+    __init__.py                          ← 変更（__all__ 3→4 symbol）
+
+src/logger/
+    log_entry.py                         ← 変更（ArticleLogEntryへ3 field末尾追加）
+    log_manager.py                       ← 変更（LogManager／NullLogManager双方の
+                                             log_article()へ3 kwarg追加）
+
+main.py                                  ← 変更（後述）
+```
+
+### extract_safe_reason() — pair-wise allow-list
+
+```
+extract_safe_reason(error: Exception) -> str | None
+
+    isinstance(error, OpenAIImageGenerationError)?
+        → reason = getattr(error, "reason", None)
+        → isinstance(reason, OpenAIImageGenerationErrorReason) ? reason.value : None
+
+    isinstance(error, WordPressMediaUploadError)?
+        → reason = getattr(error, "reason", None)
+        → isinstance(reason, WordPressMediaUploadErrorReason) ? reason.value : None
+
+    それ以外（未知の例外型）→ None（.reasonへ一切アクセスしない）
+```
+
+各例外型は**自分自身のreason型としか組まない**（誤った組合せ・属性欠落・
+未知reason型はすべて`None`）。`str(error)`／`repr(error)`／
+`type(error).__name__`はいずれも参照しない（secret-free契約）。ループ構造
+（`for error_type, reason_type in pairs: isinstance(error, error_type)`）は
+v6.19.0の`DEP-ISINSTANCE-TARGETS-LIMITED`guardが`isinstance`第2引数に
+literal型名を要求するため採用できず、明示的な`if isinstance(...)`連鎖とした
+（guardの許可型集合へ`WordPressMediaUploadErrorReason`を追加）。
+
+### FeaturedMediaFailureObservation・classify_propagated_failure()
+
+```python
+@dataclass(frozen=True)
+class FeaturedMediaFailureObservation:
+    category: str
+    action: str
+    reason: str | None
+```
+
+CONTINUE分岐（`apply()`内）は、既存の`decide_image_generation_fallback()`呼び出し
+結果（`decision`、1回のみ・再評価しない）を再利用して`_build_observation()`経由で
+`observation`を`Result`へ格納する。PROPAGATE分岐（bare raiseで例外がそのまま
+呼び出し元へ伝播するため`decision`を保持できない）は、呼び出し側が
+`classify_propagated_failure(error)`を呼ぶことで`decide_image_generation_fallback(error)`を
+独立に再構築し、同じ`_build_observation()`で観測情報を得る。CONTINUE／PROPAGATE
+いずれの経路も、observationの構築ロジック（`_build_observation()`）は単一箇所に
+共通化されている。`classify_propagated_failure()`は**例外を読み取るのみで、
+変更・再送出・wrapを一切行わない**。
+
+### main.py配線
+
+```
+記事ループ（各反復）
+    │
+    ├─ featured_media_observation: FeaturedMediaFailureObservation | None = None
+    │     ← 毎反復で再初期化（記事間でobservationが漏れないことを保証する唯一の箇所）
+    │
+    ├─ try:
+    │     result = _apply_featured_media_step(...)   ← 戻り値が ArticleData から
+    │                                                    ArticleFeaturedMediaRuntimeResult へ変更
+    │     featured_media_observation = result.observation   （CONTINUE時のみ非None）
+    │
+    ├─ except Exception as exc:                        ← 旧: except Exception:
+    │     featured_media_observation = featured_media_runtime.classify_propagated_failure(exc)
+    │     _handle_featured_media_failure(..., observation=featured_media_observation)
+    │     （excの唯一の使用はこの引数位置のみ。str/repr/type().__name__・
+    │       raw exceptionのログ渡し・属性改変はいずれも行わない）
+    │
+    └─ log_manager.log_article(..., featured_media_category=..., featured_media_action=...,
+                                featured_media_reason=...)
+          ← observationがNoneの場合は3フィールドとも ""
+```
+
+### ArticleLogEntry／LogManager
+
+`ArticleLogEntry`は`featured_media_category`／`featured_media_action`／
+`featured_media_reason`（いずれも`str = ""`）を末尾追加する（既存18 field・順序・
+デフォルト値は無変更）。`LogManager.log_article()`と`NullLogManager.log_article()`は
+常に同一のkeyword引数集合を受け付ける対称性を維持し、片方だけが新kwargを
+受け付けない非対称は生じない。
+
+### 不変条件（INV-1〜INV-7）
+
+v6.24.0のRuntime Action Zero Diff（Z-1〜Z-8）は**過去Releaseの成立事実として
+変更しない**。v6.25.0では新しいZero Diff名称を作らず、以下を個別の不変条件として
+定義する。
+
+| ID | 内容 |
+|---|---|
+| INV-1 | category/action mappingが不変（`_ACTION_BY_CATEGORY`無改修） |
+| INV-2 | CONTINUE対象4値が不変（`_CONTINUABLE_REASONS`無改修） |
+| INV-3 | exception messageが不変 |
+| INV-4 | bare raise／object identity／chainingが不変 |
+| INV-5 | GeneratedImage／MediaUploadResult／ArticleData bindingが不変 |
+| INV-6 | Gate OFF／APPLIED／CONTINUE／PROPAGATE後の記事処理・counter・loopが不変 |
+| INV-7 | raw secret／exception情報が非記録 |
+
+**main.pyバイト単位無変更（v6.24のZ-3相当）は本Releaseでは成立しない**
+（`main.py`・`article_featured_media_runtime`双方に正当な変更が及ぶため）。
+これはv6.24というRelease時点でZ-3が成立していたという記録を書き換えるものではない。
+
+### security guard精緻化（`test_e2e_v6_21_0_*.py`）
+
+`LOOP-HANDLER-NO-BINDING`（`_handler.name is None`という実装詳細の検査）を、
+SEC-2／SEC-3が本来禁じる操作を直接検査する6つのpositive allow-list guardへ
+精緻化した：`LOOP-HANDLER-BINDS-EXC`（`name == "exc"`）・`SEC-NO-STR-EXC`・
+`SEC-NO-TYPENAME-EXC`・`SEC-NO-RAW-EXC-TO-LOGENTRY`・`SEC-NO-EXC-MUTATION`・
+`SEC-EXC-USAGE-ALLOWLIST`（`exc`の唯一の許可された使用が
+`classify_propagated_failure(exc)`の引数位置であることを検査）。6guardすべてが
+陽性・陰性の両fixtureで自己検証されるほか、`main.py`の実際の except-handler本体
+（AST）へ直接適用するcross-check（`RUNTIMEPATH`セクションで取得した
+`_except_handler.body`を再利用）で、実装漏れがないことを機械的に確認する。
+
+### baseline固定guard（GR-9）
+
+`src/image_generation_fallback_policy`・`src/article_featured_media_runtime`・
+`src/logger`へ触れる本Releaseは、これら3パスを保護対象とする既存guardの
+allow-listをすべて更新する必要があった。対象：`test_e2e_v6_19_0_*.py`・
+`test_e2e_v6_20_0_*.py`・`test_e2e_v6_21_0_*.py`・`test_e2e_v6_22_0_*.py`・
+`test_e2e_v6_23_0_*.py`・`test_e2e_v6_24_0_*.py`の6ファイル。v6.24.0の
+`POLICYFILE-AST-EQUAL`は、whole-file AST等価から`decide_image_generation_fallback()`
+関数単位のAST等価へ縮小した（v6.23／v6.24の`_classify_api_error()`関数単位
+ASTEQ検査と同じ手法）。縮小により失われた保護範囲は、v6.25新規`NOIMPACT-*`・
+v6.23の`COMPAT-*`・v6.19の全網羅テストで代替的にカバーされていることを確認した。
+
+### Runtime behavioral E2E
+
+`test_e2e_v6_25_0_*.py`の`RUNTIME-E2E-`セクションは、`main.main()`のRSS収集・
+重要度判定・記事生成・画像Runtime・WordPress/Markdown出力・LogManagerの
+すべてをmonkeypatchしたうえで実際に実行するbehavioral E2Eである。
+CONTINUE-WP-SUCCESS／CONTINUE-WP-FAILURE／APPLIED／DISABLED／PROPAGATE／
+NULLLOG（`log_enabled=False`で実際の`NullLogManager`が最後まで例外なく
+完走することを含む）の6経路を、counter（`total_wp_success`／`total_wp_failed`／
+`total_wp_skipped`）・Markdown保存回数・loop継続・observation内容・
+記事間NOLEAK（先行記事のobservationが後続の空文字列fieldへ漏れないこと）を
+含めて検証する。
+
+### 本Releaseの対象外
+
+DI-9（Gate値 strict validation）、DEF-6.22-1（WordPress側CONTINUE対象拡大）、
+DI-6／DI-7／DI-8、s-3／s-7（v6.24.0由来、継続）は、いずれも本Releaseの対象外。
+
+### Deferred（本Release時点）
+
+Non-Blocking Suggestions（Code Review 1で検出したBlocking 0件・Major 3件・
+Minor 2件はいずれもCode Review 2までに反映済み）5件（S-1〜S-5）はいずれも
+非ブロッキングのままDeferredとする。s-1〜s-5・s-7（v6.24.0由来）は継続。
+
+詳細は`docs/design/image_generation_fallback_observability_foundation.md`
+（Architecture Design・Architecture Review・Test Review／Implementation前Gate
+確認・Production Implementation・限定回帰・Documentation Integration・
+Code Review 1／2・Formal Regressionの経緯を含む。Release Review・commit・push・
+人間の最終承認は本節時点ではまだ実施していない）を参照。

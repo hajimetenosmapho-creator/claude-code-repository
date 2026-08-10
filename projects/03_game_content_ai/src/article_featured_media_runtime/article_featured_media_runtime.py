@@ -28,7 +28,9 @@ from generated_image_filename_policy import generate_image_filename
 from image_generation_fallback_policy import (
     ImageGenerationFailureCategory,
     ImageGenerationFallbackAction,
+    ImageGenerationFallbackDecision,
     decide_image_generation_fallback,
+    extract_safe_reason,
 )
 from outputs import ArticleData
 
@@ -42,20 +44,53 @@ class ArticleFeaturedMediaRuntimeStatus(Enum):
 
 
 @dataclass(frozen=True)
+class FeaturedMediaFailureObservation:
+    """featured media処理失敗の観測用スナップショット（DI-5、v6.25.0）。
+
+    fallback判断（apply()内部のCONTINUE/PROPAGATE決定）には一切関与しない、
+    読み取り専用の記録専用オブジェクト。raw exception・例外message・prompt・
+    credential・Provider応答本文・image bytesのいずれも保持しない。
+    """
+
+    category: ImageGenerationFailureCategory
+    action: ImageGenerationFallbackAction
+    reason: str | None
+
+
+def _build_observation(
+    decision: ImageGenerationFallbackDecision, error: Exception
+) -> FeaturedMediaFailureObservation:
+    """decisionとerrorから observation を1回だけ構築する（DI-5、v6.25.0）。
+
+    CONTINUE（apply()内部）とPROPAGATE（classify_propagated_failure()）の
+    両方が使用する唯一の生成箇所。
+    """
+    return FeaturedMediaFailureObservation(
+        category=decision.category,
+        action=decision.action,
+        reason=extract_safe_reason(error),
+    )
+
+
+@dataclass(frozen=True)
 class ArticleFeaturedMediaRuntimeResult:
     """apply() の戻り値。Immutable。
 
     Attributes:
-        article:  DISABLED／CONTINUED_WITHOUT_FEATURED_MEDIA時は引数と同一object
-                  （未改変）。APPLIED時はOrchestratorが返した新しいArticleData。
-        status:   apply() の結果種別。
-        category: CONTINUED_WITHOUT_FEATURED_MEDIA の場合にのみ非None。
-                  v6.19.0 の provider中立5値であり、秘密情報・provider名を含まない。
+        article:     DISABLED／CONTINUED_WITHOUT_FEATURED_MEDIA時は引数と同一object
+                     （未改変）。APPLIED時はOrchestratorが返した新しいArticleData。
+        status:      apply() の結果種別。
+        category:    CONTINUED_WITHOUT_FEATURED_MEDIA の場合にのみ非None。
+                     v6.19.0 の provider中立5値であり、秘密情報・provider名を含まない。
+        observation: CONTINUED_WITHOUT_FEATURED_MEDIA の場合にのみ非None
+                     （DI-5、v6.25.0）。category／action／reasonをまとめて
+                     保持する観測用スナップショット。
     """
 
     article: ArticleData
     status: ArticleFeaturedMediaRuntimeStatus
     category: ImageGenerationFailureCategory | None = None
+    observation: FeaturedMediaFailureObservation | None = None
 
 
 class ArticleFeaturedMediaRuntime:
@@ -125,6 +160,7 @@ class ArticleFeaturedMediaRuntime:
                 article=article,
                 status=ArticleFeaturedMediaRuntimeStatus.CONTINUED_WITHOUT_FEATURED_MEDIA,
                 category=decision.category,
+                observation=_build_observation(decision, error),
             )
 
         return ArticleFeaturedMediaRuntimeResult(
@@ -132,3 +168,20 @@ class ArticleFeaturedMediaRuntime:
             status=ArticleFeaturedMediaRuntimeStatus.APPLIED,
             category=None,
         )
+
+    def classify_propagated_failure(self, error: Exception) -> FeaturedMediaFailureObservation:
+        """PROPAGATE後、呼び出し側（main.py）がobservability目的で失敗を分類する
+        ための読み取り専用API（DI-5、v6.25.0）。
+
+        apply() 内部のCONTINUE/PROPAGATE決定には一切関与しない。stateを持たず、
+        I/Oも行わない。error を読み取るのみで、変更・再送出・wrapは一切行わない。
+
+        Args:
+            error: apply() がbare raiseした（呼び出し側が捕捉した）元の例外。
+
+        Returns:
+            FeaturedMediaFailureObservation: category／action／reasonの
+                観測用スナップショット。
+        """
+        decision = decide_image_generation_fallback(error)
+        return _build_observation(decision, error)

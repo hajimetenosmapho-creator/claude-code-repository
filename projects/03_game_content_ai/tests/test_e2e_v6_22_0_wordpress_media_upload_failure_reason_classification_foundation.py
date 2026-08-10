@@ -1090,8 +1090,18 @@ _allowed_source_changes = {
     "src/openai_image_generation": frozenset({
         "src/openai_image_generation/openai_image_generator.py",
     }),
+    # v6.25.0（DI-5＋DEF-3）が Architecture Design で正式に宣言した意図的変更（GR-9）。
     "src/image_generation_fallback_policy": frozenset({
         "src/image_generation_fallback_policy/image_generation_fallback_policy.py",
+        "src/image_generation_fallback_policy/__init__.py",
+    }),
+    "src/article_featured_media_runtime": frozenset({
+        "src/article_featured_media_runtime/article_featured_media_runtime.py",
+        "src/article_featured_media_runtime/__init__.py",
+    }),
+    "src/logger": frozenset({
+        "src/logger/log_entry.py",
+        "src/logger/log_manager.py",
     }),
 }
 
@@ -1172,6 +1182,8 @@ _allowed_test_changes = {
     "test_e2e_v6_23_0_openai_image_generation_api_rejection_reason_classification_foundation.py",
     # v6.24.0（DI-11後半）の新規E2E自身（更新対象の既存E2Eはいずれも上記に既出。GR-9）
     "test_e2e_v6_24_0_openai_image_generation_unknown_and_invalid_response_reason_refinement_foundation.py",
+    # v6.25.0（DI-5＋DEF-3）の新規E2E自身（GR-9）
+    "test_e2e_v6_25_0_image_generation_fallback_observability_foundation.py",
 }
 _tests_diff_proc = subprocess.run(
     ["git", "diff", "--name-only", BASELINE_COMMIT, "--", "tests"],
@@ -1274,18 +1286,26 @@ check(
     sorted(["ArticleFeaturedMediaCompositionRoot"]),
 )
 check(
-    "COMPAT-V620. article_featured_media_runtime.__all__が不変",
+    "COMPAT-V620. article_featured_media_runtime.__all__が既存3symbol＋"
+    "v6.25.0のFeaturedMediaFailureObservationの4symbolである",
     sorted(_v620_pkg.__all__),
-    sorted(["ArticleFeaturedMediaRuntimeStatus", "ArticleFeaturedMediaRuntimeResult", "ArticleFeaturedMediaRuntime"]),
+    sorted([
+        "ArticleFeaturedMediaRuntimeStatus",
+        "ArticleFeaturedMediaRuntimeResult",
+        "ArticleFeaturedMediaRuntime",
+        "FeaturedMediaFailureObservation",
+    ]),
 )
 check(
-    "COMPAT-V619. image_generation_fallback_policy.__all__が不変",
+    "COMPAT-V619. image_generation_fallback_policy.__all__が既存4symbol＋"
+    "v6.25.0のextract_safe_reasonの5symbolである",
     sorted(_v619_pkg.__all__),
     sorted([
         "ImageGenerationFailureCategory",
         "ImageGenerationFallbackAction",
         "ImageGenerationFallbackDecision",
         "decide_image_generation_fallback",
+        "extract_safe_reason",
     ]),
 )
 

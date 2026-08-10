@@ -13,10 +13,12 @@ from .article_featured_media_runtime import (
     ArticleFeaturedMediaRuntime,
     ArticleFeaturedMediaRuntimeResult,
     ArticleFeaturedMediaRuntimeStatus,
+    FeaturedMediaFailureObservation,
 )
 
 __all__ = [
     "ArticleFeaturedMediaRuntimeStatus",
     "ArticleFeaturedMediaRuntimeResult",
     "ArticleFeaturedMediaRuntime",
+    "FeaturedMediaFailureObservation",
 ]

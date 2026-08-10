@@ -13,6 +13,7 @@ from .image_generation_fallback_policy import (
     ImageGenerationFallbackAction,
     ImageGenerationFallbackDecision,
     decide_image_generation_fallback,
+    extract_safe_reason,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "ImageGenerationFallbackAction",
     "ImageGenerationFallbackDecision",
     "decide_image_generation_fallback",
+    "extract_safe_reason",
 ]

@@ -282,13 +282,14 @@ try:
     print("[API] Public API")
 
     check(
-        "API-ALL-EXACT. __all__が3 symbolのみである",
+        "API-ALL-EXACT. __all__が4 symbolのみである（v6.25.0でFeaturedMediaFailureObservationを追加）",
         sorted(_pkg.__all__),
         sorted(
             [
                 "ArticleFeaturedMediaRuntimeStatus",
                 "ArticleFeaturedMediaRuntimeResult",
                 "ArticleFeaturedMediaRuntime",
+                "FeaturedMediaFailureObservation",
             ]
         ),
     )
@@ -371,12 +372,18 @@ try:
     )
     _field_names = tuple(f.name for f in dataclasses.fields(ArticleFeaturedMediaRuntimeResult))
     check(
-        "RESULT-FIELDS. fieldがarticle/status/categoryの3件・この順序",
+        "RESULT-FIELDS. fieldがarticle/status/category/observationの4件・この順序（v6.25.0でobservation追加）",
         _field_names,
-        ("article", "status", "category"),
+        ("article", "status", "category", "observation"),
     )
     _category_field = dataclasses.fields(ArticleFeaturedMediaRuntimeResult)[2]
     check("RESULT-CATEGORY-DEFAULT-NONE. categoryの既定値がNone", _category_field.default, None)
+    _observation_field = dataclasses.fields(ArticleFeaturedMediaRuntimeResult)[3]
+    check(
+        "RESULT-OBSERVATION-DEFAULT-NONE. observationの既定値がNone（v6.25.0）",
+        _observation_field.default,
+        None,
+    )
 
     _sample_result = ArticleFeaturedMediaRuntimeResult(
         article=make_article(), status=ArticleFeaturedMediaRuntimeStatus.DISABLED
@@ -1046,7 +1053,7 @@ try:
         sorted(["ArticleFeaturedMediaCompositionRoot"]),
     )
     check(
-        "COMPAT-V619. image_generation_fallback_policy.__all__が不変",
+        "COMPAT-V619. image_generation_fallback_policy.__all__が既存4シンボル＋v6.25.0のextract_safe_reasonの5シンボル",
         sorted(_v619_pkg.__all__),
         sorted(
             [
@@ -1054,6 +1061,7 @@ try:
                 "ImageGenerationFallbackAction",
                 "ImageGenerationFallbackDecision",
                 "decide_image_generation_fallback",
+                "extract_safe_reason",
             ]
         ),
     )

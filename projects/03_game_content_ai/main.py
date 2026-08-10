@@ -48,7 +48,12 @@ from sns_config import SnsConfig, SnsPostStatus
 from outputs import OutputManager, MarkdownOutput, WordPressOutput, ArticleData, SaveResult
 from logger import LogManager, ExecutionLogEntry
 from analytics import AnalyticsManager
-from article_featured_media_runtime import ArticleFeaturedMediaRuntime, ArticleFeaturedMediaRuntimeStatus
+from article_featured_media_runtime import (
+    ArticleFeaturedMediaRuntime,
+    ArticleFeaturedMediaRuntimeResult,
+    ArticleFeaturedMediaRuntimeStatus,
+    FeaturedMediaFailureObservation,
+)
 
 # .env ファイルを読み込む
 load_dotenv()
@@ -179,18 +184,23 @@ total_count: {len(candidates)}
     return output_path
 
 
-def _apply_featured_media_step(runtime: ArticleFeaturedMediaRuntime, article: ArticleData) -> ArticleData:
+def _apply_featured_media_step(
+    runtime: ArticleFeaturedMediaRuntime, article: ArticleData
+) -> ArticleFeaturedMediaRuntimeResult:
     """
     v6.21.0: アイキャッチ画像のfeatured media適用ステップ。
     承認済みFacade ArticleFeaturedMediaRuntime を呼び出す唯一の箇所。
 
     PROPAGATE対象の例外はruntime.apply()内部でbare raiseされ、無変換のまま
     この関数の呼び出し元（main()の記事ループ）へ伝播する。
+
+    v6.25.0（DI-5）: 戻り値を ArticleFeaturedMediaRuntimeResult そのものへ変更し、
+    呼び出し元が result.article／result.observation を個別に取り出す。
     """
     result = runtime.apply(article)
     if result.status is ArticleFeaturedMediaRuntimeStatus.CONTINUED_WITHOUT_FEATURED_MEDIA:
         print(f"    アイキャッチ画像なしで継続します（分類: {result.category.value}）")
-    return result.article
+    return result
 
 
 def _handle_featured_media_failure(
@@ -203,6 +213,7 @@ def _handle_featured_media_failure(
     seo_title: str,
     wp_public_url: str,
     x_post_status,
+    observation: FeaturedMediaFailureObservation | None = None,
 ) -> None:
     """
     v6.21.0: アイキャッチ処理の失敗が伝播（PROPAGATE）したときの後処理。
@@ -213,6 +224,9 @@ def _handle_featured_media_failure(
     Markdown 保存自体が失敗した場合も例外を外へ出さず、固定ラベルの警告のみを
     表示する（例外メッセージ原文は出力しない）。記事1件の失敗として扱い、
     run 全体は停止させない。
+
+    v6.25.0（DI-5）: observation（category／action／secret-freeなreason）を
+    ArticleLogへ記録する。observation が None の場合は3フィールドとも ""。
     """
     try:
         markdown_save = markdown_output.save(article)
@@ -234,6 +248,9 @@ def _handle_featured_media_failure(
         wp_public_url=wp_public_url,
         x_post_status=x_post_status,
         post_id=None,
+        featured_media_category=observation.category.value if observation else "",
+        featured_media_action=observation.action.value if observation else "",
+        featured_media_reason=(observation.reason or "") if observation else "",
     )
 
 
@@ -419,11 +436,18 @@ def main():
             publish_status=publish_status,
         )
 
+        # v6.25.0（DI-5）: 各記事の反復ごとに毎回Noneへ再初期化する。前の記事の
+        # 観測値が次の記事へ漏れないことを保証する唯一の箇所。
+        featured_media_observation: FeaturedMediaFailureObservation | None = None
+
         # v6.21.0: featured media適用（Gate OFF時は素通し。PROPAGATE対象の失敗は
         # ここで例外として捕捉し、WordPressへは投稿せずMarkdownのみ保存して次の記事へ進む）
         try:
-            article = _apply_featured_media_step(featured_media_runtime, article)
-        except Exception:
+            featured_media_result = _apply_featured_media_step(featured_media_runtime, article)
+            article = featured_media_result.article
+            featured_media_observation = featured_media_result.observation
+        except Exception as exc:
+            featured_media_observation = featured_media_runtime.classify_propagated_failure(exc)
             _handle_featured_media_failure(
                 markdown_output,
                 log_manager,
@@ -433,6 +457,7 @@ def main():
                 seo_title=seo_title,
                 wp_public_url=wp_public_url,
                 x_post_status=x_post_status,
+                observation=featured_media_observation,
             )
             wp_failed_count += 1
             continue
@@ -459,6 +484,15 @@ def main():
             wp_public_url=wp_public_url,
             x_post_status=x_post_status,
             post_id=wp_save.post_id if wp_save else None,
+            featured_media_category=(
+                featured_media_observation.category.value if featured_media_observation else ""
+            ),
+            featured_media_action=(
+                featured_media_observation.action.value if featured_media_observation else ""
+            ),
+            featured_media_reason=(
+                (featured_media_observation.reason or "") if featured_media_observation else ""
+            ),
         )
 
         # v1.12.0: WordPress 投稿成功時に placeholder AnalyticsEntry を保存

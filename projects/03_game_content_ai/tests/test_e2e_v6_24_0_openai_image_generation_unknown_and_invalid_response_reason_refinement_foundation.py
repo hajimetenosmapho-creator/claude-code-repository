@@ -820,20 +820,37 @@ try:
         ["diff", "--name-only", "--relative", BASELINE_COMMIT, "--",
          "src/image_generation_fallback_policy"]
     )
+    # v6.25.0（DI-5＋DEF-3）が Architecture Design で正式に宣言した意図的変更（GR-9）。
+    # extract_safe_reason()の追加に伴い、image_generation_fallback_policy.pyと
+    # __init__.pyの2ファイルのみ変更を許容する。それ以外の差分は引き続き禁止する。
+    _policyfile_allowed_v625 = {
+        "src/image_generation_fallback_policy/image_generation_fallback_policy.py",
+        "src/image_generation_fallback_policy/__init__.py",
+    }
     check(
-        "POLICYFILE-DIFF-EMPTY. policy package の baseline からの差分が空である（G-8・AC-21）",
-        sorted(line.strip() for line in _policy_diff.splitlines() if line.strip()),
+        "POLICYFILE-DIFF-EMPTY. policy package の baseline からの差分が"
+        "v6.25.0が正式に宣言した2ファイルの範囲内である（G-8・AC-21、GR-9対応で許容範囲を明示化）",
+        sorted(
+            line.strip() for line in _policy_diff.splitlines()
+            if line.strip() and line.strip() not in _policyfile_allowed_v625
+        ),
         [],
     )
     _rc_pb, _policy_baseline_src = git_show_baseline(
         "projects/03_game_content_ai/src/image_generation_fallback_policy"
         "/image_generation_fallback_policy.py"
     )
+    # v6.25.0でファイル全体は変更されるため、whole-file AST等価ではなく、
+    # 分類ロジック本体（decide_image_generation_fallback()）のAST等価のみを
+    # 保証対象とする（GR-9：関数スコープの精緻化。ASTEQ節のprecedentと同型）。
     check_true(
-        "POLICYFILE-AST-EQUAL. policy module が baseline と AST 等価である",
+        "POLICYFILE-AST-EQUAL. decide_image_generation_fallback()が"
+        "baselineとAST完全一致である（v6.25.0でGR-9に従いwhole-file等価から関数単位へ精緻化）",
         _rc_pb == 0
-        and ast.dump(ast.parse(_policy_baseline_src))
-        == ast.dump(parse_file(POLICY_MODULE_FILE)),
+        and (lambda _b, _c: _b is not None and _c is not None and ast.dump(_b) == ast.dump(_c))(
+            find_function(ast.parse(_policy_baseline_src), "decide_image_generation_fallback"),
+            find_function(parse_file(POLICY_MODULE_FILE), "decide_image_generation_fallback"),
+        ),
     )
     print()
 
@@ -1074,10 +1091,12 @@ try:
     check_true("COMPATAPI-OPENAI-ERROR-BASE. 基底が RuntimeError のまま不変である",
                issubclass(OpenAIImageGenerationError, RuntimeError))
     check(
-        "COMPATAPI-POLICY-ALL. image_generation_fallback_policy.__all__ が4 symbol のまま不変である",
+        "COMPATAPI-POLICY-ALL. image_generation_fallback_policy.__all__ が既存4 symbol＋"
+        "v6.25.0のextract_safe_reasonの5 symbolである",
         sorted(_policy_pkg.__all__),
         sorted(["ImageGenerationFailureCategory", "ImageGenerationFallbackAction",
-                "ImageGenerationFallbackDecision", "decide_image_generation_fallback"]),
+                "ImageGenerationFallbackDecision", "decide_image_generation_fallback",
+                "extract_safe_reason"]),
     )
     check(
         "COMPATAPI-POLICY-SIG. decide_image_generation_fallback の signature が (error) のままである",
@@ -1153,6 +1172,19 @@ try:
         "src/openai_image_generation": frozenset({
             "src/openai_image_generation/openai_image_generator.py",
         }),
+        # v6.25.0（DI-5＋DEF-3）が Architecture Design で正式に宣言した意図的変更（GR-9）。
+        "src/image_generation_fallback_policy": frozenset({
+            "src/image_generation_fallback_policy/image_generation_fallback_policy.py",
+            "src/image_generation_fallback_policy/__init__.py",
+        }),
+        "src/article_featured_media_runtime": frozenset({
+            "src/article_featured_media_runtime/article_featured_media_runtime.py",
+            "src/article_featured_media_runtime/__init__.py",
+        }),
+        "src/logger": frozenset({
+            "src/logger/log_entry.py",
+            "src/logger/log_manager.py",
+        }),
     }
 
     for _rel in _protected_paths:
@@ -1197,6 +1229,9 @@ try:
         "test_e2e_v6_22_0_wordpress_media_upload_failure_reason_classification_foundation.py",
         "test_e2e_v6_23_0_openai_image_generation_api_rejection_reason_classification_foundation.py",
         "test_e2e_v6_24_0_openai_image_generation_unknown_and_invalid_response_reason_refinement_foundation.py",
+        # v6.25.0（DI-5＋DEF-3）が更新する既存E2Eと新規E2E自身（GR-9）
+        "test_e2e_v6_20_0_article_featured_media_runtime_foundation.py",
+        "test_e2e_v6_25_0_image_generation_fallback_observability_foundation.py",
     }
     _, _tests_diff_out = git_out(["diff", "--name-only", BASELINE_COMMIT, "--", "tests"])
     _changed_tests = {

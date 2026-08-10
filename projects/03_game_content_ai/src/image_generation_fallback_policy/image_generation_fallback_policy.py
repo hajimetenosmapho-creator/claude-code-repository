@@ -27,6 +27,11 @@ v6.23.0（DI-11前半）で `_REJECTED_REASONS` を追加し、v6.11が細分化
 要求拒否系4 reason と既存の REQUEST_REJECTED をまとめて
 `IMAGE_GENERATION_REQUEST_REJECTED` へ写像する。継続対象
 （`_CONTINUABLE_REASONS` の4値）は変更していない。
+
+v6.25.0（DI-5）で `extract_safe_reason()` を追加し、fallback判断とは独立に
+secret-freeなreason文字列を取り出す観測用の補助関数を公開する。分類
+テーブル・CONTINUE対象・`decide_image_generation_fallback()`のロジックは
+いずれも無変更。
 """
 from __future__ import annotations
 
@@ -37,7 +42,7 @@ from openai_image_generation import (
     OpenAIImageGenerationError,
     OpenAIImageGenerationErrorReason,
 )
-from wordpress_media import WordPressMediaUploadError
+from wordpress_media import WordPressMediaUploadError, WordPressMediaUploadErrorReason
 
 
 class ImageGenerationFallbackAction(Enum):
@@ -180,3 +185,36 @@ def decide_image_generation_fallback(
         category = ImageGenerationFailureCategory.UNCLASSIFIED
 
     return ImageGenerationFallbackDecision(category=category)
+
+
+def extract_safe_reason(error: Exception) -> str | None:
+    """error から secret-free な reason 文字列を安全に取り出す（DI-5、v6.25.0）。
+
+    error が allow-list 対象の既知 Exception 型であり、かつその .reason が
+    その型に対応する既知 Reason Enum である場合のみ、.value（str）を返す。
+    str(error)／repr(error)／type(error).__name__ はいずれも参照しない。
+
+    各例外型は「自分自身のreason型」としか組まない（pair-wise allow-list）。
+    誤った組合せ（例：OpenAIImageGenerationErrorがWordPressMediaUploadErrorReasonを
+    保持する人工的なケース）はいずれもNoneへ落ちる。
+
+    未知の Exception 型に対しては .reason へ一切アクセスしない（isinstance
+    確認を先に行うことで、未知の Exception サブクラスが .reason という名前の
+    property／descriptor を独自に定義し、そのgetterが例外を送出する可能性を
+    排除する）。
+
+    Args:
+        error: 任意の Exception。
+
+    Returns:
+        str | None: 既知の(error型, reason型)の組合せに一致する場合はreasonの
+            .value。それ以外（未知の例外型・reason属性欠落・誤った型の組合せ・
+            未知reason値）はすべて None。
+    """
+    if isinstance(error, OpenAIImageGenerationError):
+        reason = getattr(error, "reason", None)
+        return reason.value if isinstance(reason, OpenAIImageGenerationErrorReason) else None
+    if isinstance(error, WordPressMediaUploadError):
+        reason = getattr(error, "reason", None)
+        return reason.value if isinstance(reason, WordPressMediaUploadErrorReason) else None
+    return None

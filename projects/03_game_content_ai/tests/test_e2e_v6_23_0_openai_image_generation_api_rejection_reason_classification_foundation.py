@@ -1084,10 +1084,12 @@ try:
     check_true("COMPAT-OPENAI-ERROR-BASE. 基底が RuntimeError のまま不変である",
                issubclass(OpenAIImageGenerationError, RuntimeError))
     check(
-        "COMPAT-POLICY-ALL. image_generation_fallback_policy.__all__ が4 symbol のまま不変である",
+        "COMPAT-POLICY-ALL. image_generation_fallback_policy.__all__ が既存4 symbol＋"
+        "v6.25.0のextract_safe_reasonの5 symbolである",
         sorted(_policy_pkg.__all__),
         sorted(["ImageGenerationFailureCategory", "ImageGenerationFallbackAction",
-                "ImageGenerationFallbackDecision", "decide_image_generation_fallback"]),
+                "ImageGenerationFallbackDecision", "decide_image_generation_fallback",
+                "extract_safe_reason"]),
     )
     check(
         "COMPAT-POLICY-SIG. decide_image_generation_fallback の signature が (error) のままである",
@@ -1167,8 +1169,18 @@ try:
         "src/openai_image_generation": frozenset({
             "src/openai_image_generation/openai_image_generator.py",
         }),
+        # v6.25.0（DI-5＋DEF-3）が Architecture Design で正式に宣言した意図的変更（GR-9）。
         "src/image_generation_fallback_policy": frozenset({
             "src/image_generation_fallback_policy/image_generation_fallback_policy.py",
+            "src/image_generation_fallback_policy/__init__.py",
+        }),
+        "src/article_featured_media_runtime": frozenset({
+            "src/article_featured_media_runtime/article_featured_media_runtime.py",
+            "src/article_featured_media_runtime/__init__.py",
+        }),
+        "src/logger": frozenset({
+            "src/logger/log_entry.py",
+            "src/logger/log_manager.py",
         }),
     }
 
@@ -1222,6 +1234,9 @@ try:
         # v6.24.0（DI-11後半）の新規E2E自身。更新対象の既存E2E
         # （v6_11_0／v6_19_0／v6_21_0／v6_22_0）はいずれも上記に既出（GR-9）。
         "test_e2e_v6_24_0_openai_image_generation_unknown_and_invalid_response_reason_refinement_foundation.py",
+        # v6.25.0（DI-5＋DEF-3）が更新する既存E2Eと新規E2E自身（GR-9）
+        "test_e2e_v6_20_0_article_featured_media_runtime_foundation.py",
+        "test_e2e_v6_25_0_image_generation_fallback_observability_foundation.py",
     }
     _tests_diff = subprocess.run(
         ["git", "diff", "--name-only", BASELINE_COMMIT, "--", "tests"],

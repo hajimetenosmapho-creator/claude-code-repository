@@ -34,6 +34,11 @@ class ArticleLogEntry:
     x_post_status: SnsPostStatus = SnsPostStatus.PENDING  # X投稿ステータス
     x_post_url: str = ""                              # X投稿後のポストURL（将来のX API対応時に記録）
 
+    # ─── featured media fallback観測フィールド（DI-5、v6.25.0追加・デフォルト値ありで後方互換）───
+    featured_media_category: str = ""                 # fallback発生時のcategory（未発生時は""）
+    featured_media_action: str = ""                   # fallback発生時のaction（未発生時は""）
+    featured_media_reason: str = ""                   # fallback発生時のreason（未発生時は""）
+
     def to_json_line(self) -> str:
         """JSON Lines 形式の1行文字列に変換する。
         SnsPostStatus は str を継承するため json.dumps が自動的に文字列として扱う。

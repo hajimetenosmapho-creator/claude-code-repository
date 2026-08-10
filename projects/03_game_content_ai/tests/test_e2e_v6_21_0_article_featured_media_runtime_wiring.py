@@ -23,6 +23,8 @@ Scenario構成:
     CONT-      CONTINUE対象reasonで例外を送出せず、articleが未改変で返る（Behavioral／NOMUT）
     PROP-      PROPAGATE対象reasonで、注入した例外オブジェクトが無変換で送出される（Behavioral／IDENT）
     MDOK-      PROPAGATE後処理：Markdown保存成功→saved_files反映・failed logging（Behavioral／F-3a・F-3c）
+    MDOK-OBS-  PROPAGATE後処理：observation非Noneがcategory/action/reasonとしてlog_article()へ
+               正しく転記されること（Behavioral。Code Review Major-2対応。DI-5、v6.25.0）
     MDFAIL-    PROPAGATE後処理：Markdown保存失敗（OSError／success=False）でも例外を出さず継続（Behavioral／F-3b）
     NOWP-      PROPAGATE後処理がWordPress出力へ一切到達しない（Behavioral＋Structural／F-1）
     SEC-       例外message・例外class名がconsole／ArticleLogへ現れない（Behavioral／SEC-2・SEC-3・SEC-8）
@@ -164,6 +166,28 @@ def attribute_call_names(nodes) -> list:
     ]
 
 
+def find_calls_to(stmts, name: str) -> list:
+    """stmts内で、関数名（Name.id または Attribute.attr）がnameであるast.Callのリストを返す。"""
+    calls = []
+    for n in walk_stmts(stmts):
+        if isinstance(n, ast.Call):
+            func = n.func
+            if isinstance(func, ast.Name) and func.id == name:
+                calls.append(n)
+            elif isinstance(func, ast.Attribute) and func.attr == name:
+                calls.append(n)
+    return calls
+
+
+def find_name_loads(stmts, name: str) -> list:
+    """stmts内で、Load文脈のName(id=name)ノードのリストを返す。"""
+    return [
+        n
+        for n in walk_stmts(stmts)
+        if isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Load)
+    ]
+
+
 print("=" * 60)
 print("v6.21.0 Article Featured Media Runtime Wiring E2E テスト")
 print("=" * 60)
@@ -179,7 +203,11 @@ from openai_image_generation import (  # noqa: E402
     OpenAIImageGenerationError,
     OpenAIImageGenerationErrorReason,
 )
-from image_generation_fallback_policy import ImageGenerationFailureCategory  # noqa: E402
+from image_generation_fallback_policy import (  # noqa: E402
+    ImageGenerationFailureCategory,
+    ImageGenerationFallbackAction,
+)
+from article_featured_media_runtime import FeaturedMediaFailureObservation  # noqa: E402
 
 ArticleFeaturedMediaRuntime = main.ArticleFeaturedMediaRuntime
 ArticleFeaturedMediaRuntimeStatus = main.ArticleFeaturedMediaRuntimeStatus
@@ -273,11 +301,17 @@ class FakeLogManager:
 
 
 def run_apply_step_capturing_stdout(runtime, article):
+    """_apply_featured_media_step()を呼び、(戻り値, 例外, stdout)を返す。
+
+    v6.25.0（DI-5）: 戻り値は ArticleFeaturedMediaRuntimeResult そのもの
+    （article単体ではない）。呼び出し元は result.article／result.status／
+    result.observation を個別に参照する。
+    """
     buf = io.StringIO()
     try:
         with contextlib.redirect_stdout(buf):
-            result_article = main._apply_featured_media_step(runtime, article)
-        return result_article, None, buf.getvalue()
+            result = main._apply_featured_media_step(runtime, article)
+        return result, None, buf.getvalue()
     except Exception as exc:
         return None, exc, buf.getvalue()
 
@@ -317,13 +351,22 @@ _gateoff_result, _gateoff_exc, _gateoff_stdout = run_apply_step_capturing_stdout
 )
 check_true("GATEOFF-NOEXC. 例外が発生しない", _gateoff_exc is None)
 check_true(
+    "GATEOFF-STATUS-DISABLED. status==DISABLED（v6.25.0）",
+    _gateoff_result.status is ArticleFeaturedMediaRuntimeStatus.DISABLED,
+)
+check_true(
     "GATEOFF-SAME-OBJECT. articleが同一object（素通し）",
-    _gateoff_result is _gateoff_input,
+    _gateoff_result.article is _gateoff_input,
 )
 check(
     "GATEOFF-MEDIA-ID-UNCHANGED. featured_media_idが未改変",
-    _gateoff_result.featured_media_id,
+    _gateoff_result.article.featured_media_id,
     _gateoff_input.featured_media_id,
+)
+check(
+    "GATEOFF-OBSERVATION-NONE. observationがNone（v6.25.0）",
+    _gateoff_result.observation,
+    None,
 )
 check("GATEOFF-NO-OUTPUT. console出力なし", _gateoff_stdout, "")
 print()
@@ -343,11 +386,24 @@ _applied_result, _applied_exc, _applied_stdout = run_apply_step_capturing_stdout
     _applied_runtime, _applied_input
 )
 check_true("APPLIED-NOEXC. 例外が発生しない", _applied_exc is None)
+check_true(
+    "APPLIED-STATUS. status==APPLIED（v6.25.0）",
+    _applied_result.status is ArticleFeaturedMediaRuntimeStatus.APPLIED,
+)
 check_false(
     "APPLIED-NEW-OBJECT. articleが新しいobjectに置き換わる",
-    _applied_result is _applied_input,
+    _applied_result.article is _applied_input,
 )
-check("APPLIED-MEDIA-ID. featured_media_idが生成画像のmedia_id", _applied_result.featured_media_id, 999)
+check(
+    "APPLIED-MEDIA-ID. featured_media_idが生成画像のmedia_id",
+    _applied_result.article.featured_media_id,
+    999,
+)
+check(
+    "APPLIED-OBSERVATION-NONE. observationがNone（v6.25.0）",
+    _applied_result.observation,
+    None,
+)
 check("APPLIED-ORCH-CALLED-ONCE. orchestrator.apply()が1回呼ばれる", len(_applied_orch.calls), 1)
 print()
 
@@ -368,8 +424,12 @@ _cont_input = make_article()
 _cont_result, _cont_exc, _cont_stdout = run_apply_step_capturing_stdout(_cont_runtime, _cont_input)
 check_true("CONT-NOEXC. 例外を送出せず継続する", _cont_exc is None)
 check_true(
+    "CONT-STATUS. status==CONTINUED_WITHOUT_FEATURED_MEDIA（v6.25.0）",
+    _cont_result.status is ArticleFeaturedMediaRuntimeStatus.CONTINUED_WITHOUT_FEATURED_MEDIA,
+)
+check_true(
     "CONT-SAME-OBJECT（NOMUT）. articleが同一object・未改変",
-    _cont_result is _cont_input,
+    _cont_result.article is _cont_input,
 )
 check_contains(
     "CONT-CONSOLE-CATEGORY. consoleにcategoryが1行出力される",
@@ -379,6 +439,24 @@ check_contains(
 check_false(
     "CONT-SEC-NO-MARKER. 例外message原文がconsoleに現れない（SEC-2）",
     _CONT_SECRET_MARKER in _cont_stdout,
+)
+check_true(
+    "CONT-OBSERVATION-NOT-NONE. observationが非None（v6.25.0）",
+    _cont_result.observation is not None,
+)
+check(
+    "CONT-OBSERVATION-CATEGORY. observation.categoryがIMAGE_GENERATION_FAILED（v6.25.0）",
+    _cont_result.observation.category,
+    ImageGenerationFailureCategory.IMAGE_GENERATION_FAILED,
+)
+check(
+    "CONT-OBSERVATION-REASON. observation.reasonが'timeout'（v6.25.0）",
+    _cont_result.observation.reason,
+    OpenAIImageGenerationErrorReason.TIMEOUT.value,
+)
+check_false(
+    "CONT-OBSERVATION-SEC-NO-MARKER. observation.reasonに例外message原文が現れない（SEC-2）",
+    _CONT_SECRET_MARKER in (_cont_result.observation.reason or ""),
 )
 print()
 
@@ -459,6 +537,74 @@ check(
 check_true(
     "MDOK-LOG-ARTICLE-IDENTITY. log_article()へ渡るarticleが同一object",
     _mdok_log.calls[0].get("article") is _mdok_article,
+)
+print()
+
+# =====================================================================
+# MDOK-OBS: PROPAGATE後処理 — observation非NoneがLogへ正しく転記される
+# （Code Review Major-2対応。DI-5、v6.25.0）
+# =====================================================================
+
+print("[MDOK-OBS] observation非Noneがlog_article()へ正しく渡る")
+
+_mdokobs_secret = "SECRET_MARKER_MDOK_OBS_4d7e"
+_mdokobs_observation = FeaturedMediaFailureObservation(
+    category=ImageGenerationFailureCategory.IMAGE_GENERATION_REQUEST_REJECTED,
+    action=ImageGenerationFallbackAction.PROPAGATE_ORIGINAL_ERROR,
+    reason=OpenAIImageGenerationErrorReason.REQUEST_REJECTED.value,
+)
+_mdokobs_output = FakeMarkdownOutput(
+    result=SaveResult(success=True, output_type="file", edit_url=str(_md_path))
+)
+_mdokobs_log = FakeLogManager()
+_mdokobs_saved_files = []
+_mdokobs_article = make_article()
+_mdokobs_exc, _mdokobs_stdout = run_failure_handler_capturing_stdout(
+    _mdokobs_output, _mdokobs_log, _mdokobs_article, _mdokobs_saved_files,
+    **_HANDLER_KWARGS, observation=_mdokobs_observation,
+)
+
+check_true("MDOK-OBS-NOEXC. 例外が外へ出ない", _mdokobs_exc is None)
+check("MDOK-OBS-LOG-CALLED-ONCE. log_article()が1回呼ばれる", len(_mdokobs_log.calls), 1)
+check(
+    "MDOK-OBS-CATEGORY. featured_media_categoryが正しく渡る",
+    _mdokobs_log.calls[0].get("featured_media_category"),
+    "IMAGE_GENERATION_REQUEST_REJECTED",
+)
+check(
+    "MDOK-OBS-ACTION. featured_media_actionが正しく渡る",
+    _mdokobs_log.calls[0].get("featured_media_action"),
+    "PROPAGATE_ORIGINAL_ERROR",
+)
+check(
+    "MDOK-OBS-REASON. featured_media_reasonが正しく渡る",
+    _mdokobs_log.calls[0].get("featured_media_reason"),
+    "request_rejected",
+)
+check_false(
+    "MDOK-OBS-SEC-NO-MARKER. featured_media_reasonに秘密情報が含まれない",
+    _mdokobs_secret in (_mdokobs_log.calls[0].get("featured_media_reason") or ""),
+)
+check(
+    "MDOK-OBS-ERROR-MESSAGE-STILL-FIXED. error_messageは引き続き固定ラベルのまま（SEC-8）",
+    _mdokobs_log.calls[0].get("error_message"),
+    "featured media processing failed",
+)
+
+# observation=None（既定値）の場合は既存どおり3フィールドとも""であることの対照
+_mdoknone_log = FakeLogManager()
+run_failure_handler_capturing_stdout(
+    FakeMarkdownOutput(result=SaveResult(success=True, output_type="file", edit_url=str(_md_path))),
+    _mdoknone_log, make_article(), [], **_HANDLER_KWARGS,
+)
+check(
+    "MDOK-OBS-NONE-DEFAULT-EMPTY. observation省略時は3フィールドとも''（後方互換）",
+    (
+        _mdoknone_log.calls[0].get("featured_media_category"),
+        _mdoknone_log.calls[0].get("featured_media_action"),
+        _mdoknone_log.calls[0].get("featured_media_reason"),
+    ),
+    ("", "", ""),
 )
 print()
 
@@ -669,9 +815,101 @@ if _wiring_try is not None:
         "LOOP-HANDLER-TYPE-EXCEPTION. 捕捉型がExceptionである（BaseExceptionを含まない・W-4）",
         isinstance(_handler.type, ast.Name) and _handler.type.id == "Exception",
     )
+    # v6.25.0（DI-5）: 例外は`exc`として束縛される（classify_propagated_failure()
+    # へ渡すため）。SEC-2／SEC-3の本来の保証（str(exc)／class名をconsole・log・
+    # reportへ出力しない）を、「束縛しない」という実装詳細ではなく、束縛された
+    # excの使用形そのものをpositive allow-list方式で機械検証する
+    # （v6.23.0 I-EXC-1・v6.24.0 I-VAL-1と同型）。
+    check(
+        "LOOP-HANDLER-BINDS-EXC. 例外がexcという名前で束縛される（v6.25.0）",
+        _handler.name,
+        "exc",
+    )
+
+    _exc_name_loads = find_name_loads(_handler.body, "exc")
     check_true(
-        "LOOP-HANDLER-NO-BINDING. 例外を変数へ束縛していない（SEC-2／SEC-3の構造的保証）",
-        _handler.name is None,
+        "LOOP-HANDLER-EXC-USED. excが少なくとも1回参照される",
+        len(_exc_name_loads) > 0,
+    )
+
+    _str_or_repr_calls = [
+        n
+        for n in walk_stmts(_handler.body)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id in ("str", "repr")
+        and any(isinstance(a, ast.Name) and a.id == "exc" for a in n.args)
+    ]
+    check(
+        "SEC-NO-STR-EXC. str(exc)／repr(exc)が呼ばれていない",
+        len(_str_or_repr_calls),
+        0,
+    )
+
+    _typename_hits = []
+    for _n in walk_stmts(_handler.body):
+        if isinstance(_n, ast.Attribute) and _n.attr == "__name__":
+            _value = _n.value
+            if (
+                isinstance(_value, ast.Call)
+                and isinstance(_value.func, ast.Name)
+                and _value.func.id == "type"
+                and any(isinstance(a, ast.Name) and a.id == "exc" for a in _value.args)
+            ):
+                _typename_hits.append(_n)
+            elif (
+                isinstance(_value, ast.Attribute)
+                and _value.attr == "__class__"
+                and isinstance(_value.value, ast.Name)
+                and _value.value.id == "exc"
+            ):
+                _typename_hits.append(_n)
+    check(
+        "SEC-NO-TYPENAME-EXC. type(exc).__name__／exc.__class__.__name__が参照されていない",
+        len(_typename_hits),
+        0,
+    )
+
+    _raw_exc_to_log_hits = []
+    for _call_name in ("ArticleLogEntry", "log_article"):
+        for _n in find_calls_to(_handler.body, _call_name):
+            _all_args = list(_n.args) + [kw.value for kw in _n.keywords]
+            if any(isinstance(a, ast.Name) and a.id == "exc" for a in _all_args):
+                _raw_exc_to_log_hits.append(_n)
+    check(
+        "SEC-NO-RAW-EXC-TO-LOGENTRY. excがArticleLogEntry()／log_article()の引数として渡されていない",
+        len(_raw_exc_to_log_hits),
+        0,
+    )
+
+    _exc_mutation_hits = []
+    for _n in walk_stmts(_handler.body):
+        if isinstance(_n, (ast.Assign, ast.AugAssign)):
+            _targets = _n.targets if isinstance(_n, ast.Assign) else [_n.target]
+            for _t in _targets:
+                if isinstance(_t, ast.Attribute) and isinstance(_t.value, ast.Name) and _t.value.id == "exc":
+                    _exc_mutation_hits.append(_n)
+        if isinstance(_n, ast.Call) and isinstance(_n.func, ast.Name) and _n.func.id == "setattr":
+            if _n.args and isinstance(_n.args[0], ast.Name) and _n.args[0].id == "exc":
+                _exc_mutation_hits.append(_n)
+    check(
+        "SEC-NO-EXC-MUTATION. excへの属性代入・setattr(exc, ...)が存在しない",
+        len(_exc_mutation_hits),
+        0,
+    )
+
+    _classify_calls = find_calls_to(_handler.body, "classify_propagated_failure")
+    _allowed_exc_load_ids = {
+        id(a)
+        for _n in _classify_calls
+        for a in _n.args
+        if isinstance(a, ast.Name) and a.id == "exc"
+    }
+    _disallowed_exc_loads = [n for n in _exc_name_loads if id(n) not in _allowed_exc_load_ids]
+    check(
+        "SEC-EXC-USAGE-ALLOWLIST. excの唯一の許可された使用形がclassify_propagated_failure(exc)の引数位置である",
+        len(_disallowed_exc_loads),
+        0,
     )
 
     _handler_nodes = list(walk_stmts(_handler.body))
@@ -882,8 +1120,22 @@ _allowed_source_changes = {
     "src/openai_image_generation": frozenset({
         "src/openai_image_generation/openai_image_generator.py",
     }),
+    # v6.25.0（DI-5＋DEF-3）が Architecture Design で正式に宣言した意図的変更。
+    # image_generation_fallback_policy へ extract_safe_reason() を追加し
+    # __init__.py の __all__ を拡張、article_featured_media_runtime へ
+    # FeaturedMediaFailureObservation・classify_propagated_failure() を追加し
+    # 同じく __init__.py を拡張、logger へ featured_media_* フィールドを追加。
     "src/image_generation_fallback_policy": frozenset({
         "src/image_generation_fallback_policy/image_generation_fallback_policy.py",
+        "src/image_generation_fallback_policy/__init__.py",
+    }),
+    "src/article_featured_media_runtime": frozenset({
+        "src/article_featured_media_runtime/article_featured_media_runtime.py",
+        "src/article_featured_media_runtime/__init__.py",
+    }),
+    "src/logger": frozenset({
+        "src/logger/log_entry.py",
+        "src/logger/log_manager.py",
     }),
 }
 
@@ -943,6 +1195,8 @@ _allowed_test_changes = {
     # GR-9：保護対象パスへ触れるReleaseは、それ以前に存在するすべての
     # baseline固定guardのallow-listを更新する。
     "test_e2e_v6_24_0_openai_image_generation_unknown_and_invalid_response_reason_refinement_foundation.py",
+    # v6.25.0（DI-5＋DEF-3）の新規E2E自身。GR-9に従い本guardのallow-listを更新する。
+    "test_e2e_v6_25_0_image_generation_fallback_observability_foundation.py",
 }
 _tests_diff = subprocess.run(
     ["git", "diff", "--name-only", BASELINE_COMMIT, "--", "tests"],
