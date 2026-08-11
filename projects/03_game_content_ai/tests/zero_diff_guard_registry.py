@@ -47,6 +47,7 @@ RELEASE_ORDER: tuple[str, ...] = (
     "v6.24.0",
     "v6.25.0",
     "v6.26.0",
+    "v6.27.0",
 )
 
 
@@ -133,6 +134,9 @@ _SOURCE_CHANGE_CONTRIBUTIONS: tuple[tuple[str, str, frozenset], ...] = (
         "src/logger/log_entry.py",
         "src/logger/log_manager.py",
     })),
+    ("src/image_generation_config", "v6.27.0", frozenset({
+        "src/image_generation_config/image_generation_config.py",
+    })),
 )
 
 # ── tests/ allow-list への寄与（GR-9）。1要素 = 「このtest fileが、
@@ -178,6 +182,14 @@ _TEST_CHANGE_CONTRIBUTIONS: tuple[tuple[str, str], ...] = (
         "refinement_foundation.py",
         "v6.26.0",
     ),
+    # v6.27.0（DI-9 Image Generation Gate Value Strict Validation）自身。
+    # v6.15.0 Gate ContractのE2Eへ新規WARNシナリオを追加し、共有レジストリ
+    # （本ファイル）とv6.26.0自身のE2E（future-fragileだったSELF/SNAPSHOT
+    # assertionの修正）を変更した。
+    ("test_e2e_v6_15_0_image_generation_configuration_gate.py", "v6.27.0"),
+    ("zero_diff_guard_registry.py", "v6.27.0"),
+    ("test_e2e_v6_26_0_zero_diff_guard_registry_foundation.py", "v6.27.0"),
+    ("test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py", "v6.27.0"),
 )
 
 

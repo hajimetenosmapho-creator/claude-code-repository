@@ -10,8 +10,12 @@ Source of Truth:
 image_generation_configはConsumer-less Foundationであり、Production Runtime
 （main.py以下13対象）のいずれからも未接続であることをAST解析で検証する。
 
-Scenario構成（54 Scenario）:
+Scenario構成（78 Scenario。v6.27.0でWARN-1〜WARN-24を追加、他は無改修）:
     CFG-1〜CFG-20（Configuration Contract：environment variable値ごとのparsing結果）
+    WARN-1〜WARN-24（v6.27.0追加、DI-9 Image Generation Gate Value Strict
+        Validation：未設定/blank/true/falseはWARNINGなし、明示的invalid値は
+        WARNINGちょうど1回＋raw値非露出＋例外を送出しないことを標準出力の
+        捕捉により確認する。既存CFG-1〜CFG-20のassertionは無改修）
     API-1〜API-6（Public API：import surface・__all__・field形状）
     IMM-1〜IMM-3（Immutability：frozen・state非共有）
     DEP-1〜DEP-14（Dependency Guard：21章R-1〜R-13・R-OUT-1のAST Guard）
@@ -21,9 +25,11 @@ Scenario構成（54 Scenario）:
 
 実行方法:
     cd projects/03_game_content_ai
-    python tests/test_e2e_v6_15_0_image_generation_configuration_gate.py
+    .\\venv\\Scripts\\python.exe tests\\test_e2e_v6_15_0_image_generation_configuration_gate.py
 """
 import ast
+import contextlib
+import io
 import os
 import re
 import sys
@@ -221,6 +227,79 @@ try:
         if _exc is not None:
             _cfg20_exceptions.append((repr(_val)[:50], repr(_exc)))
     check("CFG-20. いかなる入力でもfrom_env()が例外を送出しない（Fail Closed Contract確認）", _cfg20_exceptions, [])
+    print()
+
+    # =====================================================================
+    # WARN: Gate値 strict validation の WARNING副作用（v6.27.0、DI-9）
+    # =====================================================================
+
+    print("[WARN] Invalid Gate値のWARNING副作用（v6.27.0 DI-9）")
+
+    def _capture_from_env():
+        """from_env()を呼び出し、(ImageGenerationConfig, 標準出力の捕捉テキスト)を返す。"""
+        _buf = io.StringIO()
+        with contextlib.redirect_stdout(_buf):
+            _cfg_result = ImageGenerationConfig.from_env()
+        return _cfg_result, _buf.getvalue()
+
+    # WARN-1〜WARN-9: 未設定・blank・true/false（trim後にblankとなる制御文字のみの
+    # 値を含む）はWARNINGを一切出力しない。
+    _NO_WARNING_CASES = [
+        ("WARN-1", None, "未設定"),
+        ("WARN-2", "", '空文字""'),
+        ("WARN-3", "   ", "空白のみ"),
+        ("WARN-4", "true", '"true"'),
+        ("WARN-5", "TRUE", '"TRUE"'),
+        ("WARN-6", "  true  ", "前後空白付き\"  true  \""),
+        ("WARN-7", "false", '"false"'),
+        ("WARN-8", "FALSE", '"FALSE"'),
+        ("WARN-9", "\t\n", "trim後に空文字となる制御文字のみの値\"\\t\\n\"（blank扱い、WARNINGなし）"),
+    ]
+    for _id, _raw, _desc in _NO_WARNING_CASES:
+        set_enabled_env(_raw)
+        _cfg, _captured = _capture_from_env()
+        check_false(f"{_id}. {_desc} → WARNINGを出力しない", "[WARNING]" in _captured)
+
+    # WARN-10〜WARN-23: true/false以外の明示的な値は、enabled=Falseへの
+    # フォールバック・WARNINGちょうど1回・raw値の非露出・Gate環境変数名の
+    # 明記（診断可能性の維持）を同時に満たす。
+    _WARNING_CASES = [
+        ("WARN-10", "ture", "typo\"ture\""),
+        ("WARN-11", "enable", "未知文字列\"enable\""),
+        ("WARN-12", "1", '"1"'),
+        ("WARN-13", "0", '"0"'),
+        ("WARN-14", "yes", '"yes"'),
+        ("WARN-15", "no", '"no"'),
+        ("WARN-16", "on", '"on"'),
+        ("WARN-17", "off", '"off"'),
+        ("WARN-18", "はい", "非ASCII文字列\"はい\""),
+        ("WARN-19", "null", '"null"'),
+        ("WARN-20", "None", '"None"'),
+        ("WARN-21", "NULL", '"NULL"'),
+        ("WARN-22", _long_string, "20000文字の長い文字列"),
+        ("WARN-23", "🎨" * 50, "絵文字の繰り返し"),
+    ]
+    for _id, _raw, _desc in _WARNING_CASES:
+        set_enabled_env(_raw)
+        _cfg, _captured = _capture_from_env()
+        check_false(f"{_id}. {_desc} → enabled=False へフォールバックする", _cfg.enabled)
+        check(f"{_id}. {_desc} → WARNINGがちょうど1回出力される", _captured.count("[WARNING]"), 1)
+        check_true(f"{_id}. {_desc} → WARNINGにGate環境変数名が含まれる（診断可能性の維持）", ENV_KEY in _captured)
+        check_false(f"{_id}. {_desc} → WARNINGにraw値そのものが含まれない", _raw in _captured)
+
+    # WARN-24: WARNING追加後もinvalid値で例外を送出しない
+    # （CFG-20のFail Closed ContractがWARNING副作用と共存することを再確認する）
+    _warn24_exceptions = []
+    for _id, _raw, _desc in _WARNING_CASES:
+        set_enabled_env(_raw)
+        _result, _exc = invoke(ImageGenerationConfig.from_env)
+        if _exc is not None:
+            _warn24_exceptions.append((repr(_raw)[:50], repr(_exc)))
+    check(
+        "WARN-24. invalid値でもfrom_env()が例外を送出しない"
+        "（WARNING追加後もFail Closed Contractを維持）",
+        _warn24_exceptions, [],
+    )
     print()
 
     # =====================================================================
@@ -426,9 +505,9 @@ print("=" * 60)
 total = len(results_log)
 passed = sum(1 for status, _ in results_log if status == "PASS")
 failed = total - passed
-print(f"Release：v6.15.0")
+print(f"Release：v6.15.0（WARN-1〜WARN-24はv6.27.0 DI-9で追加）")
 print(f"正式名称：Image Generation Configuration Gate")
-print(f"Scenario：54")
+print(f"Scenario：78")
 print(f"Assertion合計：{total}")
 print(f"合計: {passed}/{total} PASS  /  {failed} FAIL")
 print("=" * 60)

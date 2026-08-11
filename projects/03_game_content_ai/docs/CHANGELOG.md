@@ -361,6 +361,139 @@
 
 ---
 
+## [v6.27.0] - 2026-08-11 ★ Image Generation Gate Value Validation Foundation（DI-9）
+
+> Deferred Item DI-9（Image Generation Gate Value Strict Validation）の実装。
+> v6.15.0以来、v6.18.0〜v6.26.0の全Releaseで「対象外」として先送りされ
+> 続けてきた。読み取り専用のRelease候補調査（DI-6／DI-7／DI-8は前提インフラ
+> 未整備、DEF-6.22-1はDI-5完了（v6.25.0）済みも運用データ蓄積ゼロのため
+> 着手不可）を経てDI-9を選定し、Claude Code単独のArchitecture Review→
+> Codexによる読み取り専用の独立セカンドオピニオン→指摘反映という2者体制で
+> 実装した（v6.26.0 DEF-6.23-9と同型の位置づけ）。
+>
+> `src/image_generation_config/image_generation_config.py`の`from_env()`を、
+> 未設定・空文字・空白のみ（trim後に空文字となる制御文字のみの値を含む）は
+> WARNINGなしでFalse、`"true"`/`"false"`（前後空白除去・大文字小文字無視の
+> 既存正規化は維持）はそのまま解釈、それ以外の明示的なinvalid値（typo等）は
+> Falseへフォールバックしつつ raw値を含まないWARNINGを1回出力するよう拡張
+> した。v6.15.0の「いかなる入力でも例外を送出しない」Fail Closed Contractは
+> 維持し、Fail Fast（Option A）は不採用とした（3.3節の理由：blast radiusの
+> 不均衡・v6.15.0 CFG-20の反転になること・`publishing_config.py`という
+> 同一Repository内の直接的な先例）。唯一の本番call site
+> （`ArticleFeaturedMediaCompositionRoot.from_env()`）・`main.py`はいずれも
+> 無改修（Runtime Zero Diff）。
+>
+> Codexによる読み取り専用の独立セカンドオピニオンで、v6.26.0の
+> `SELF-ALLOWED-SOURCE-EMPTY`固定assertionが共有レジストリのwindow
+> semanticsと本質的に両立しない過剰制約であるとの指摘（Major）を受け、
+> 実装前に修正した。実行確認の過程で`SNAPSHOT-SOURCE-KEYS`／
+> `SNAPSHOT-SOURCE-VALUES`／`SNAPSHOT-TEST`（完全一致→部分集合関係）・
+> `RUNTIME-PASS-COUNT`（v6.23.0／v6.24.0のcoverage-loop構造に起因する
+> 345→347・352→354の増加。完全一致→下限チェック）も同種の過剰制約である
+> ことを追加で発見し、window semantics・historical `BASELINE_COMMITS`は
+> 無改修のまま修正した。当初`SELF-SRC-ZERO-DIFF[src/image_generation_config]`
+> （baseline commitからの実差分が無条件に空であることの固定）はKnown Issue
+> として記録する方針としたが、ユーザーレビューで「Release後に既知FAILを
+> 残さない」方針が確定し、v6.21.0〜v6.24.0のNOIMPACT-SCOPEと同一の
+> allow-list意味論（「差分が共有レジストリで承認されたsource contribution
+> の範囲を超えていない」）へ揃えたSELF-SRC-SCOPEへ置き換えるMajor修正を
+> 追加で実施した。無承認のproduction差分の検知力は維持し、window
+> semantics・historical `BASELINE_COMMITS`はいずれも無改修のまま、恒久的な
+> FAILを一切残さない設計にした（Known Issueは作成しない。テスト側の設計
+> 不備の是正）。
+>
+> 新規E2E（`test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py`、
+> **119アサーション、119/119 PASS**）・拡張した既存E2E
+> （`test_e2e_v6_15_0_*.py`、WARN-1〜WARN-24を追加し78 Scenario・**160
+> アサーション、160/160 PASS**）を実施した。
+>
+> 正式Code Review（Claude Code単独、Approved with Suggestions、Blocking
+> 0・Major 0）で、v6.27.0新規E2EのREGISTRY-9が`allowed_source_changes_for()`
+> のwindow合成値を完全一致で固定しており、将来Releaseの正当なcontribution
+> 追加でFAILする過剰制約であるとの指摘（Major-1）を受けた。membership／
+> 部分集合判定へ修正し、同種確認でREGISTRY-13（v6.27.0自身のsource
+> allow-listの完全一致判定）も同型の問題として検出・修正した（window合成
+> 結果ではなくv6.27.0自身の生contributionを検証するstable invariantへ変更。
+> registry実装・window semantics・`BASELINE_COMMITS`はいずれも無改修）。
+>
+> **Formal Regression：PASS**（正式Inventory**30ファイル**：v1.11.0＋
+> v5.9.0＋v6.0.0〜v6.27.0、合計**5019/5019 PASS**、FAIL 0／SKIP 0、全
+> ファイルexit code 0。v6.21.0〜v6.26.0のhistorical guard（`v6.21.0`
+> 170/170・`v6.22.0` 324/324・`v6.23.0` 347/347・`v6.24.0` 354/354・
+> `v6.25.0` 128/128・`v6.26.0` 248/248）は全件PASS）。実行は
+> `.\venv\Scripts\python.exe`のみを使用した。
+>
+> **正式Release Review（Claude Code単独）：Approved with Suggestions
+> （Blocking 0・Major 0）。**
+>
+> 本Releaseはユーザーからの直接指示（読み取り専用のRelease候補調査・
+> Architecture Review・Codexによる読み取り専用の独立セカンドオピニオンを
+> 経て）に基づき実装したものであり、ChatGPTによる多段階Architecture
+> Review／Code Review／Release Reviewは実施していない。
+> `docs/design/image_generation_gate_value_validation_foundation.md`に
+> DI-9の背景・設計・Option A不採用理由・検証結果を記録した。
+
+### Added
+
+- `tests/test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py`
+  新規作成（Scenario prefix：CONTRACT-／REGISTRY-／ZERODIFF-／RUNTIME-、
+  **119アサーション、119/119 PASS**）。正式Code Review Major-1（REGISTRY-9・
+  REGISTRY-13のwindow合成値への完全一致）を反映済み。
+- `docs/design/image_generation_gate_value_validation_foundation.md` 新規作成。
+- `tests/test_e2e_v6_15_0_image_generation_configuration_gate.py`へ
+  WARN-1〜WARN-24を新規追加（54→78 Scenario、96→160 Assertion）。
+  未設定・blank・true/falseはWARNINGを出力しないこと、明示的invalid値は
+  enabled=Falseへのフォールバック・WARNINGちょうど1回・Gate環境変数名の
+  明記・raw値の非露出・例外を送出しないことを、標準出力の捕捉により検証する。
+  既存CFG-1〜CFG-20のassertionは無改修。
+
+### Changed
+
+- `src/image_generation_config/image_generation_config.py`：`from_env()`を
+  拡張した。未設定・空文字・空白のみ（trim後に空文字となる値を含む）は
+  無言でFalse、`"true"`/`"false"`（既存の正規化ルールを維持）はそのまま
+  解釈、それ以外の明示的な値はFalseへのフォールバックに加えてWARNINGを
+  1回出力する（Gate環境変数名のみを含み、raw値は含めない）。いかなる入力
+  でも例外を送出しないv6.15.0のFail Closed Contractは維持した。
+- `tests/zero_diff_guard_registry.py`：`RELEASE_ORDER`へ`"v6.27.0"`を追記。
+  `_SOURCE_CHANGE_CONTRIBUTIONS`へ`src/image_generation_config`
+  （`image_generation_config.py`のみ）のcontributionを追加。
+  `_TEST_CHANGE_CONTRIBUTIONS`へ`test_e2e_v6_15_0_image_generation_configuration_gate.py`・
+  `zero_diff_guard_registry.py`・`test_e2e_v6_26_0_zero_diff_guard_registry_foundation.py`・
+  `test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py`の
+  4件のcontributionを追加。`BASELINE_COMMITS`・window semanticsはいずれも
+  無改修。
+- `tests/test_e2e_v6_26_0_zero_diff_guard_registry_foundation.py`：
+  Codexによる読み取り専用の独立セカンドオピニオンで検出された
+  `SELF-ALLOWED-SOURCE-EMPTY`（共有レジストリのwindow semanticsと非両立の
+  過剰制約）を、v6.26.0自身が直接登録したcontribution recordのみを検査する
+  `SELF-NO-OWN-SOURCE-CONTRIBUTION`へ置き換えた。同種の過剰制約だった
+  `SNAPSHOT-SOURCE-KEYS`／`SNAPSHOT-SOURCE-VALUES`／`SNAPSHOT-TEST`は
+  完全一致から部分集合関係へ、`RUNTIME-PASS-COUNT`（v6.23.0／v6.24.0分）は
+  完全一致から下限チェックへ変更した。`SELF-SRC-ZERO-DIFF`（baseline
+  commitからの実差分が無条件に空であることの固定）は、v6.21.0〜v6.24.0の
+  `NOIMPACT-SCOPE`と同一のallow-list意味論（「差分が共有レジストリで承認
+  されたsource contributionの範囲を超えていない」）へ揃えた
+  `SELF-SRC-SCOPE`へ置き換えた（Major修正）。いずれも旧allow-listの欠落
+  （regression）・無承認のproduction差分は引き続き検知しつつ、将来Release
+  の正当な追加では壊れない設計にした。window semantics自体・
+  `BASELINE_COMMITS`はいずれも無改修。修正後、v6.26.0自身のE2Eは恒久的な
+  FAILを一切残さない（248/248 PASS）。
+
+### Tested
+
+- `test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py`：119/119 PASS
+- `test_e2e_v6_15_0_image_generation_configuration_gate.py`：160/160 PASS
+- `test_e2e_v6_21_0_article_featured_media_runtime_wiring.py`：170/170 PASS
+- `test_e2e_v6_22_0_wordpress_media_upload_failure_reason_classification_foundation.py`：324/324 PASS
+- `test_e2e_v6_23_0_openai_image_generation_api_rejection_reason_classification_foundation.py`：347/347 PASS（v6.26.0時点345から+2、共有レジストリの正当な寄与増分）
+- `test_e2e_v6_24_0_openai_image_generation_unknown_and_invalid_response_reason_refinement_foundation.py`：354/354 PASS（v6.26.0時点352から+2、同上）
+- `test_e2e_v6_26_0_zero_diff_guard_registry_foundation.py`：248/248 PASS（Major修正によりFAIL 0件）
+- `test_e2e_v6_25_0_image_generation_fallback_observability_foundation.py`：128/128 PASS
+- Formal Regression：正式Inventory**30ファイル**（v1.11.0＋v5.9.0＋v6.0.0〜v6.27.0）、合計**5019/5019 PASS**、FAIL 0／SKIP 0、全ファイルexit code 0
+
+---
+
 ## [v6.26.0] - 2026-08-11 ★ Zero-Diff Guard Registry Foundation（DEF-6.23-9）
 
 > v6.22.0 DEF-6.22-14の継続として提起され、v6.23.0で命名（DEF-6.23-9）、

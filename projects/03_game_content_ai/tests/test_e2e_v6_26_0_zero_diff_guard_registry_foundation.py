@@ -20,20 +20,54 @@ N件への直接編集（O(N)）から、レジストリへの寄与追加（O(1
 Scenario構成:
     STRUCT-     レジストリの型・不変性（tuple／frozenset・追記のみ）
     PIN-        BASELINE_COMMITSと各guardファイル自身のリテラルとの転記整合（GR-2）
-    SNAPSHOT-   v6.21.0〜v6.24.0の計算結果がrefactor前の値と完全一致（+v6.26自身の2件のみ）
+    SNAPSHOT-   v6.21.0〜v6.24.0の許容範囲がrefactor前に確定していた値をすべて
+                含んでいる（v6.27.0修正：完全一致ではなく部分集合関係。
+                下記「v6.27.0修正」参照）
     MERGE-      同一protected pathキーへの複数寄与がfrozenset unionとして合成される
                 （synthetic dataによる独立検証。Architecture/Code Review Major-1対応）
     RATCHET-    release間の許容範囲がRELEASE_ORDER順に単調非増加である（GR-9 ratchet）
     NOMUT-      同一releaseへの複数回呼び出しが独立したdict/frozensetを返す
     CONSOL-     4guardファイルから重複literalが実際に除去されている
     RUNTIME-    v6.21.0〜v6.24.0の4guardを子プロセス実行し、PASS件数が不変であることを実測
-    SELF-       v6.26.0自身のbaseline固定guard（保護パス差分0・tests/ allow-list）
+    SELF-       v6.26.0自身のbaseline固定guard（v6.26.0自身は直接のsource
+                contributionを持たず、tests/ allow-listはtests/配下2ファイルの
+                みを許容する。v6.27.0修正：SELF-NO-OWN-SOURCE-CONTRIBUTIONは
+                v6.26.0自身が直接登録したrecordのみを検査し、SELF-SRC-SCOPEは
+                baseline commitからの実差分を共有レジストリのallow-list
+                （v6.21.0〜v6.24.0のNOIMPACT-SCOPEと同一の意味論）で判定する。
+                下記「v6.27.0修正」参照）
     CONTRACT-   現在の22 protected pathsがv6.21.0〜v6.24.0の各baseline commit時点で
                 すべて追跡されている（新規path追加はO(1)自動追従の対象外。
                 Architecture/Code Review Major-2対応）
     FAILCLOSED- 未知・不正なrelease文字列に対しValueErrorを送出する
                 （Architecture/Code Review Suggestion対応）
     HERMETIC-   共有レジストリがネットワーク関連importを持たない
+
+v6.27.0修正（DI-9 Image Generation Gate Value Strict Validation。Codexによる
+read-only独立Architectureセカンドオピニオンで発見。ユーザーレビューにより
+KI化を撤回しtest over-constraint修正へ一本化）:
+    v6.26.0完了時点のSELF-ALLOWED-SOURCE-EMPTY・SELF-SRC-ZERO-DIFFおよび
+    SNAPSHOT-SOURCE-*／SNAPSHOT-TESTは、いずれも共有レジストリのwindow
+    semantics（release自身以降の正当な寄与を自動的に取り込むO(1)機構、
+    本Releaseの本旨そのもの）と両立しない過剰制約（test over-constraint）
+    だった。window semantics自体・historical BASELINE_COMMITSはいずれも
+    変更せず、次のように修正した：
+    (a) SELF-ALLOWED-SOURCE-EMPTY（`allowed_source_changes_for("v6.26.0")`の
+    合成結果が{}であることの完全一致）は、「v6.26.0自身が直接登録した
+    recordのみ」を検査するSELF-NO-OWN-SOURCE-CONTRIBUTIONへ置き換えた。
+    (b) SELF-SRC-ZERO-DIFF（baseline commitからの実差分が無条件に空である
+    ことの固定）は、v6.21.0〜v6.24.0のNOIMPACT-SCOPEと同一のallow-list
+    意味論（「差分が共有レジストリで承認されたsource contributionの範囲を
+    超えていない」）へ揃えたSELF-SRC-SCOPEへ置き換えた。v6.26.0自身は
+    直接のsource contributionを持たないため、許容される差分は実質的に
+    v6.27.0以降が登録した寄与のみであり、無承認の変更は引き続き検知する。
+    (c) SNAPSHOT-SOURCE-KEYS／SNAPSHOT-SOURCE-VALUES／SNAPSHOT-TESTは
+    完全一致から部分集合関係（golden ⊆ 現在値）へ変更した。
+    いずれも旧allow-listの欠落は引き続き検知する（回帰検知力は緩和しない）。
+    Known Issueとしては記録しない（テスト側の設計不備の是正であり、
+    v6.26.0のProduction Codeやレジストリのwindow semanticsは無改修のため）。
+    修正後、v6.26.0自身のE2Eは恒久的なFAILを一切残さない
+    （248/248 PASS、実測は本Release報告参照）。
 
 実行方法:
     cd projects/03_game_content_ai
@@ -281,21 +315,38 @@ _V626_NEW_FILES = frozenset({
     "test_e2e_v6_26_0_zero_diff_guard_registry_foundation.py",
 })
 
+# v6.27.0修正（DI-9対応）: 元実装はrefactor前の値との「完全一致」（==）で
+# 固定していたが、これはallowed_source_changes_for()/allowed_test_changes_for()
+# のwindow semantics（自身以降のReleaseの正当な寄与を自動的に取り込むO(1)機構、
+# 本ファイル冒頭のdocstring・§3参照）と本質的に両立しない：v6.27.0以降が
+# protected pathへ正当に寄与するたびに、v6.21.0〜v6.24.0視点の許容範囲にも
+# その寄与が波及し、完全一致assertionが機械的にFAILしてしまう
+# （window semantics自体は変更しない。RATCHET-*が示すとおり許容範囲が
+# 単調非増加であることが本来の不変条件である）。
+# 「refactor前に確定していた許容範囲が現在も失われていないこと」という
+# 本来の目的（regression検知）は、完全一致ではなく部分集合関係
+# （golden ⊆ 現在値）で表現すれば、旧allow-listの欠落は引き続き検知しつつ、
+# 将来Releaseの正当な追加では壊れない安定した不変条件になる。
 for _rel in ("v6.21.0", "v6.22.0", "v6.23.0", "v6.24.0"):
     _got_source = registry.allowed_source_changes_for(_rel)
-    check(
-        f"SNAPSHOT-SOURCE-KEYS[{_rel}]. _allowed_source_changesのキー集合・順序がrefactor前と完全一致する",
-        list(_got_source.keys()), list(_GOLDEN_SOURCE_CHANGES[_rel].keys()),
+    check_true(
+        f"SNAPSHOT-SOURCE-KEYS[{_rel}]. refactor前に確定していたキー集合が現在もすべて"
+        "含まれている（将来Releaseが追加する新規キーは許容し、旧キーの欠落のみを検知する）",
+        set(_GOLDEN_SOURCE_CHANGES[_rel].keys()) <= set(_got_source.keys()),
     )
-    check(
-        f"SNAPSHOT-SOURCE-VALUES[{_rel}]. _allowed_source_changesの各値がrefactor前と完全一致する",
-        {k: frozenset(v) for k, v in _got_source.items()},
-        {k: frozenset(v) for k, v in _GOLDEN_SOURCE_CHANGES[_rel].items()},
+    check_true(
+        f"SNAPSHOT-SOURCE-VALUES[{_rel}]. refactor前に確定していた各キーの許容ファイル集合が"
+        "現在もすべて維持されている（unionによる新規ファイル追加は許容し、旧ファイルの脱落のみを検知する）",
+        all(
+            frozenset(_files) <= _got_source.get(_k, frozenset())
+            for _k, _files in _GOLDEN_SOURCE_CHANGES[_rel].items()
+        ),
     )
     _got_test = set(registry.allowed_test_changes_for(_rel))
-    check(
-        f"SNAPSHOT-TEST[{_rel}]. _allowed_test_changesがrefactor前の値 ∪ v6.26.0新規2件と完全一致する",
-        _got_test, _GOLDEN_TEST_CHANGES[_rel] | _V626_NEW_FILES,
+    check_true(
+        f"SNAPSHOT-TEST[{_rel}]. refactor前の値 ∪ v6.26.0新規2件が現在もすべて許容されている"
+        "（将来Releaseが追加する新規test fileは許容し、旧allow-listの欠落のみを検知する）",
+        (_GOLDEN_TEST_CHANGES[_rel] | _V626_NEW_FILES) <= _got_test,
     )
 print()
 
@@ -435,9 +486,23 @@ print()
 
 print("[RUNTIME] 4guardの子プロセス実行によるPASS件数の実測回帰")
 
-_EXPECTED_TOTALS = {
+# v6.21.0／v6.22.0は_allowed_source_changesのキー集合をループしない固定件数の
+# guardであり、refactor前の実測値との完全一致を維持する（future contributionが
+# あってもPASS件数は変化しない安定した不変条件）。
+_EXPECTED_TOTALS_EXACT = {
     "v6.21.0": 170,
     "v6.22.0": 324,
+}
+# v6.23.0／v6.24.0は`for _rel, _allowed in _allowed_source_changes.items():`という
+# coverage確認ループ（NOIMPACT-SCOPE-COVERAGE／NOIMPACT-SCOPE-EXACT）を持ち、
+# その反復回数が共有レジストリの許容キー数に比例する。v6.27.0がsrc/
+# image_generation_configへ正当に寄与したことで、このキー集合が1件増え、
+# 2 assertion（coverage・exact各1）が新たに追加された（v6.27.0修正）。
+# これはGR-9のO(1)自動追従が正しく機能している証拠であり、regressionではない。
+# 完全一致ではなく「refactor前の値を下回らない」下限チェックへ変更し、
+# 旧チェックの欠落（件数減少）は引き続き検知しつつ、将来の正当な追加では
+# 壊れない安定した不変条件にする。
+_EXPECTED_TOTALS_FLOOR = {
     "v6.23.0": 345,
     "v6.24.0": 352,
 }
@@ -461,16 +526,29 @@ for _rel, _fname in _GUARD_FILES_BY_RELEASE.items():
     )
     _ok_count = _proc.stdout.count("[OK]")
     _ng_count = _proc.stdout.count("[NG]")
-    check(
-        f"RUNTIME-PASS-COUNT[{_rel}]. PASS件数がrefactor前の実測値と完全一致する",
-        _ok_count, _EXPECTED_TOTALS[_rel],
-    )
+    if _rel in _EXPECTED_TOTALS_EXACT:
+        check(
+            f"RUNTIME-PASS-COUNT[{_rel}]. PASS件数がrefactor前の実測値と完全一致する"
+            "（coverage-loop構造を持たないguardのため、将来contributionの影響を受けない）",
+            _ok_count, _EXPECTED_TOTALS_EXACT[_rel],
+        )
+    else:
+        check_true(
+            f"RUNTIME-PASS-COUNT[{_rel}]. PASS件数がrefactor前の実測値を下回らない"
+            "（coverage-loopの反復回数が共有レジストリの許容キー数に比例するため、"
+            "将来の正当なcontributionでPASS件数が増えることは許容する。減少のみを検知する）",
+            _ok_count >= _EXPECTED_TOTALS_FLOOR[_rel],
+        )
     check(f"RUNTIME-NG-ZERO[{_rel}]. FAILが0件である", _ng_count, 0)
 print()
 
 # =====================================================================
 # SELF: v6.26.0自身のbaseline固定guard（GR-6：自身のbaseline commitを固定した
-# 完全なguardを持つ。allow-listは空集合＝src/には一切触れない）
+# 完全なguardを持つ）。v6.26.0自身はsrc/へ一切触れず、直接の寄与も宣言しない
+# ことは、SELF-NO-OWN-SOURCE-CONTRIBUTIONが「v6.26.0自身の直接宣言」のみを
+# 検査することで確認する。baseline commitからの実差分は、無条件の空チェック
+# ではなく、共有レジストリのallow-list（allowed_source_changes_for()）に
+# 承認された範囲内かどうかで判定する（SELF-SRC-SCOPE、v6.27.0修正・下記参照）。
 # =====================================================================
 
 print("[SELF] v6.26.0自身のbaseline固定guard")
@@ -484,18 +562,61 @@ _rev_proc = subprocess.run(
 check_true("SELF-BASELINE-RESOLVABLE. v6.26.0のbaseline commitが解決できる（vacuous pass防止）",
            _rev_proc.returncode == 0)
 
-_self_allowed_source = registry.allowed_source_changes_for("v6.26.0")
-check("SELF-ALLOWED-SOURCE-EMPTY. v6.26.0はsrc本番コードへの変更を一切宣言していない",
-      _self_allowed_source, {})
+# v6.27.0修正（DI-9対応。Major修正、KI化を撤回）: 元実装は
+# allowed_source_changes_for("v6.26.0")（v6.26.0以降＝自身を含む未来すべての
+# window）が{}であることを固定していたが、これは「v6.26.0自身が新たにsrc/へ
+# 寄与していない」ことと「将来のReleaseが同じwindowへ寄与する可能性」を
+# 区別できていなかった。window semantics（自身以降の正当な寄与を自動的に
+# 取り込むO(1)機構）は本Releaseで変更しないため、v6.27.0がsrc/
+# image_generation_configへ寄与した時点でこのassertionは機械的にFAILしていた。
+# 「v6.26.0自身はsrc本番コードへの変更を一切宣言していない」という本来の不変条件は、
+# v6.26.0自身が直接登録したrecordの件数のみを検査すれば、将来Releaseの寄与とは
+# 独立に恒久的に安定する（過去recordはGR-1により追記後変更されないため）。
+_v6_26_own_source_contributions = [
+    (_path, _threshold, _files)
+    for _path, _threshold, _files in registry._SOURCE_CHANGE_CONTRIBUTIONS
+    if _threshold == "v6.26.0"
+]
+check(
+    "SELF-NO-OWN-SOURCE-CONTRIBUTION. v6.26.0自身はsrc本番コードへの新規寄与を"
+    "宣言していない（v6.26.0が直接登録したrecordの件数のみを検査する、将来Releaseの"
+    "寄与とは独立に安定した不変条件。allowed_source_changes_for()の合成結果ではなく"
+    "_SOURCE_CHANGE_CONTRIBUTIONSの生recordを直接検査する）",
+    _v6_26_own_source_contributions, [],
+)
 
+# v6.27.0修正（DI-9対応。Major修正）: 元実装（SELF-SRC-ZERO-DIFF）は
+# baseline commitからの実差分が「無条件に空である」ことを固定しており、
+# 将来Releaseが共有レジストリ経由で正当にprotected pathへ寄与した時点で
+# 恒久的にFAILする欠陥があった（v6.21.0〜v6.24.0のNOIMPACT-SCOPEが
+# allow-listベースであるのに対し、SELFセクションのみallow-listを経由しない
+# 無条件チェックだったという非対称な設計だった）。
+#
+# 修正方針：「baselineから一切変わっていない」ではなく「baselineとの差分が
+# 共有レジストリで承認されたsource contributionの範囲を超えていない」という、
+# v6.21.0〜v6.24.0のNOIMPACT-SCOPEと同一のallow-list意味論へ揃える
+# （SELF-SRC-SCOPE）。v6.26.0自身は直接のsource contributionを持たない
+# （SELF-NO-OWN-SOURCE-CONTRIBUTIONで別途確認済み）ため、
+# `allowed_source_changes_for("v6.26.0")`が返す許容範囲は、もっぱら
+# v6.27.0以降の将来Releaseが登録した寄与のみで構成される。無承認の
+# production差分（＝どのReleaseもcontributionとして登録していない変更）は、
+# 引き続き`_changed - _allowed`が非空になるため検知される
+# （検知力は維持。historical BASELINE_COMMITS・window semanticsは無改修）。
+_self_allowed_source = registry.allowed_source_changes_for("v6.26.0")
 for _rel in registry.PROTECTED_PATHS:
     _diff_proc = subprocess.run(
         ["git", "diff", "--name-only", "--relative", BASELINE_COMMIT, "--", _rel],
         cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=30,
     )
     _changed = {line.strip() for line in _diff_proc.stdout.splitlines() if line.strip()}
-    check(f"SELF-SRC-ZERO-DIFF[{_rel}]. baseline commitからの差分が0件である（main.py/src本番コード無改修）",
-          sorted(_changed), [])
+    _allowed_for_rel = _self_allowed_source.get(_rel, frozenset())
+    check(
+        f"SELF-SRC-SCOPE[{_rel}]. baseline commitからの差分が共有レジストリで承認された"
+        "source contributionの範囲内である（無承認の変更は引き続き検知する。"
+        "v6.26.0自身は直接のcontributionを持たないため、実質的にv6.27.0以降が"
+        "登録した寄与のみが許容される）",
+        sorted(_changed - _allowed_for_rel), [],
+    )
     _status_proc = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=all", "--", _rel],
         cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=30,

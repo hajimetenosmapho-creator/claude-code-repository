@@ -951,6 +951,63 @@
   非対称性はInherited Limitationとして明記し、厳格化はDeferred Item DI-9
   （Image Generation Gate Value Strict Validation）として独立検討する。`dataclasses.asdict(root)`は
   secret-safeなserializationではないことをContractとして明記した。
+- [x] **Image Generation Gate Value Validation Foundation**（v6.27.0、DI-9）：
+  v6.15.0以来、v6.18.0〜v6.26.0の全Releaseで「対象外」として先送りされ
+  続けてきたDeferred Item DI-9（Image Generation Gate Value Strict
+  Validation）の実装。読み取り専用のRelease候補調査（DI-6／DI-7／DI-8は
+  前提インフラ未整備、DEF-6.22-1はDI-5完了（v6.25.0）済みも運用データ蓄積
+  ゼロのため着手不可）を経てDI-9を選定し、Claude Code単独のArchitecture
+  Review→Codexによる読み取り専用の独立セカンドオピニオン→指摘反映という
+  2者体制で実装した（v6.26.0 DEF-6.23-9と同型の位置づけ）。
+  `src/image_generation_config/image_generation_config.py`の`from_env()`を、
+  未設定・空文字・空白のみはWARNINGなしでFalse、`"true"`/`"false"`（前後
+  空白除去・大文字小文字無視の既存正規化は維持）はそのまま解釈、それ以外の
+  明示的なinvalid値（typo等）はFalseへフォールバックしつつWARNINGを1回
+  出力する（raw値はWARNINGへ含めない）よう拡張した。v6.15.0の「いかなる
+  入力でも例外を送出しない」Fail Closed Contractは維持し、Fail Fast
+  （Option A）は不採用とした。理由は
+  (1)Gate値は`main.py`起動のたびに無条件で読まれ、デフォルトOFFの付随
+  機能のtypo1つで無関係な全パイプラインを停止させるblast radiusの不均衡、
+  (2)v6.15.0のCFG-20（「例外を送出しない」ことを固定するContract Test）を
+  反転させる破壊的変更になること、(3)`src/publishing_config.py`の
+  `_parse_status()`（v1.7.0）という同一Repository内の直接的な先例が
+  「WARNING＋安全な既定値へのフォールバック」パターンであること。
+  唯一の本番call site（`ArticleFeaturedMediaCompositionRoot.from_env()`）・
+  `main.py`はいずれも無改修（Runtime Zero Diff）。
+  Codexによる読み取り専用の独立セカンドオピニオンで、v6.26.0の
+  `SELF-ALLOWED-SOURCE-EMPTY`固定assertionが共有レジストリのwindow
+  semantics（release自身以降の正当な寄与を自動的に取り込むO(1)機構）と
+  本質的に両立しない過剰制約であるとの指摘（Major）を受け、実装前に
+  修正した。実行確認の過程で、`SNAPSHOT-SOURCE-KEYS`／
+  `SNAPSHOT-SOURCE-VALUES`／`SNAPSHOT-TEST`（完全一致→部分集合関係）・
+  `RUNTIME-PASS-COUNT`（v6.23.0／v6.24.0のcoverage-loop構造に起因する
+  345→347・352→354の増加。完全一致→下限チェック）も同種の過剰制約である
+  ことを追加で発見し、window semantics・historical `BASELINE_COMMITS`は
+  無改修のまま修正した。`SELF-SRC-ZERO-DIFF[src/image_generation_config]`
+  （baseline commitからの実差分が無条件に空であることの固定）は当初Known
+  Issueとして記録する方針としたが、ユーザーレビューで「Release後に既知
+  FAILを残さない」方針が確定し、v6.21.0〜v6.24.0の`NOIMPACT-SCOPE`と同一の
+  allow-list意味論（「差分が共有レジストリで承認されたsource contribution
+  の範囲を超えていない」）へ揃えた`SELF-SRC-SCOPE`へ置き換えるMajor修正を
+  追加で実施した。無承認のproduction差分の検知力は維持し、window
+  semantics・historical `BASELINE_COMMITS`はいずれも無改修のまま、恒久的な
+  FAILを一切残さない設計にした（テスト側の設計不備の是正であり、Known
+  Issueは作成しない）。
+  新規E2E（`test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py`、
+  **119アサーション、119/119 PASS**）・拡張した既存E2E
+  （`test_e2e_v6_15_0_*.py`、WARN-1〜WARN-24を追加し78 Scenario・**160
+  アサーション、160/160 PASS**）を実施した。正式Code Reviewで新規E2Eの
+  REGISTRY-9／REGISTRY-13がwindow合成値への完全一致という同種の過剰制約を
+  持つことを検出し（Major-1）、membership／stable invariantベースの判定へ
+  修正した（registry実装・window semantics・`BASELINE_COMMITS`は無改修）。
+  **Formal Regression：PASS**（正式Inventory**30ファイル**：v1.11.0＋
+  v5.9.0＋v6.0.0〜v6.27.0、合計**5019/5019 PASS**、FAIL 0／SKIP 0、全
+  ファイルexit code 0。v6.21.0〜v6.26.0のhistorical guard
+  （170/324/347/354/128/248、いずれもPASS）を含む）。正式Release Review：
+  Approved with Suggestions（Blocking 0・Major 0）。
+  Deferred：DI-6／DI-7／DI-8（前提インフラ未整備）・DEF-6.22-1（運用データ
+  蓄積待ち）は本Release対象外のまま状態を維持する
+  （`docs/design/image_generation_gate_value_validation_foundation.md`）
 - [x] **Zero-Diff Guard Registry Foundation**（v6.26.0、DEF-6.23-9）：
   v6.22.0 DEF-6.22-14の継続として提起され、v6.23.0で命名（DEF-6.23-9）、
   v6.24.0で「baseline 固定 guard が3→4件へ増え、次Release以降のO(N)保守

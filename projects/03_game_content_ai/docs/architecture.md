@@ -5097,6 +5097,105 @@ Code Review時点のVerdictおよび件数は履歴として維持する。詳�
 Implementation・限定テスト・Formal Regression・Documentation Integration・
 Release Review・Code Review・人間の最終承認の経緯を含む）を参照。
 
+## Image Generation Gate Value Validation層（`src/image_generation_config/`、v6.27.0）
+
+> Deferred Item DI-9（Image Generation Gate Value Strict Validation）の実装。
+> v6.15.0以来、v6.18.0〜v6.26.0の全Releaseで「対象外」として先送りされ続けて
+> きた。読み取り専用のRelease候補調査（DI-6／DI-7／DI-8は前提インフラ未整備、
+> DEF-6.22-1はDI-5完了（v6.25.0）済みも運用データ蓄積ゼロのため着手不可）を
+> 経てDI-9を選定し、Claude Code単独のArchitecture Review→Codexによる読み取り
+> 専用の独立セカンドオピニオン→指摘反映という2者体制で実装した（v6.26.0
+> DEF-6.23-9と同型の位置づけ）。
+>
+> `ImageGenerationConfig.from_env()`（v6.15.0）を、未設定・空文字・空白のみ
+> （trim後に空文字となる制御文字のみの値を含む）はWARNINGなしでFalse、
+> `"true"`/`"false"`（既存の正規化を維持）はそのまま解釈、それ以外の明示的な
+> invalid値（typo等）はFalseへフォールバックしつつraw値を含まないWARNINGを
+> 1回出力するよう拡張した。v6.15.0の「いかなる入力でも例外を送出しない」
+> Fail Closed Contractは維持し、Fail Fast（Option A）は不採用とした
+> （Gate値は`main.py`起動のたびに無条件で読まれ、デフォルトOFFの付随機能の
+> typo1つで無関係な全パイプラインを停止させるblast radiusの不均衡・v6.15.0
+> CFG-20の反転になること・`publishing_config.py`という同一Repository内の
+> 直接的な先例が理由）。唯一の本番call site
+> （`ArticleFeaturedMediaCompositionRoot.from_env()`）・`main.py`はいずれも
+> 無改修（Runtime Zero Diff）。
+>
+> Codexによる読み取り専用の独立セカンドオピニオンで、v6.26.0の
+> `SELF-ALLOWED-SOURCE-EMPTY`固定assertionが共有レジストリのwindow
+> semanticsと本質的に両立しない過剰制約であるとの指摘を受け、実装前に
+> 修正した。実行確認の過程で`SNAPSHOT-SOURCE-*`／`SNAPSHOT-TEST`（完全一致→
+> 部分集合関係）・`RUNTIME-PASS-COUNT`（v6.23.0／v6.24.0のcoverage-loop
+> 構造に起因する増加。完全一致→下限チェック）も同種の過剰制約であることを
+> 追加で発見し、window semantics・historical `BASELINE_COMMITS`は無改修の
+> まま修正した。`SELF-SRC-ZERO-DIFF[src/image_generation_config]`
+> （baseline commitからの実差分が無条件に空であることの固定）は当初Known
+> Issueとして記録する方針としたが、ユーザーレビューで「Release後に既知
+> FAILを残さない」方針が確定し、v6.21.0〜v6.24.0の`NOIMPACT-SCOPE`と同一の
+> allow-list意味論（「差分が共有レジストリで承認されたsource contribution
+> の範囲を超えていない」）へ揃えた`SELF-SRC-SCOPE`へ置き換えるMajor修正を
+> 追加で実施した。無承認のproduction差分の検知力は維持し、window
+> semantics・historical `BASELINE_COMMITS`はいずれも無改修のまま、恒久的な
+> FAILを一切残さない設計にした（テスト側の設計不備の是正であり、Known
+> Issueは作成しない）。
+>
+> 新規E2E（`test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py`、
+> **119アサーション、119/119 PASS**）・拡張した既存E2E
+> （`test_e2e_v6_15_0_*.py`、WARN-1〜WARN-24追加、78 Scenario・**160
+> アサーション、160/160 PASS**）を実施した。正式Code Reviewで新規E2Eの
+> REGISTRY-9／REGISTRY-13がwindow合成値への完全一致という過剰制約を持つ
+> ことを検出し（Major-1）、membership／stable invariantベースの判定へ
+> 修正した（window semantics・historical `BASELINE_COMMITS`は無改修）。
+> **Formal Regression：PASS**（正式Inventory**30ファイル**：v1.11.0＋
+> v5.9.0＋v6.0.0〜v6.27.0、合計**5019/5019 PASS**、FAIL 0／SKIP 0、全
+> ファイルexit code 0。v6.21.0〜v6.26.0のhistorical guardは全件PASS）。
+> 正式Release Review：Approved with Suggestions（Blocking 0・Major 0）。
+>
+> 本Releaseはユーザーからの直接指示に基づき実装したものであり、ChatGPTに
+> よる多段階Architecture Review／Code Review／Release Reviewは実施して
+> いない。`docs/design/image_generation_gate_value_validation_foundation.md`
+> にDI-9の背景・設計・Option A不採用理由・検証結果を記録した。
+
+### Purpose
+
+v6.15.0の`ImageGenerationConfig.from_env()`が持つFail Closed Contract
+（不正値・未設定はいずれもFalseとして扱い、例外は送出しない）のうち、
+明示的なinvalid値（typo等）が無言でGate OFFへ落ちる非対称性（v6.18.0
+設計書§13.6 Inherited Limitation）を解消する。
+
+### 採用Contract（Option B′）
+
+未設定・空文字・空白のみ→WARNINGなしでFalse。`"true"`/`"false"`→そのまま
+解釈（正規化は既存どおり維持）。それ以外の明示的な値→Falseへフォールバック
+＋WARNINGを1回出力（Gate環境変数名のみを含み、raw値は含めない）。いかなる
+入力でも例外を送出しない。
+
+### 却下したContract（Option A：Fail Fast）
+
+`ValueError`送出は不採用とした。Gate値は`main.py`起動のたびに無条件で
+読まれる（`OPENAI_API_KEY`等の「Gate=ON後にのみ読まれる値」とは性質が
+異なる）ため、デフォルトOFFの付随機能のtypo1つで無関係な全パイプラインを
+停止させる不均衡なblast radiusを持つ。また、v6.15.0のCFG-20（「いかなる
+入力でも例外を送出しない」ことを固定するContract Test）を反転させる破壊的
+変更になる。
+
+### 本Releaseの対象外
+
+`src/article_featured_media_composition/article_featured_media_composition_root.py`
+（唯一の本番call site）・`main.py`・`.env.example`はいずれも変更していない。
+DI-6／DI-7／DI-8・DEF-6.22-1は本Releaseの対象外。
+
+### Deferred（本Release時点）
+
+DI-6（Media Upload Retry／Idempotency）・DI-7（WordPress Unused Media
+Cleanup）・DI-8（Publish Composition Root）は前提インフラ未整備のまま
+継続。DEF-6.22-1（WordPress側CONTINUE対象拡大）はDI-5完了（v6.25.0）済み
+だが運用データの蓄積を待つ。
+
+詳細は`docs/design/image_generation_gate_value_validation_foundation.md`
+（Project Charter・Architecture Design・Option A/B比較・Test Review・
+v6.26.0 test over-constraint修正の経緯を含む。ChatGPTによる多段階Review・
+commit・push・人間の最終承認は本節時点ではまだ実施していない）を参照。
+
 ## Zero-Diff Guard Registry層（`tests/zero_diff_guard_registry.py`、v6.26.0）
 
 > DEF-6.23-9（v6.22.0 DEF-6.22-14の継続、v6.23.0で命名、v6.24.0で緊急度再確認）
