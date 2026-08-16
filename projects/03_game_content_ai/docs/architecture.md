@@ -5454,3 +5454,153 @@ Minor 2件はいずれもCode Review 2までに反映済み）5件（S-1〜S-5�
 確認・Production Implementation・限定回帰・Documentation Integration・
 Code Review 1／2・Formal Regressionの経緯を含む。Release Review・commit・push・
 人間の最終承認は本節時点ではまだ実施していない）を参照。
+
+## Article Media Upload State Foundation層（`src/article_media_upload_state/`、v6.28.0）
+
+> Deferred Item DI-6（Media Upload Retry／Idempotency Foundation）の実装。
+> `ArticleFeaturedMediaOrchestrator.apply()`はWordPress mediaのgenerate→
+> upload→bindを行うが一切永続化しないため、WordPress upload成功から
+> `log_manager.log_article()`でmedia_idがディスクに書かれるまでの区間に
+> 何が起きてもmedia_idはどこにも残らず、retry時の重複uploadを構造的に
+> 防げなかった。当初検討した「`RetryQueueItem`へmedia_id追加」案は、
+> `RetryQueueItem`がrun_id粒度である一方main.pyの1回の実行が複数記事を
+> 処理するため「1 run_id : N記事」の粒度不一致で成立せず、article単位で
+> 独立したstate Foundationとして設計した。
+>
+> Architecture Designは、Claude Code単独設計→Codexによる読み取り専用
+> adversarial review 4ラウンドを経て収束した。Round 2で、当初案にあった
+> `FAILED` state／`ConfirmedFailureReason` Enumが、既存設計書
+> `docs/design/wordpress_media_upload_failure_reason_classification_foundation.md`
+> §10.1.1（L-1：「reasonを一過性の証明として扱ってはならない」）と衝突する
+> ことが判明し削除、Record `__post_init__`によるInvariant強制・
+> requested/persisted identity一致検証・Hard Wiring Prerequisite（HWP）を
+> 導入した。Round 3で`ATTEMPT_STARTED`再開始を安全側にfail-closed化し、
+> `UncertainOutcomeReason`（DI-5 observabilityとの重複）を完全削除して
+> state 2値・Public API 3つへ縮小、canonical UTC timestamp契約を新設した。
+> Round 4でPublic Manager API入口でのfail-fast validation順序の不備
+> （`record_upload_succeeded()`が既存media_idとの比較をtype検証より先に
+> 行うと、Pythonの`1 == True`によりbool値がstable replayとして誤受理され
+> うる経路）とfilesystem write例外のPublic Contract不統一を指摘され反映
+> した。Round 4終了時点でBlocking 0・Major 0・Minor 0・Suggestion 0、
+> **Verdict: Approved**。
+>
+> 実装は新規独立package`src/article_media_upload_state/`のみ（consumer-less、
+> 標準ライブラリのみに依存する葉package）。既存`main.py`・`src/retry_queue`・
+> `src/article_featured_media*`・`src/logger`・`src/outputs`・
+> `src/wordpress_media`・`src/retry_runtime_lock`はいずれも無改修
+> （Runtime Zero Diff）。
+>
+> **Zero-Diff Guard Registry integration**：`tests/`への新規E2E追加は
+> `tests/zero_diff_guard_registry.py`の`RELEASE_ORDER`／
+> `_TEST_CHANGE_CONTRIBUTIONS`への登録なしにはv6.21.0〜v6.24.0の
+> baseline-fixed guardと、それらを再検証するv6.26.0／v6.27.0のRUNTIME系
+> assertionを連鎖FAILさせることがFormal Regression実測で判明したため、
+> `RELEASE_ORDER`へ`"v6.28.0"`、`_TEST_CHANGE_CONTRIBUTIONS`へ新規E2E自身・
+> `zero_diff_guard_registry.py`自身・
+> `test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py`
+> 自身の3件をappend-onlyで追加した（`PROTECTED_PATHS`・
+> `_SOURCE_CHANGE_CONTRIBUTIONS`・`BASELINE_COMMITS`は無改修。新規packageが
+> `PROTECTED_PATHS`対象外のためsource contributionは不要）。
+>
+> **v6.27.0 historical guardのforward-compatibility修正**：`RELEASE_ORDER`
+> 追記の結果、v6.27.0自身のE2Eが持つ`REGISTRY-1`／`REGISTRY-2`
+> （「自分がRELEASE_ORDERの末尾である」という自己参照の完全一致固定）が
+> 構造的にFAILすることを実測で確認した。これはv6.27.0の**機能仕様の変更
+> ではなく**、v6.27.0時点では「自分が最新」という前提が常に成立していた
+> ために表面化しなかった、v6.27.0自身が導入した`REGISTRY-9`／
+> `REGISTRY-13`と同型のover-constraintである。REGISTRY-1/2を、
+> 「v6.27.0がRELEASE_ORDERに存在すること」＋「v6.27.0までのprefixが
+> v6.27.0リリース時点の期待順序と完全一致すること」という、過去の削除・
+> 並べ替え・途中挿入は引き続き検知しつつv6.27.0より後へのfuture release
+> appendは許容するratchet-safe契約へ修正した（membership判定への弱体化
+> ではない）。この2 FAILは未解決のまま残さず、119/119 PASSへ解消済み。
+>
+> **正式Release Review（Claude Code単独）：Changes Required（Blocking 1・
+> Major 1・Minor 2・Suggestion 1）の指摘を受け修正済み**（Release Review
+> 再確認は別途実施予定）。Blocking-1はFormal Regression最終結果がdocsへ
+> 未記録だったこと（本節末尾の結果を参照）。Major-1は、v6.28.0自身の
+> E2Eが追加した`REGISTRY-1`／`REGISTRY-2`（v6.28.0自身が末尾であることの
+> 完全一致固定）・`REGISTRY-4`（`_SOURCE_CHANGE_CONTRIBUTIONS`全体の
+> 完全一致固定）・`REGISTRY-7`（`threshold != "v6.28.0"`による historical
+> snapshot判定）・`REGISTRY-9`（v6.28.0視点windowの完全一致固定）が、
+> 直前に修正したv6.27.0のREGISTRY-1/2と同型のover-constraintを再導入して
+> いたこと。いずれもratchet-safe契約（存在確認＋自分までのprefix完全
+> 一致、historical部分の不変性＋own-record判定、membership判定）へ修正し、
+> v6.29.0以降の正当な追加寄与を妨げない形にした。Minor-1／Minor-2は
+> 設計書の表記統一・テスト1の冗長assertion削除。Suggestion-1（共通例外
+> 基底クラス追加）はconsumer-less foundationのpublic contract拡張になる
+> ためDeferredとした。
+>
+> 新規E2E（`test_e2e_v6_28_0_article_media_upload_state_foundation.py`、
+> 上記修正を反映した最終形で**187アサーション、187/187 PASS**）を
+> 実施した。限定関連回帰（`test_e2e_v6_21_0_...py` 170/170 PASS他、
+> v6.22.0〜v6.27.0いずれも全件PASS。v6.27.0は上記修正後119/119 PASS）で
+> zero-diffを確認済み。**Formal Regression：PASS**（正式Inventory
+> **31ファイル**：v1.11.0＋v5.9.0＋v6.0.0〜v6.28.0、合計
+> **5206/5206 PASS**、FAIL 0／SKIP 0、全ファイルexit code 0）。
+>
+> 本Releaseはユーザーからの直接指示に基づき実装したものであり、ChatGPTに
+> よる多段階Architecture Review／Code Review／Release Reviewは実施して
+> いない（Claude Code単独設計＋Codex読み取り専用independent adversarial
+> reviewの2者体制）。`docs/design/article_media_upload_state_foundation.md`
+> にDI-6の背景・設計・4ラウンドのAdversarial Review記録を残した。
+
+### Purpose
+
+article単位でWordPress media uploadの「試行開始」「確定成功」のみを
+記録・照会できるContractとpersistenceを新設し、将来のretry重複upload
+防止（main.pyへの実配線）・DI-7（WordPress Unused Media Cleanup）の
+前提基盤とする。
+
+### state model・Public API
+
+state：`ATTEMPT_STARTED`（試行開始。retry-safeを意味しない）／
+`UPLOAD_CONFIRMED`（確定成功、protected terminal state）の2値のみ。
+failure／uncertain reasonは一切保持しない。Public APIは
+`ArticleMediaUploadStateManager.record_upload_started` /
+`record_upload_succeeded` / `get_state`の3つのみ。
+
+### 主要Contract
+
+- frozen `ArticleMediaUploadRecord` + `__post_init__`により、Manager経由・
+  直接構築・Store deserializeのいずれの経路でも同一Invariantを強制する。
+- 全Public APIはstore accessより前にarticle_identityをfail-fast
+  validationする。`record_upload_succeeded()`はさらにmedia_idの型
+  （`type(media_id) is int and media_id > 0`、bool拒否）をexisting
+  recordとの比較より前に検証する。
+- 永続化はschema_version=1のclosed 5-key JSON schema。破損・型不一致・
+  未知schema_version・requested/persisted identity不一致はいずれも
+  `ArticleMediaUploadStateCorruptedError`（Noneへfail-openしない）。
+- timestampはcanonical UTC ISO8601（`+00:00`固定・round-trip equality
+  必須）のみを許可する（既存`execution_history_manager.py`のnaive
+  `datetime.now()`からの意図的な安全側逸脱）。
+- 書き込みはsame-directory unique temp → write → flush → fsync(file) →
+  close → `os.replace()`によるatomic置換。filesystem write全段階の
+  OSErrorを`ArticleMediaUploadStateIOError`へ統一変換し、`fdopen()`
+  失敗時のraw fd leakを防止する。
+
+### Hard Wiring Prerequisites（HWP-1〜HWP-3）
+
+main.py等へのruntime wiringは、以下3件がいずれもArchitecture Reviewで
+承認されるまで禁止する：HWP-1（cross-process serialization機構）、
+HWP-2（identity lifecycle policy：normalize_url drift・URL再投稿・
+article更新等）、HWP-3（`ATTEMPT_STARTED`がcrash window B／Cを区別
+できないことへの対処方針）。
+
+### 本Releaseの対象外
+
+main.py・`RetryQueueItem`・`WordPressMediaUploader`等、既存production
+コードへの実配線・変更。DI-7（WordPress media DELETE）の実装。
+reconciliation（crash window Cの解消）の実装。concurrency機構
+（lock／CAS）の実装。exactly-once保証。
+
+### Deferred（本Release時点）
+
+main.py wiring（HWP-1〜3充足まで禁止）／DI-7／reconciliation／
+cross-process serialization機構／Identity Lifecycle Policy確定／
+diagnostic reason再導入／`PROTECTED_PATHS`登録。
+
+詳細は`docs/design/article_media_upload_state_foundation.md`
+（Project Charter・Architecture Design・Codex adversarial review
+4ラウンドの記録を含む。Formal Regression・Release Review・commit・
+push・人間の最終承認は本節時点ではまだ実施していない）を参照。

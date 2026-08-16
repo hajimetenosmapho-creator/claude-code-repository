@@ -361,6 +361,191 @@
 
 ---
 
+## [v6.28.0] - 2026-08-14 ★ Article Media Upload State Foundation（DI-6）
+
+> Deferred Item DI-6（Media Upload Retry／Idempotency Foundation）の実装。
+> `ArticleFeaturedMediaOrchestrator.apply()`はWordPress media
+> のgenerate→upload→bindを行うが一切永続化しないため、WordPress upload成功
+> から`log_manager.log_article()`でmedia_idがディスクに書かれるまでの区間に
+> 何が起きてもmedia_idはどこにも残らず、retry時の重複uploadを構造的に防げ
+> なかった。当初検討していた「`RetryQueueItem`へmedia_idを追加する」案は、
+> `RetryQueueItem`がrun_id粒度である一方main.pyの1回の実行が複数記事を処理
+> するため「1 run_id : N記事」の粒度不一致で成立しないことが判明し、article
+> 単位で独立したstate Foundationとして設計した。
+>
+> Architecture Designは、Claude Code単独設計→Codexによる読み取り専用
+> adversarial review 4ラウンドを経て収束した。Round 2で、当初案にあった
+> `FAILED` state／`ConfirmedFailureReason` Enumが、既存設計書
+> `docs/design/wordpress_media_upload_failure_reason_classification_foundation.md`
+> §10.1.1（L-1：「reasonを一過性の証明として扱ってはならない」）と衝突する
+> ことが判明し削除、Record `__post_init__`によるInvariant強制・
+> requested/persisted identity一致検証・Hard Wiring Prerequisite（HWP）を
+> 導入した。Round 3で、`ATTEMPT_STARTED`再開始を安全側にfail-closed化し、
+> `UncertainOutcomeReason`（DI-5 observabilityとの重複）を完全削除して
+> state 2値・Public API 3つへ縮小、canonical UTC timestamp契約を新設した。
+> Round 4で、Public Manager API入口でのfail-fast validation順序の不備
+> （`record_upload_succeeded()`が既存media_idとの比較をtype検証より先に
+> 行うと、Pythonの`1 == True`によりbool値がstable replayとして誤受理され
+> うる経路）とfilesystem write例外のPublic Contract不統一を指摘され反映
+> した。Round 4終了時点でBlocking 0・Major 0・Minor 0・Suggestion 0、
+> **Verdict: Approved**。設計書は`docs/design/article_media_upload_state_foundation.md`
+> として正式記録した。
+>
+> 実装は新規独立package `src/article_media_upload_state/`のみ（consumer-less、
+> 標準ライブラリのみに依存する葉package）。既存`main.py`・`src/retry_queue`・
+> `src/article_featured_media*`・`src/logger`・`src/outputs`・
+> `src/wordpress_media`・`src/retry_runtime_lock`はいずれも無改修
+> （Runtime Zero Diff）。Public APIは`record_upload_started` /
+> `record_upload_succeeded` / `get_state`の3つのみ。stateは
+> `ATTEMPT_STARTED` / `UPLOAD_CONFIRMED`の2値のみで、failure／uncertain
+> reasonは一切保持しない。
+>
+> 本Releaseはruntime wiringを一切行わない。main.py等への実配線は、
+> HWP-1（Concurrency）・HWP-2（Identity Lifecycle）・HWP-3（Unresolved
+> ATTEMPT_STARTED Handling）のいずれもArchitecture Reviewで承認される
+> まで禁止する（設計書13章）。
+>
+> **Zero-Diff Guard Registry integration（Formal Regression実測で判明・追加
+> 対応）**：31ファイル正式Inventoryでの実行時、`tests/`への新規E2E追加が
+> `tests/zero_diff_guard_registry.py`の`RELEASE_ORDER`／
+> `_TEST_CHANGE_CONTRIBUTIONS`いずれにも未登録であるため、v6.21.0〜v6.24.0の
+> baseline-fixed guard（`NOIMPACT-TESTS-SCOPE`／`NOIMPACT-NO-UNTRACKED-TESTS`）
+> と、それらを子プロセス実行するv6.26.0／v6.27.0のRUNTIME系assertionが連鎖
+> FAILすることを実測で確認した（tracked/untracked/staged状態に依存しない）。
+> 当初の設計書は「`retry_queue`初回リリース時の前例」を根拠に
+> `zero_diff_guard_registry.py`も無改修と判断していたが、当時registry自体が
+> 存在しなかった（v6.26.0で新設）ため前例が成立せず、誤りだった。
+> `RELEASE_ORDER`へ`"v6.28.0"`を、`_TEST_CHANGE_CONTRIBUTIONS`へ新規E2E自身と
+> `zero_diff_guard_registry.py`自身の2件をappend-onlyで追加し解消した
+> （`PROTECTED_PATHS`・`_SOURCE_CHANGE_CONTRIBUTIONS`・`BASELINE_COMMITS`・
+> 既存recordはいずれも無改修。新規packageが`PROTECTED_PATHS`対象外である
+> ため、source contributionは引き続き不要）。この修正過程で、v6.27.0自身の
+> E2Eが持つ`REGISTRY-1`／`REGISTRY-2`（「自分がRELEASE_ORDERの末尾である」
+> という自己参照の完全一致固定）が、v6.28.0の`RELEASE_ORDER`追記により
+> 構造的にFAILすることを中間検証で検出した（117/119 PASS、2 FAIL）。
+> この2 FAILは未解決のまま残さず、下記のforward-compatibility修正により
+> **119/119 PASSへ解消済み**である。
+>
+> **v6.27.0 historical guardのforward-compatibility修正**：これは
+> v6.27.0の**機能仕様の変更ではなく**、v6.27.0時点では「自分が最新」という
+> 前提が常に成立していたために表面化しなかった、v6.27.0自身が導入した
+> `REGISTRY-9`／`REGISTRY-13`と同型のover-constraintである。
+> `test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py`
+> のREGISTRY-1/2を、「v6.27.0がRELEASE_ORDERに存在すること」＋
+> 「v6.27.0までのprefixがv6.27.0リリース時点の期待順序と完全一致すること」
+> という、過去の削除・並べ替え・途中挿入は引き続き検知しつつv6.27.0より
+> 後へのfuture release appendは許容するratchet-safe契約へ修正した（単純な
+> membership判定への弱体化ではない）。この編集自体も
+> `_TEST_CHANGE_CONTRIBUTIONS`へv6.28.0のcontributionとして登録した
+> （v6.28.0の直接test contributionは新規E2E自身・
+> `zero_diff_guard_registry.py`自身・`test_e2e_v6_27_0_*.py`自身の3件）。
+>
+> **正式Release Review（Claude Code単独）：Changes Required（Blocking 1・
+> Major 1・Minor 2・Suggestion 1）の指摘を受け、指摘事項の修正を実施した
+> （Release Review再確認は別途実施予定）。** Blocking-1は
+> Formal Regression最終結果（本エントリ下記参照）がdocsへ未記録だった
+> こと。Major-1は、v6.28.0自身のE2Eが追加した`REGISTRY-1`／`REGISTRY-2`
+> （v6.28.0自身が末尾であることの完全一致固定）と`REGISTRY-4`
+> （`_SOURCE_CHANGE_CONTRIBUTIONS`全体の完全一致固定）・`REGISTRY-7`
+> （`threshold != "v6.28.0"`によるhistorical snapshot判定）・`REGISTRY-9`
+> （v6.28.0視点windowの完全一致固定）が、直前に修正したv6.27.0の
+> `REGISTRY-1`／`REGISTRY-2`と同型のover-constraintを再導入していたこと。
+> `REGISTRY-1`／`REGISTRY-2`をv6.27.0と同じratchet-safe契約（存在確認＋
+> 自分までのprefix完全一致）へ、`REGISTRY-4`を「v6.27.0までのhistorical
+> source contributionが不変であること（4a）」＋「v6.28.0自身の直接source
+> contributionが0件であること（4b）」へ分離、`REGISTRY-7`を
+> `release_index(threshold) <= release_index("v6.27.0")`によるboundary
+> 判定（future release appendを構造的に対象外とする）へ、`REGISTRY-9`を
+> 完全一致からmembership判定（v6.28.0自身の3件が必ずwindow内に含まれる
+> こと）へ、それぞれv6.29.0以降の正当な追加寄与を妨げない形へ修正した
+> （historical integrity・過去recordの不変性はいずれも維持。単純な
+> membership判定への一律弱体化ではない）。Minor-1は設計書§15の登録件数
+> 表記が「2件」「3件」で自己矛盾していた点を「3件」へ統一。Minor-2は
+> テスト1の非記述的な冗長assertion（`check(record.state, record.state, ...)`）
+> を削除。Suggestion-1（共通例外基底クラスの追加）はconsumer-less
+> foundationのpublic contract拡張になるためDeferredとした。
+>
+> 新規E2E（`test_e2e_v6_28_0_article_media_upload_state_foundation.py`、
+> 上記修正を反映した最終形で**187アサーション、187/187 PASS**）を実施した。
+> 関連する限定回帰（`test_e2e_v6_21_0_...py` 170/170 PASS・
+> `test_e2e_v6_22_0_...py` 324/324 PASS・`test_e2e_v6_23_0_...py`
+> 347/347 PASS・`test_e2e_v6_24_0_...py` 354/354 PASS・
+> `test_e2e_v6_25_0_...py` 128/128 PASS・`test_e2e_v6_26_0_...py`
+> 248/248 PASS・`test_e2e_v6_27_0_...py` 119/119 PASS）でzero-diffを
+> 確認済み。**Formal Regression：PASS**（正式Inventory**31ファイル**：
+> v1.11.0＋v5.9.0＋v6.0.0〜v6.28.0、合計**5206/5206 PASS**、FAIL 0／
+> SKIP 0、全ファイルexit code 0）。
+> ChatGPTによる多段階Architecture Review／Code Review／Release Reviewは
+> 実施していない（Claude Code単独設計＋Codex読み取り専用independent
+> adversarial reviewの2者体制、v6.26.0・v6.27.0と同型の位置づけ）。
+
+### Added
+
+- `src/article_media_upload_state/` 新規package（`__init__.py` /
+  `article_media_upload_state.py` / `article_media_upload_record.py` /
+  `article_media_upload_state_store.py` / `json_article_media_upload_state_store.py` /
+  `article_media_upload_state_config.py` / `article_media_upload_state_manager.py` /
+  `errors.py`）。`ArticleMediaUploadStateManager`が
+  `record_upload_started` / `record_upload_succeeded` / `get_state`の
+  3 Public APIを提供する。`ArticleMediaUploadRecord`はfrozen dataclass +
+  `__post_init__`で全field invariantを構築境界で強制する。
+  `JsonArticleMediaUploadStateStore`はsame-directory unique temp →
+  write → flush → fsync(file) → close → `os.replace()`によるatomic
+  writeを行い、filesystem write全段階のOSErrorを
+  `ArticleMediaUploadStateIOError`へ統一変換する（`fdopen()`失敗時の
+  raw fd leak防止込み）。読み取り時はschema_version=1のclosed 5-key
+  JSON schema検証＋requested/persisted identity一致検証を行い、破損時は
+  `ArticleMediaUploadStateCorruptedError`を送出する（Noneへfail-openしない）。
+  timestampはcanonical UTC ISO8601（`+00:00`固定・round-trip equality
+  必須）のみを許可する。
+- `tests/test_e2e_v6_28_0_article_media_upload_state_foundation.py`
+  新規作成（Scenario prefix：LIFECYCLE-／ENTRY-／RECORD-／TIMESTAMP-／
+  SCHEMA-／IO-／ZERODIFF-／EXPORT-／REGISTRY-、**187アサーション、
+  187/187 PASS**）。
+- `docs/design/article_media_upload_state_foundation.md` 新規作成
+  （Architecture Review：Approved、Blocking 0・Major 0・Minor 0・
+  Suggestion 0）。
+
+### Changed
+
+- `tests/zero_diff_guard_registry.py`：`RELEASE_ORDER`へ`"v6.28.0"`を
+  append-onlyで追記。`_TEST_CHANGE_CONTRIBUTIONS`へ
+  `test_e2e_v6_28_0_article_media_upload_state_foundation.py`・
+  `zero_diff_guard_registry.py`自身・
+  `test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py`
+  自身の閾値`"v6.28.0"`の3件を追記。`BASELINE_COMMITS`・
+  `PROTECTED_PATHS`・`_SOURCE_CHANGE_CONTRIBUTIONS`・既存recordはいずれも
+  無改修。
+- `tests/test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py`：
+  `REGISTRY-1`／`REGISTRY-2`を、future release appendを拒否する自己参照の
+  完全一致固定から、「v6.27.0がRELEASE_ORDERに存在すること」＋「v6.27.0
+  までのprefixがv6.27.0リリース時点の期待順序と完全一致すること」という
+  ratchet-safe契約へ修正した。**v6.27.0の機能仕様（Gate Value Validation
+  Contract）は無変更**。過去の削除・並べ替え・途中挿入は引き続き検知する。
+- `tests/test_e2e_v6_28_0_article_media_upload_state_foundation.py`
+  （Release Review Major-1対応）：`REGISTRY-1`／`REGISTRY-2`をv6.27.0と
+  同型のratchet-safe契約へ、`REGISTRY-4`を「v6.27.0までのhistorical
+  source contributionの不変性（4a）」＋「v6.28.0自身の直接source
+  contributionが0件であること（4b）」への分離へ、`REGISTRY-7`を
+  `release_index`によるboundary判定へ、`REGISTRY-9`を完全一致から
+  membership判定へ、それぞれv6.29.0以降の正当な追加寄与を妨げない形へ
+  修正した（Release Review Minor-2対応：テスト1の非記述的な冗長
+  assertionも削除。純増減はゼロのためアサーション総数は187で不変）。
+
+### Tested
+
+- `test_e2e_v6_28_0_article_media_upload_state_foundation.py`：187/187 PASS
+- `test_e2e_v6_21_0_article_featured_media_runtime_wiring.py`：170/170 PASS（限定関連回帰）
+- `test_e2e_v6_22_0_wordpress_media_upload_failure_reason_classification_foundation.py`：324/324 PASS（限定関連回帰）
+- `test_e2e_v6_23_0_openai_image_generation_api_rejection_reason_classification_foundation.py`：347/347 PASS（限定関連回帰）
+- `test_e2e_v6_24_0_openai_image_generation_unknown_and_invalid_response_reason_refinement_foundation.py`：354/354 PASS（限定関連回帰）
+- `test_e2e_v6_25_0_image_generation_fallback_observability_foundation.py`：128/128 PASS（限定関連回帰）
+- `test_e2e_v6_26_0_zero_diff_guard_registry_foundation.py`：248/248 PASS（限定関連回帰）
+- `test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py`：119/119 PASS（forward-compatibility修正後）
+- Formal Regression：正式Inventory**31ファイル**（v1.11.0＋v5.9.0＋v6.0.0〜v6.28.0）、合計**5206/5206 PASS**、FAIL 0／SKIP 0、全ファイルexit code 0
+
+---
+
 ## [v6.27.0] - 2026-08-11 ★ Image Generation Gate Value Validation Foundation（DI-9）
 
 > Deferred Item DI-9（Image Generation Gate Value Strict Validation）の実装。

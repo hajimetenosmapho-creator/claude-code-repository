@@ -1008,6 +1008,49 @@
   Deferred：DI-6／DI-7／DI-8（前提インフラ未整備）・DEF-6.22-1（運用データ
   蓄積待ち）は本Release対象外のまま状態を維持する
   （`docs/design/image_generation_gate_value_validation_foundation.md`）
+- [x] **Article Media Upload State Foundation**（v6.28.0、DI-6）：
+  Deferred Item DI-6（Media Upload Retry／Idempotency Foundation）の実装。
+  当初案「`RetryQueueItem`へmedia_id追加」はrun_id粒度と記事粒度の不一致
+  （1 run_id : N記事）で成立せず、article単位で独立したstate Foundation
+  として設計した。Claude Code単独設計→Codexによる読み取り専用adversarial
+  review 4ラウンドを経て収束（Round 2で`FAILED`/`ConfirmedFailureReason`
+  を削除（既存`wordpress_media_upload_failure_reason_classification_foundation.md`
+  L-1「reasonを一過性の証明として扱ってはならない」との衝突）、Round 3で
+  `ATTEMPT_STARTED`再開始のfail-closed化・`UncertainOutcomeReason`削除
+  （DI-5 observabilityとの重複）でstate 2値・Public API 3つへ縮小、
+  Round 4でManager入口validation順序・filesystem write例外Contractを
+  修正。Round 4終了時点でBlocking 0・Major 0、**Verdict: Approved**）。
+  実装は新規独立package`src/article_media_upload_state/`のみ（consumer-less、
+  標準ライブラリのみ依存）。stateは`ATTEMPT_STARTED`／`UPLOAD_CONFIRMED`の
+  2値、Public APIは`record_upload_started`／`record_upload_succeeded`／
+  `get_state`の3つのみ。frozen Record + `__post_init__`によるInvariant強制、
+  schema_version=1のclosed JSON schema、requested/persisted identity一致
+  検証、canonical UTC timestamp（round-trip equality必須）、same-directory
+  temp+`os.replace()`によるatomic write（filesystem write全段階のOSErrorを
+  `ArticleMediaUploadStateIOError`へ統一、fd leak防止込み）を実装した。
+  新規E2E（187アサーション、187/187 PASS）・限定関連回帰（v6.21.0〜v6.27.0
+  の7ファイル、いずれもPASS）を実施。**正式Formal Regression：Completed**
+  （正式Inventory**31ファイル**：v1.11.0＋v5.9.0＋v6.0.0〜v6.28.0、合計
+  **5206/5206 PASS**、FAIL 0／SKIP 0、全ファイルexit code 0）。
+  正式Release Review（Claude Code単独）でChanges Required（Blocking 1・
+  Major 1・Minor 2・Suggestion 1）の指摘を受け修正済み（Blocking-1：docs
+  未記録のFormal Regression結果を記録／Major-1：v6.28.0自身のE2Eが
+  導入した`REGISTRY-1`／`REGISTRY-2`／`REGISTRY-4`／`REGISTRY-7`／
+  `REGISTRY-9`のover-constraintをratchet-safe契約へ修正／Minor-1：
+  設計書の登録件数表記統一／Minor-2：冗長assertion削除。Suggestion-1
+  （共通例外基底クラス）はDeferred）。Release Review再確認は別途実施予定。
+  main.py等既存productionコードはいずれも無改修（Runtime Zero Diff）。
+  途中経過として、`zero_diff_guard_registry.py`への`RELEASE_ORDER`／
+  `_TEST_CHANGE_CONTRIBUTIONS`統合が必要と判明し(`RELEASE_ORDER`へ
+  `"v6.28.0"`追記・3件のtest contribution追記)、`test_e2e_v6_27_0_*.py`
+  自身の`REGISTRY-1`／`REGISTRY-2`も同型のover-constraintでFAILすることを
+  中間検証で検出したが、forward-compatibility修正により119/119 PASSへ
+  解消済み（v6.27.0の機能仕様は無変更）。
+  Deferred：main.py等へのruntime wiringは、HWP-1（Concurrency）・
+  HWP-2（Identity Lifecycle）・HWP-3（Unresolved ATTEMPT_STARTED
+  Handling）のいずれもArchitecture Reviewで承認されるまで禁止する。DI-7
+  （WordPress Unused Media Cleanup）は引き続きDI-6のwiring後を前提とする
+  （`docs/design/article_media_upload_state_foundation.md`）。
 - [x] **Zero-Diff Guard Registry Foundation**（v6.26.0、DEF-6.23-9）：
   v6.22.0 DEF-6.22-14の継続として提起され、v6.23.0で命名（DEF-6.23-9）、
   v6.24.0で「baseline 固定 guard が3→4件へ増え、次Release以降のO(N)保守
@@ -1433,9 +1476,9 @@
   例外型だけでは判定不能**であり、response bodyの`code`解析を要するため
   解析禁止contract（G-8）に抵触する。DI-11後半のスコープには含めず、
   DEF-6.23-6として引き続き別途独立検討する
-- [ ] **Media Upload Retry／Idempotency Foundation**（次候補）：Retry Queueのmedia_id保持field
-  拡張、重複Upload防止、idempotency keyの確立。既存`RetryQueueItem`にmedia_id相当のfieldが
-  存在しないことを踏まえ独立検討する
+- [x] Media Upload Retry／Idempotency Foundationは v6.28.0（Article Media Upload State
+  Foundation）としてFoundation部分（state記録・照会Contract）を完了。main.pyへの実配線は
+  HWP-1〜HWP-3が承認されるまで別途Deferred（上記v6.28.0エントリ参照）
 - [ ] **WordPress Unused Media Cleanup Foundation**（次候補）：Upload成功後の記事投稿失敗時に残る
   未使用WordPress Mediaの検出・削除方針。`WordPressMediaUploader`に削除APIが現状存在しないことを
   踏まえ独立検討する

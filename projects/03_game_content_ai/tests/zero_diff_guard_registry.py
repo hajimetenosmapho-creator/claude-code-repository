@@ -48,6 +48,7 @@ RELEASE_ORDER: tuple[str, ...] = (
     "v6.25.0",
     "v6.26.0",
     "v6.27.0",
+    "v6.28.0",
 )
 
 
@@ -190,6 +191,15 @@ _TEST_CHANGE_CONTRIBUTIONS: tuple[tuple[str, str], ...] = (
     ("zero_diff_guard_registry.py", "v6.27.0"),
     ("test_e2e_v6_26_0_zero_diff_guard_registry_foundation.py", "v6.27.0"),
     ("test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py", "v6.27.0"),
+    # v6.28.0（DI-6 Article Media Upload State Foundation）自身。新規独立
+    # パッケージ（src/article_media_upload_state）はPROTECTED_PATHS対象外の
+    # ためsource contributionは不要。tests/への新規E2E追加、その追加を
+    # 許容するための本レジストリ自身の編集、および将来Releaseのappendを
+    # 拒否するover-constraintだったv6.27.0自身のREGISTRY-1/2をratchet-safe
+    # 契約へ修正したためのtest_e2e_v6_27_0_*.py自身の編集の3件を登録する。
+    ("test_e2e_v6_28_0_article_media_upload_state_foundation.py", "v6.28.0"),
+    ("zero_diff_guard_registry.py", "v6.28.0"),
+    ("test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py", "v6.28.0"),
 )
 
 

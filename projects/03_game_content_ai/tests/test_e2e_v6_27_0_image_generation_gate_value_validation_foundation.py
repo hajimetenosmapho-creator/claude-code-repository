@@ -167,11 +167,29 @@ try:
 
     print("[REGISTRY] v6.27.0 contributionのO(1)反映")
 
-    check_true("REGISTRY-1. RELEASE_ORDERの末尾がv6.27.0である（append-only）",
-               registry.RELEASE_ORDER[-1] == "v6.27.0")
-    check("REGISTRY-2. RELEASE_ORDERのv6.27.0より前の要素がv6.26.0時点と完全一致する（過去のindexを変更しない）",
-          registry.RELEASE_ORDER[:-1],
-          ("v6.21.0", "v6.22.0", "v6.23.0", "v6.24.0", "v6.25.0", "v6.26.0"))
+    # REGISTRY-1/2修正（v6.28.0統合時に発見。REGISTRY-9/13と同型のover-constraint）:
+    # 元実装は「RELEASE_ORDERの末尾がv6.27.0である」という、v6.27.0が常に最新
+    # であることを前提にした完全一致固定だった。v6.28.0以降のReleaseが
+    # RELEASE_ORDERへ正当にappendすると、末尾はもはやv6.27.0ではなくなり
+    # 機械的にFAILする。これはv6.27.0の機能仕様の変更ではなく、v6.27.0時点
+    # では「自分が最新」という前提が成立していたために表面化しなかった
+    # 設計上のover-constraintである。
+    # 「v6.27.0がRELEASE_ORDERに存在すること」（REGISTRY-1）と「v6.27.0までの
+    # prefixがv6.27.0リリース時点の期待順序と完全一致すること」（REGISTRY-2）
+    # へ変更する。過去（v6.21.0〜v6.27.0）の削除・並べ替え・途中挿入は
+    # prefix完全一致判定により引き続き検知しつつ、v6.27.0より後への
+    # future release appendは構造的に許容する（単純なmembership判定への
+    # 弱体化ではなく、prefix不変性は維持したままの拡張）。
+    check_true("REGISTRY-1. v6.27.0がRELEASE_ORDERに存在する（v6.28.0以降のappendを妨げない）",
+               "v6.27.0" in registry.RELEASE_ORDER)
+    _v627_prefix_index = registry.release_index("v6.27.0")
+    check(
+        "REGISTRY-2. v6.27.0までのprefixがv6.27.0リリース時点の期待順序と完全一致する"
+        "（過去の削除・並べ替え・途中挿入は検知しつつ、v6.27.0より後へのfuture release"
+        "appendは許容するratchet-safe契約）",
+        registry.RELEASE_ORDER[: _v627_prefix_index + 1],
+        ("v6.21.0", "v6.22.0", "v6.23.0", "v6.24.0", "v6.25.0", "v6.26.0", "v6.27.0"),
+    )
 
     check("REGISTRY-3. BASELINE_COMMITSがv6.27.0を新規登録していない（v6.27.0は新しいbaseline-fixed guardを新設しない）",
           set(registry.BASELINE_COMMITS.keys()),
