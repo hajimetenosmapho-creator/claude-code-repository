@@ -49,6 +49,7 @@ RELEASE_ORDER: tuple[str, ...] = (
     "v6.26.0",
     "v6.27.0",
     "v6.28.0",
+    "v6.29.0",
 )
 
 
@@ -200,6 +201,12 @@ _TEST_CHANGE_CONTRIBUTIONS: tuple[tuple[str, str], ...] = (
     ("test_e2e_v6_28_0_article_media_upload_state_foundation.py", "v6.28.0"),
     ("zero_diff_guard_registry.py", "v6.28.0"),
     ("test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py", "v6.28.0"),
+    # v6.29.0（Retry Observability Pipeline Foundation）自身。新規独立パッケージ
+    # （src/retry_observability_pipeline）はPROTECTED_PATHS対象外のためsource
+    # contributionは不要。tests/への新規E2E追加と、その追加を許容するための
+    # 本レジストリ自身の編集（RELEASE_ORDERへの"v6.29.0"追記本体）の2件を登録する。
+    ("test_e2e_v6_29_0_retry_observability_pipeline_foundation.py", "v6.29.0"),
+    ("zero_diff_guard_registry.py", "v6.29.0"),
 )
 
 

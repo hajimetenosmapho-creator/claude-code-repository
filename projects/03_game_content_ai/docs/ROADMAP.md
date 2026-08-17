@@ -1051,6 +1051,42 @@
   Handling）のいずれもArchitecture Reviewで承認されるまで禁止する。DI-7
   （WordPress Unused Media Cleanup）は引き続きDI-6のwiring後を前提とする
   （`docs/design/article_media_upload_state_foundation.md`）。
+- [x] **Retry Observability Pipeline Foundation**（v6.29.0）：
+  Release 6.3.0〜6.8.0で確立された`retry_metrics` → `retry_monitoring` →
+  `retry_alert` → `retry_notification` → `retry_notification_message`の
+  5パッケージ（いずれも消費者不在の先行実装）を、`metrics → monitoring →
+  alert → notification → message`の固定順序でComposeするだけの、
+  再利用可能なOrchestration/Facadeパッケージ`src/retry_observability_pipeline/`
+  （`RetryObservabilityReport` / `RetryObservabilityPipeline`）として実装した。
+  唯一の入力は`list[RetryRuntimeLogRecord]`（既にパース済みのrecord）に
+  限定し、`RetryRuntimeLogReader`は一切importせずファイルI/Oを行わない。
+  既存5パッケージへの直接依存はone-hop-back規律の一般的な例外ではなく、
+  `ArticleFeaturedMediaOrchestrator`（v6.14.0）と同型のOrchestration/Facade
+  層固有の契約として位置づけ、既存5パッケージからの逆依存をAST Guardで
+  機械的に禁止した。`RetryObservabilityReport`は`__post_init__`で
+  `notification_decision.status`と`message`のNone/非None整合を強制する。
+  Architecture Designは、Claude Code単独設計→Codex読み取り専用independent
+  reviewを4ラウンド実施し`APPROVED_WITH_SUGGESTIONS`（Blocking/Major 0件）
+  へ収束した（検討の過程で、独立候補だった`Retry Notification Channel
+  Foundation`は、唯一許容されるinput（`RetryNotificationMessage`）から
+  意味のある独立した決定ロジックを構築できないことが判明し
+  `ARCHITECTURE_BLOCKED`と判定、本Releaseへ方針転換した）。
+  `scripts/show_retry_notification.py::build_report()`との合成ロジック
+  重複は本Repository初のtemporary debtとして意図的に許容し、次Wiring
+  Releaseで統一する方針とした。重複が正しく同期していることは、本Release
+  内のCLI/Pipeline Parity Test（`RetryRuntimeLogReader.read`のmonkeypatch
+  による同一records入力比較）で担保した。`tests/zero_diff_guard_registry.py`
+  へ`RELEASE_ORDER`の`"v6.29.0"`追記・`_TEST_CHANGE_CONTRIBUTIONS`への2件
+  追記を行った（v6.28.0の前例と同型。`PROTECTED_PATHS` /
+  `_SOURCE_CHANGE_CONTRIBUTIONS`は無改修）。新規E2E（170アサーション、
+  170/170 PASS）・既存6パッケージおよび限定関連回帰（v6.21.0〜v6.28.0の
+  7ファイル）は無改修のままPASSを確認済み。正式Formal Regression（正式
+  Inventory32ファイル：v1.11.0＋v5.9.0＋v6.0.0〜v6.29.0）は**5376/5376
+  PASS、FAIL 0／SKIP 0、全ファイルexit code 0**で完了した。
+  main.py等既存productionコードはいずれも無改修（Runtime Zero Diff）。
+  `RetryRuntimeOrchestrator` / `RetryCompositionRoot` / `SchedulerEngine`
+  への実配線は引き続き未着手のまま、次Wiring Release候補とする
+  （`docs/design/retry_observability_pipeline_foundation.md`）。
 - [x] **Zero-Diff Guard Registry Foundation**（v6.26.0、DEF-6.23-9）：
   v6.22.0 DEF-6.22-14の継続として提起され、v6.23.0で命名（DEF-6.23-9）、
   v6.24.0で「baseline 固定 guard が3→4件へ増え、次Release以降のO(N)保守

@@ -1,6 +1,7 @@
 # 出力アーキテクチャ設計
 
 作成日：2026-06-26  
+更新日：2026-08-17（v6.29.0 — Retry Observability Pipeline Foundationを追記。Release 6.3.0〜6.8.0で確立された5つの「消費者不在の先行実装」（`retry_metrics` / `retry_monitoring` / `retry_alert` / `retry_notification` / `retry_notification_message`）を`metrics → monitoring → alert → notification → message`の固定順序でComposeするだけの、再利用可能なOrchestration/Facadeパッケージとして新規独立package`src/retry_observability_pipeline/`（`RetryObservabilityReport` / `RetryObservabilityPipeline`）を追加したこと。既存5パッケージ・`RetryRuntimeOrchestrator` / `RetryCompositionRoot` / `SchedulerEngine` / `scripts/show_retry_notification.py`はいずれも無改修、`RetryRuntimeLogReader`の直接参照・生成・利用およびfile I/Oは行わないこと、Codex read-only review 4ラウンドを経て`APPROVED_WITH_SUGGESTIONS`（Blocking/Major 0件）に収束したことを明記）
 更新日：2026-07-15（v6.9.0 — WordPress Media Upload Foundationを追記。新規独立package
 `src/wordpress_media/`（`MediaUploadResult` / `WordPressMediaUploadError` / `WordPressMediaUploader`）を
 追加し、画像bytesをWordPress Media REST API（`POST /wp-json/wp/v2/media`）へアップロードし
@@ -5604,3 +5605,75 @@ diagnostic reason再導入／`PROTECTED_PATHS`登録。
 （Project Charter・Architecture Design・Codex adversarial review
 4ラウンドの記録を含む。Formal Regression・Release Review・commit・
 push・人間の最終承認は本節時点ではまだ実施していない）を参照。
+
+---
+
+## Retry Observability Pipeline Foundation層（`src/retry_observability_pipeline/`、v6.29.0 実装完了）
+
+> **本節は実装完了時点の記録である。新規E2E（170アサーション、170/170 PASS）・限定関連回帰（既存6パッケージ＋v6.21.0〜v6.28.0の7ファイル）とも完全PASSした。Formal Regression（正式Inventory32ファイル：v1.11.0＋v5.9.0＋v6.0.0〜v6.29.0）は5376/5376 PASS、FAIL 0／SKIP 0、全ファイルexit code 0で完了した。**
+
+Release 6.3.0〜6.8.0で確立された5つの「消費者不在の先行実装」（`retry_metrics` / `retry_monitoring` / `retry_alert` / `retry_notification` / `retry_notification_message`）を、`metrics → monitoring → alert → notification → message`という固定順序でComposeするだけの、再利用可能なOrchestration/Facadeパッケージとして`src/retry_observability_pipeline/`を追加した。唯一の実消費者だった`scripts/show_retry_notification.py::build_report()`（CLIローカル関数）とは独立に、`src/`配下から再利用できる形へ抽出したものである。
+
+```
+list[RetryRuntimeLogRecord]（唯一の入力。呼び出し元がI/Oを済ませた後の型）
+        │
+        ▼
+RetryMetricsCalculator.calculate() -> RetryMetricsSnapshot
+        │
+        ▼
+RetryHealthEvaluator.evaluate() -> RetryHealthReport
+        │
+        ▼
+RetryAlertEvaluator.evaluate() -> RetryAlert
+        │
+        ▼
+RetryNotificationEvaluator.evaluate() -> RetryNotificationDecision
+        │
+        ▼（status is NOTIFYの場合のみ）RetryNotificationMessageBuilder.build()
+        │
+        ▼
+RetryObservabilityReport（frozen dataclass、__post_init__でinvariant強制）
+```
+
+### Composition責務とDependency Direction（Orchestration/Facade層固有の契約）
+
+`RetryObservabilityPipeline`は既存5パッケージの呼び出し順序を固定するだけの責務に限定され、判定（Judgment）・値構築（Value Building）ロジックは一切追加しない。既存5パッケージへの直接依存（`retry_metrics` / `retry_monitoring` / `retry_alert` / `retry_notification` / `retry_notification_message`）は、既存の"one-hop-back"Foundation規律（各パッケージは直前の1つのlayerのみに依存する）の一般的な例外ではなく、`ArticleFeaturedMediaOrchestrator`（v6.14.0）と同型の**Orchestration/Facade層固有の契約**として位置づける。既存5パッケージ側のone-hop-back規律自体は本Releaseでも一切変更しない。既存5パッケージのいずれも`retry_observability_pipeline`をimportしない（逆依存禁止）ことを新規E2EのAST解析で機械的に保証した。
+
+`RetryRuntimeLogReader`（ファイルI/Oを行うコンポーネント）は一切importせず、`list[RetryRuntimeLogRecord]`（既にパース済みのrecord）を唯一の入力とする。I/Oは引き続き呼び出し元（CLIまたは将来のRuntime）の責務のまま残る。
+
+### RetryObservabilityReport（status/message invariant）
+
+`RetryObservabilityReport`（frozen dataclass、`metrics` / `health_report` / `alert` / `notification_decision` / `message`の5フィールド）は、`__post_init__`で`notification_decision.status`と`message`の整合性を構築境界で強制する：`NOTIFY`の場合`message`は`None`であってはならず、`NO_NOTIFICATION`の場合`message`は`None`でなければならず、未対応のstatus相当値はいずれもフォールバックせず`ValueError`を送出する。この検証は`RetryObservabilityPipeline.evaluate()`内の`NOTIFY / NO_NOTIFICATION / else ValueError`という明示分岐（Fail Fast契約）と意図的に二重化しており、`evaluate()`経由の通常構築だけでなく、Reportが独立して直接構築されるケース（テストコード等）でもInvariantが保護される。
+
+### CLIとの一時的重複（Temporary Debt）
+
+`scripts/show_retry_notification.py::build_report()`は本Releaseでは無改修のまま維持し、本Facadeと実質同一のCompositionロジックが一時的に2箇所に存在する状態を意図的に許容した（本Repository初のパターン）。次Wiring Releaseで`build_report()`を`RetryObservabilityPipeline.evaluate()`への委譲へ置き換え、CLI側のCompositionロジックを削除して統一する計画とした。重複が正しく同期していることは、本Release内のCLI/Pipeline Parity Test（`RetryRuntimeLogReader.read`をクラスレベルでmonkeypatchし同一recordsをCLI・Pipeline双方へ入力、`metrics` / `health_report` / `alert` / `notification_decision` / `message`のfrozen dataclass標準equalityで比較）で担保した。実ファイルI/O・JSONLパース処理自体はこのParity Testの対象外（既存v6.8.0 CLI E2Eで別途カバー済み）。
+
+### Zero-Diff Guard Registry
+
+`tests/zero_diff_guard_registry.py`について、当初「新規独立パッケージはPROTECTED_PATHS対象外のためsource contributionは不要」を根拠に「registry変更は一切不要」と判断したが、Codex read-only reviewで「source contribution不要」と「registry変更一切不要」を混同したoverbroad判定であるとの指摘を受けた。v6.21.0〜v6.24.0の4つのbaseline-fixed guardは`git diff --name-only BASELINE_COMMIT -- tests`により**tests/ディレクトリ全体**の差分を検出する（`NOIMPACT-TESTS-SCOPE`）ため、新規E2Eファイルの追加自体はsource contributionとは別の理由で登録が必要と判明した。v6.28.0の前例（新規E2Eファイル自身を`_TEST_CHANGE_CONTRIBUTIONS`へ登録）に倣い、`RELEASE_ORDER`へ`"v6.29.0"`を、`_TEST_CHANGE_CONTRIBUTIONS`へ新規E2E自身・`zero_diff_guard_registry.py`自身の閾値`"v6.29.0"`の2件をappend-onlyで追加した（`PROTECTED_PATHS` / `_SOURCE_CHANGE_CONTRIBUTIONS` / `BASELINE_COMMITS` / 既存recordはいずれも無改修）。
+
+### Runtime Pipeline・既存5パッケージへ一切手を加えない設計判断
+
+`RetryRuntimeOrchestrator` / `RetryCompositionRoot` / `SchedulerEngine` / `scripts/show_retry_notification.py`はいずれも無改修。`src/retry_metrics/` / `src/retry_monitoring/` / `src/retry_alert/` / `src/retry_notification/` / `src/retry_notification_message/`もいずれも無改修。本Releaseにおけるproduction codeの変更は、新規package`src/retry_observability_pipeline/`の追加のみ。
+
+### Architecture Reviewの経緯（Codex read-only review 4ラウンド）
+
+Claude Code単独設計→Codex読み取り専用independent reviewを4ラウンド実施した。1回目`ARCHITECTURE_APPROVABLE`。2回目（Blocking/Major/Minor/Suggestion分類レビュー）でMajor 2件（`evaluate()`のmessage分岐がfail-openだったこと、`RetryObservabilityReport`にinvariantがなかったこと）・Minor 2件（5 package直接依存の位置づけ未文書化、CLI重複の未記録）を検出し、いずれも設計修正で解消した。3回目（修正反映後の再レビュー）で新規Major 1件（zero-diff registry結論のoverbroad判定）・新規Minor 1件（CLI parity testのharness未確定）を追加検出し、いずれも設計修正で解消した。4回目（targeted re-review）で`APPROVED_WITH_SUGGESTIONS`（Blocking/Major 0件）に収束した。
+
+検討の過程で、独立候補だった`Retry Notification Channel Foundation`（`RetryNotificationMessage`を入力に通知チャネルを選択するFoundation）は、唯一許容されるinput（`RetryNotificationMessage`、固定bodyのみ・severity非保持）から意味のある独立した決定ロジックを構築できないことが判明し`ARCHITECTURE_BLOCKED`と判定した。既存eligibility判定（`retry_notification`）との責務重複・severity情報の構造的欠落・具体channel未定という3つの制約を同時に満たす設計が成立しないためであり、本Release（Observability Pipeline側）はこれとは独立に選定された。
+
+### 責務境界（Out of Scope）
+
+`RetryRuntimeOrchestrator` / `RetryCompositionRoot` / `SchedulerEngine`の変更、`scripts/show_retry_notification.py`の変更、`.run/retry_runtime_log.jsonl`のJSON Schema変更、`RetryRuntimeLogReader`の使用（本パッケージ内でのファイルI/O）、Sender／実際の通知送信・外部I/O、既存5パッケージの変更、具体的なChannel／Delivery destinationの導入は、いずれも本Releaseの対象外である。
+
+### Test Review・Regressionの実績
+
+新規E2E（`tests/test_e2e_v6_29_0_retry_observability_pipeline_foundation.py`）は170アサーション、170/170 PASS。既存6パッケージ（`retry_metrics`〜`retry_notification_message`関連のE2E）・限定関連回帰（v6.21.0〜v6.28.0の7ファイル）はいずれも既存件数のままPASSし、無改修を確認した。正式Formal Regression（正式Inventory32ファイル：v1.11.0＋v5.9.0＋v6.0.0〜v6.29.0）は5376/5376 PASS、FAIL 0／SKIP 0、全ファイルexit code 0で完了した。
+
+### Future Extension
+
+Retry Observability Runtime Wiring（`RetryCompositionRoot` / `RetryRuntimeOrchestrator`への実配線）、CLI（`scripts/show_retry_notification.py`）の本Facadeへの委譲統一、Retry Notification Channel Foundation（severity保持Message等の前提が整い次第、独立して再評価）。
+
+詳細は`docs/design/retry_observability_pipeline_foundation.md`
+（Architecture Design・Codex read-only review 4ラウンドの記録を含む）を参照。

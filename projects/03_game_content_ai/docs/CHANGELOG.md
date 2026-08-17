@@ -361,6 +361,105 @@
 
 ---
 
+## [v6.29.0] - 2026-08-17 ★ Retry Observability Pipeline Foundation
+
+> Release 6.3.0〜6.8.0で確立された`retry_metrics` → `retry_monitoring` →
+> `retry_alert` → `retry_notification` → `retry_notification_message`の
+> 5パッケージは、いずれも消費者不在の先行実装（Foundation First）であり、
+> 唯一の実消費者は`scripts/show_retry_notification.py`（v6.8.0）の
+> `build_report()`（CLIローカル関数）のみだった。この合成ロジックを、
+> `src/`配下の再利用可能なOrchestration/Facadeパッケージとして抽出した。
+>
+> Architecture Designは、Claude Code単独設計→Codex読み取り専用independent
+> reviewを4ラウンド実施して収束した。1回目`ARCHITECTURE_APPROVABLE`、
+> 2回目でBlocking/Major/Minor/Suggestion分類レビューを実施しMajor 2件
+> （message分岐のfail-open性・`RetryObservabilityReport`のinvariant欠如）・
+> Minor 2件（5 package直接依存の位置づけ未文書化・CLI重複の未記録）を検出、
+> 3回目の修正反映後の再レビューで新規Major 1件（zero-diff registry結論の
+> overbroad判定）・新規Minor 1件（CLI parity testのharness未確定）を追加検出、
+> 4回目のtargeted re-reviewで`APPROVED_WITH_SUGGESTIONS`（Blocking/Major 0件）
+> に収束した。検討の過程で、独立の`Retry Notification Channel Foundation`
+> （通知チャネル選択）は、唯一許容されるinput（`RetryNotificationMessage`、
+> 固定bodyのみ・severity非保持）から意味のある独立した決定ロジックを構築
+> できないことが判明し`ARCHITECTURE_BLOCKED`と判定、本Release（Observability
+> Pipeline側）へ方針転換した経緯がある。
+>
+> 実装は新規独立package`src/retry_observability_pipeline/`のみ
+> （`RetryObservabilityReport` / `RetryObservabilityPipeline`の2 Public API）。
+> 入力は`list[RetryRuntimeLogRecord]`（既にパース済みのrecord）に限定し、
+> `RetryRuntimeLogReader`は一切importせずファイルI/Oを行わない。既存5
+> パッケージへの直接依存（one-hop-back規律の例外）は、
+> `ArticleFeaturedMediaOrchestrator`（v6.14.0）と同型のOrchestration/Facade層
+> 固有の契約として位置づけ、既存5パッケージからの逆依存（reverse import）を
+> AST Guardで機械的に禁止した。`notification_decision.status`と`message`の
+> 整合性は、`evaluate()`内の`NOTIFY / NO_NOTIFICATION / else ValueError`
+> 明示分岐に加え、`RetryObservabilityReport.__post_init__`でも独立して
+> 強制する二重のFail Fast構造とした。
+>
+> `scripts/show_retry_notification.py::build_report()`との合成ロジック重複は、
+> 本Repository初のtemporary debtとして意図的に許容し（次Wiring Releaseで
+> CLIを本Facadeへの委譲へ置き換え統一する）、その重複が正しく同期している
+> ことを本Release内のCLI/Pipeline Parity Test（`RetryRuntimeLogReader.read`
+> のmonkeypatchによる同一records入力＋frozen dataclass標準equalityでの
+> 比較）で担保した。
+>
+> `tests/zero_diff_guard_registry.py`について、Codex reviewで
+> 「source contribution不要」という結論をそのまま「registry変更一切不要」
+> と一般化した誤りを指摘された。v6.21.0〜v6.24.0の4つのbaseline-fixed
+> guardが`git diff --name-only BASELINE_COMMIT -- tests`でtests/ディレクトリ
+> 全体の差分を検出する（`NOIMPACT-TESTS-SCOPE`）ため、新規E2Eファイルの
+> 追加自体はsource contributionとは別の理由で登録が必要と判明し、v6.28.0の
+> 前例（`test_e2e_v6_28_0_article_media_upload_state_foundation.py`自身の
+> 登録）に倣い、`RELEASE_ORDER`への`"v6.29.0"`追記・`_TEST_CHANGE_CONTRIBUTIONS`
+> への2件（新規E2E自身・`zero_diff_guard_registry.py`自身）の追記で対応した
+> （`PROTECTED_PATHS`・`_SOURCE_CHANGE_CONTRIBUTIONS`・`BASELINE_COMMITS`・
+> 既存recordはいずれも無改修）。
+>
+> 本Releaseはruntime wiringを一切行わない。`RetryRuntimeOrchestrator` /
+> `RetryCompositionRoot` / `SchedulerEngine` / `scripts/show_retry_notification.py`
+> はいずれも無改修（Runtime Zero Diff）。
+
+### Added
+
+- `src/retry_observability_pipeline/` 新規package（`__init__.py` /
+  `retry_observability_report.py` / `retry_observability_pipeline.py`）。
+  `RetryObservabilityPipeline.evaluate(records: list[RetryRuntimeLogRecord])`
+  が`metrics → monitoring → alert → notification → message`の5段階を
+  固定順序で呼び出し、`RetryObservabilityReport`を返す。`RetryObservabilityReport`
+  はfrozen dataclass + `__post_init__`で`notification_decision.status`と
+  `message`のNone/非None整合を強制する（NOTIFY↔message非None、
+  NO_NOTIFICATION↔message=None、未対応status→ValueError）。
+- `tests/test_e2e_v6_29_0_retry_observability_pipeline_foundation.py`
+  新規作成（Domain Object invariant／Pipeline Composition／Public API／
+  Dependency Rule（AST）／外部I/O不在／CLI-Pipeline Parity Testを含む、
+  **170アサーション、170/170 PASS**）。
+- `docs/design/retry_observability_pipeline_foundation.md` 新規作成
+  （Codex read-only review 4ラウンドを経て`APPROVED_WITH_SUGGESTIONS`）。
+
+### Changed
+
+- `tests/zero_diff_guard_registry.py`：`RELEASE_ORDER`へ`"v6.29.0"`を
+  append-onlyで追記。`_TEST_CHANGE_CONTRIBUTIONS`へ
+  `test_e2e_v6_29_0_retry_observability_pipeline_foundation.py`・
+  `zero_diff_guard_registry.py`自身の閾値`"v6.29.0"`の2件を追記。
+  `BASELINE_COMMITS`・`PROTECTED_PATHS`・`_SOURCE_CHANGE_CONTRIBUTIONS`・
+  既存recordはいずれも無改修。
+
+### Tested
+
+- `test_e2e_v6_29_0_retry_observability_pipeline_foundation.py`：170/170 PASS
+- `test_e2e_v6_21_0_article_featured_media_runtime_wiring.py`：170/170 PASS（限定関連回帰）
+- `test_e2e_v6_22_0_wordpress_media_upload_failure_reason_classification_foundation.py`：324/324 PASS（限定関連回帰）
+- `test_e2e_v6_23_0_openai_image_generation_api_rejection_reason_classification_foundation.py`：347/347 PASS（限定関連回帰）
+- `test_e2e_v6_24_0_openai_image_generation_unknown_and_invalid_response_reason_refinement_foundation.py`：354/354 PASS（限定関連回帰）
+- `test_e2e_v6_26_0_zero_diff_guard_registry_foundation.py`：248/248 PASS（限定関連回帰）
+- `test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py`：119/119 PASS（限定関連回帰）
+- `test_e2e_v6_28_0_article_media_upload_state_foundation.py`：187/187 PASS（限定関連回帰）
+- `test_e2e_v6_3_0_retry_metrics_foundation.py`〜`test_e2e_v6_8_0_retry_notification_cli_report_wiring_foundation.py`（既存6ファイル、直接の依存元）：いずれも既存件数のままPASS（追加安全確認）
+- Formal Regression：正式Inventory**32ファイル**（v1.11.0＋v5.9.0＋v6.0.0〜v6.29.0）、合計**5376/5376 PASS**、FAIL 0／SKIP 0、全ファイルexit code 0
+
+---
+
 ## [v6.28.0] - 2026-08-14 ★ Article Media Upload State Foundation（DI-6）
 
 > Deferred Item DI-6（Media Upload Retry／Idempotency Foundation）の実装。
