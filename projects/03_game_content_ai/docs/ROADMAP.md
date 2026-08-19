@@ -1,5 +1,7 @@
 # ROADMAP
 
+MVP到達までのRelease計画（6.30以降）は `docs/MVP_COMPLETION_ROADMAP.md` を参照。
+
 ---
 
 ## v1.1.0 — WordPress下書き投稿対応（2026-06-26 完了）
