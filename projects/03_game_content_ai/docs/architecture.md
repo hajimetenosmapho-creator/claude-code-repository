@@ -5677,3 +5677,62 @@ Retry Observability Runtime Wiring（`RetryCompositionRoot` / `RetryRuntimeOrche
 
 詳細は`docs/design/retry_observability_pipeline_foundation.md`
 （Architecture Design・Codex read-only review 4ラウンドの記録を含む）を参照。
+
+---
+
+## Production Canonical Run & Outcome Contract Foundation（`main.py` / `src/execution_history/` / `src/workflow_engine/`、v6.30.0 実装完了）
+
+> **本節は実装完了時点の記録である。新規E2E（`test_e2e_v6_30_0_production_canonical_run_outcome_contract_foundation.py`）は120/120 PASS。run_idベースAPI移行に追従して改訂した既存3ファイル（v2.7.0／v2.8.0／v2.9.0）はそれぞれ162/162・199/199・98/98 PASSで既存件数を維持した。Codex Final Review `APPROVED`（Blocking/Major/Minor/Suggestion いずれも0）。Formal Regression（正式Inventory33ファイル：v1.11.0＋v5.9.0＋v6.0.0〜v6.30.0）は5512/5512 PASS、FAIL 0／SKIP 0、全ファイルexit code 0。Runtime Verificationは全11 scenario PASS、Original Project 911ファイルZero-Diffを確認して完了した。**
+
+Architecture Reconciliation（`docs/MVP_COMPLETION_ROADMAP.md` v1.3）により、Monitor→Trigger→Queue→RetryRuntimeの配線自体は既に完成しており（`scripts/run_retry_runtime.py --loop`による自律的な定期Retryも実行可能）、残るGapは「新規配線の構築」ではなく (a) 本番canonical runの確立、(b) 既存Retry経路の安全性強化、(c) Scheduler駆動方式の決定、の3点であることが判明していた。本Releaseは上記(a)に対応し、既存の`WorkflowEngineExecutor`（v2.7.0）→ NEWSステップ → `main.py` subprocess経路をMVP本番canonical runとして確立し、`main.py`の終了状態が外側`WorkflowExecutionRecord`（Execution History、v2.8.0）へ安全に反映される契約を確定した。責務は「canonical `WorkflowExecutionRecord` → FAILED/TIMEOUT candidateの生成」までとし、FAILED/TIMEOUT candidateをRetry Eligibilityへ渡して判定する責務は6.31に残した（6.30/6.31間の循環依存解消）。
+
+### main.py Outcome Contract
+
+`main()`の戻り値型を`int`化し、内部に散在していた`sys.exit(0)` / `sys.exit(1)`をすべて`return`へ統一、エントリポイントを`if __name__ == "__main__": sys.exit(main())`へ変更した。末尾に以下のOutcome Contract判定を追加した（`wp_skipped_count`は判定に関与しない）：
+
+```
+wp_failed_count == 0                       -> 0  （SUCCESS）
+wp_failed_count > 0 and wp_success_count > 0 -> 20 （PARTIAL）
+それ以外（wp_failed_count > 0 and wp_success_count == 0）-> 21 （ALL_FAILED）
+```
+
+既存の設定エラー・API key未設定・ニュース取得0件等の早期returnは、引き続き`sys.exit()`ではなく`return`経由でexit code 0/1として反映される。
+
+### Canonical Admission（`WorkflowEngineExecutor` / `CanonicalAdmissionFailure`）
+
+`ExecutionHistoryManager.start_run()`の戻り値を`StartRunWriteResult`（`src/execution_history/start_run_write_result.py`、新規frozen dataclass、`run_id` / `acknowledged`）へ変更した。Manager自身は`acknowledged=False`をどう扱うか（例外化するか等）を判断せず、`acknowledged`をそのまま返すのみとし、それを`CanonicalAdmissionFailure`（`src/workflow_engine/workflow_engine_exceptions.py`、新規例外、`run_id` / `reason`を保持）へ変換する判断は`WorkflowEngineExecutor`の責務とした。`reason`は`"EXECUTION_HISTORY_DISABLED"`（canonical non-dry-runでHistory未設定）・`"START_RUN_ACK_FAILED"`（`start_run()`のpersist失敗）の2値。いずれの経路でも`release_run()`が確実に呼ばれることを、Round 10（M9-1対応）で制御フローとして保証した。
+
+Retry Runtime（`RetryExecutor` / `RetryManager`）は`CanonicalAdmissionFailure`に対して新規catch/変換ロジックを追加せず、既存のfail-fastでそのままプロセスへ伝播させる（Codex Ruling A、確定・変更なし）。
+
+### Execution History run_idベースAPI移行
+
+`src/execution_history/execution_history_manager.py`の公開APIを、`WorkflowExecutionRecord`を直接受け渡す方式からrun_id（および`start_step` / `finish_step`ではrun_id + step_name）ベースへ移行した。Manager-owned snapshot・copy-on-write（`start_step`等が返すcandidateのsteps/eventsリストを呼び出し元が変更してもManager内部のsnapshotには影響しない、deep copy契約）、`finish_step` / `finish_run`のack=False時recovery（recovery成功時はTERMINAL(FAILED)へ正規化、recovery自体も失敗した場合はlast-known-good RUNNINGのまま維持）、terminal immutability（TERMINAL状態への再finish_runは同一statusならno-writeでTrue、異なるstatusならFalseを返しwriteしない）、SKIPPED/NOT_REACHED記録が`started_at=None`の正式`StepExecutionRecord`として保存される契約を実装した。`WorkflowEngineResult`には`history_write_failed`フィールド（`default=False`、`to_dict()`も追従）を追加した。
+
+`src/execution_history/execution_history_store.py` / `json_execution_history_store.py`のatomic save契約も強化した：same-directory unique temp file → write → flush → `os.fsync()` → close → `os.replace()`によるatomic置換。`os.fdopen()`失敗時はraw fdをbest-effortで1回だけcloseし二重closeを防止、write/fsync失敗時はwithブロックで確実にfdをcloseしtmpファイルをunlink、`os.replace()`失敗時もtmpファイルをbest-effort unlinkする。cleanup（unlink）自体が失敗してもsave()の戻り値（ack）は変化しない。
+
+### NEWS Outcome Token・subprocess出力のbytes正規化
+
+`src/pipeline/news_pipeline_runner.py`にNEWS Outcome Tokenを追加し、`subprocess.CompletedProcess` / `TimeoutExpired`の`stdout` / `stderr`がbytes（またはNone）の場合でも、`_save_log()`の保存内容・`error_message`診断がstrとして安全に処理されるよう正規化した（`errors="replace"`、Round 10 N9-1対応）。`scripts/run_workflow_engine.py`は、`main.py`のOutcome Contract・`CanonicalAdmissionFailure`に対応する外側exit contractへ更新した。
+
+### Governance Exception — Canonical Admission Failure
+
+`docs/MVP_COMPLETION_ROADMAP.md`の「1 production invocation = 1 canonical retryable record」原則に対する明示的例外を新設した。`CanonicalAdmissionFailure`（`EXECUTION_HISTORY_DISABLED` / `START_RUN_ACK_FAILED`）発生時は、production invocationが開始されたにもかかわらずdurable canonical recordが存在しない状態になりうる。結果として6.31 History scannerから不可視・Retry Eligibility対象外となるが、NEWS/外部side effect開始前のため重複副作用は発生しない。可観測性・追跡可能性の喪失は「実害なし」ではなく**意図的に受容するoperational gap**として、2026-08-20にHuman Gateで承認した（Round 10 APPROVED内容の一部）。atomic admission write中、ackが返る前に親プロセスが中断した場合も同種の状態になり得るため本Exceptionの対象に含める。fallback durable admission markerやadmission failure alertはpost-MVP候補とする。
+
+### Architecture Reviewの経緯（Codex read-only review 3ラウンド）
+
+Claude Code単独設計→Codex read-only independent review（codex-plugin-cc、reasoning effort High）をRound 8〜10実施した。Round 8（Final Integrated Baseline提示）はMajor 4件（M8-1〜M8-4）・Minor 3件（N8-1〜N8-3）・Suggestion 2件（S8-1・S8-2）で`NEEDS_REVISION`。反映後のRound 9はMajor 1件（M9-1：`release_run()`がCanonical Admission Failure全経路で保証されていなかった）・Minor 1件（N9-1：subprocess出力の正規化がcompleted stdoutを含む全ログ経路をカバーしていなかった）で`NEEDS_REVISION`。反映後のRound 10で`APPROVED`（Blocking 0／Major 0／Minor 0／Suggestions 0）に収束した。2026-08-20、Round 10 APPROVED内容と「Canonical Admission FailureのGovernance Exception」をHuman Gateで承認した。
+
+### 既存Architecture Guardへの影響（設計上の既知差分）
+
+`main.py` / `src/execution_history/` / `src/workflow_engine/` / `scripts/run_workflow_engine.py`の無変更を前提とする既存E2E36ファイル（本Releaseでtests/を変更した全ファイル）のArchitecture Guard（`git diff`ベース）が、本Releaseの正式承認済み変更によりFAILする状態が生じたため、各ファイルへ承認済み変更pathのみを対象とする狭い除外編集を適用した。これは`[KI-3]`〜`[KI-29]`（`docs/CHANGELOG.md`）と同型の設計上の既知差分であり、`[KI-30]`として記録した（36ファイル全件の個別実行結果は「Historical Zero-Diff Guard Migration Verification」章を参照）。本質的な制約（`src/execution_history` / `src/workflow_engine`の公開契約・recovery契約・Canonical Admission契約）は、改訂した`test_e2e_v2_7_0` / `test_e2e_v2_8_0` / `test_e2e_v2_9_0`と新規`test_e2e_v6_30_0`で別途確認済みであり、上記36ファイル自体のretry_engine/retry_queue/agent/gate等の固有契約検証ロジックは無改修のまま維持した。
+
+### Test Review・Regressionの実績
+
+新規E2E（`tests/test_e2e_v6_30_0_production_canonical_run_outcome_contract_foundation.py`）は120/120 PASS。run_idベースAPI migrationに追従して改訂した既存3ファイル（`test_e2e_v2_7_0_workflow_engine_foundation.py` / `test_e2e_v2_8_0_execution_history_foundation.py` / `test_e2e_v2_9_0_workflow_monitor_foundation.py`）はそれぞれ162/162・199/199・98/98 PASSで既存件数のまま完走した。Codex Final Code Review `APPROVED`（Blocking 0／Major 0／Minor 0／Suggestion 0）。正式Formal Regression（正式Inventory33ファイル：v1.11.0＋v5.9.0＋v6.0.0〜v6.30.0）は5512/5512 PASS、FAIL 0／SKIP 0、全ファイルexit code 0で完了した。Runtime Verification（Git root外disposable filesystem copy、deterministic fake Anthropic・loopback fake WordPress・local fixture RSS・non-loopback egress denied）は全11 scenario PASS（Outcome 0/1/20/21・Case D（config error、side effect 0）・Case E（side effect後failure）・History recovery・TIMEOUT等）、Original Project 911ファイルはbefore/after manifest（relative path・size・SHA-256）でZero-Diff、Disposable Copy側もallow-listed verification artifact以外のdiff 0を確認した。
+
+### Future Extension
+
+FAILED/TIMEOUT candidateをRetry Eligibilityへ渡す判定（6.31、Retry Lineage, Eligibility & Durable Attempt State）、Scheduler駆動方式の決定。
+
+詳細は`docs/design/production_canonical_run_outcome_contract_foundation.md`
+（Project Charter・Architecture Design・Codex read-only review Round 8〜10の記録、全31章を含む）を参照。

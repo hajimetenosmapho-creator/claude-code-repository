@@ -44,6 +44,14 @@ Architecture Reconciliation（read-only investigation）により、v1.0の前�
 - `python main.py`の直接実行はMVP本番Execution History対象外（開発・手動検証用の経路として扱う）。
 - **1 production invocation = 1 canonical retryable record**。二重record・二重enqueueは禁止。
 
+### Governance Exception — Canonical Admission Failure（2026-08-20 Human Gate承認）
+
+上記「1 production invocation = 1 canonical retryable record」に対する明示的例外。Release 6.30 Architecture Design（Round 10、Codex read-only review `APPROVED`：Blocking 0／Major 0／Minor 0／Suggestions 0）の一部として確定し、人間が承認した。
+
+`CanonicalAdmissionFailure`（`EXECUTION_HISTORY_DISABLED`・`START_RUN_ACK_FAILED`のいずれの理由でも発生しうる）では、production invocationが開始されたにもかかわらずdurable canonical recordが存在しない場合がある。結果：6.31 History scannerから不可視・Retry Eligibility対象にならない・NEWS/external side effect開始前のため重複副作用は発生しない・ただし可観測性は失われる。これは実害なしではなく、**意図的に受容するoperational gap**である。atomic admission write中、ackが返る前に親プロセスが中断した場合も同種の状態になり得るため本Exceptionの対象に含める。fallback durable admission markerやadmission failure alertはpost-MVP候補とする。
+
+詳細契約は `docs/design/production_canonical_run_outcome_contract_foundation.md`（23章）を参照。
+
 ---
 
 ## Release Plan
@@ -81,6 +89,8 @@ Architecture Reconciliation（read-only investigation）により、v1.0の前�
   - 未着手下流（Retry Enqueue／Scheduler等）がZero-Diffのまま維持されること
   - main.pyの直接実行（Execution History対象外の経路）が引き続き無影響で動作すること
 - **Activation**：本Release完了時点では、automatic production RetryとScheduler unattended production dispatchはOFFのまま（Staged Activation Gates章参照）。
+- **Architecture Design Status（2026-08-20追記）**：Architecture Revision Round 10がCodex read-only review（codex-plugin-cc、reasoning effort High）で`APPROVED`（Blocking 0／Major 0／Minor 0／Suggestions 0）となり、Human Gateで承認された（Governance Exceptionを含む）。確定した設計内容は`docs/design/production_canonical_run_outcome_contract_foundation.md`を参照。
+- **Implementation Status（2026-08-22追記）**：実装完了。Codex Final Code Review `APPROVED`（Blocking 0／Major 0／Minor 0／Suggestion 0）。Formal Regression：正式Inventory33ファイル（v1.11.0＋v5.9.0＋v6.0.0〜v6.30.0）、5512/5512 PASS、FAIL 0／SKIP 0、全ファイルexit code 0。Runtime Verification：全11 scenario PASS、Original Project 911ファイルZero-Diff、Disposable Copy allow-list外diff 0、外部I/Oなしを確認。上記Completion Criteriaは全て満たされたことを実測証跡で確認済み。**commit/pushは未実施**（Codex Final Release Review前のHuman Gate待ち）。詳細は`docs/CHANGELOG.md`「[v6.30.0]」を参照。
 
 ### 6.31 — Retry Lineage, Eligibility & Durable Attempt State
 
@@ -353,6 +363,8 @@ Release番号はForecastであり固定約束ではない（Roadmap Governance�
 | 2026-08-19 | v1.2改訂：Codex Review round 2 A-1〜A-6への対応、安全契約の確定 | 6.30〜6.35 | 承認待ち（Codex Review round 3 NEEDS_REVISION） |
 | 2026-08-19 | v1.3改訂：Codex Review round 3 M3-1〜M3-4・N3-1・N3-2・S3-1への対応（6.30/6.31境界修正、retry lineage契約、attempt lifecycle crash boundary、外部副作用fail-closed契約、Staged Activation Gates新設） | 6.30〜6.35 | 正式化前（Codex Review round 4 APPROVED_WITH_SUGGESTIONS） |
 | 2026-08-19 | v1.3正式化：Codex Review round 4 APPROVED_WITH_SUGGESTIONS（Blocking 0／Major 0）を受け正式採用。Minor R4-N1（Production Activation Audit Trail新設）、Suggestion R4-S1（通常retry lifecycleの必須遷移明記）・R4-S2（6.35でのfailure-path E2E再実行明記）を反映 | 6.30〜6.35 | 正式採用（Codex Review round 4 APPROVED_WITH_SUGGESTIONS、以降Codexレビューなし） |
+| 2026-08-20 | Release 6.30 Architecture Design（Architecture Revision Round 8〜10）がCodex read-only review（codex-plugin-cc、reasoning effort High）を経てRound 10で`APPROVED`（Blocking 0／Major 0／Minor 0／Suggestions 0）となった。Canonical Admission FailureのGovernance Exception（「Architecture Reconciliation」章）を含めHuman Gateで承認。設計内容を`docs/design/production_canonical_run_outcome_contract_foundation.md`へ保存。本行はRoadmap本文（Release境界・DoD・Completion Criteria）の変更を伴わないため、文書バージョンはv1.3のまま据え置く | 6.30（本体）、6.31（Governance Exceptionを前提として参照） | 承認済み（Human Gate承認 2026-08-20。実装はまだ未着手） |
+| 2026-08-22 | Release 6.30 実装完了。Codex Final Code Review `APPROVED`（Blocking 0／Major 0／Minor 0／Suggestion 0）。Formal Regression：正式Inventory33ファイル、5512/5512 PASS、FAIL 0／SKIP 0。Runtime Verification：全11 scenario PASS、Original Project 911ファイルZero-Diff。本行もRoadmap本文の変更を伴わないため、文書バージョンはv1.3のまま据え置く | 6.30（本体） | 実装・検証完了（**commit/push未実施、Codex Final Release Review前のHuman Gate待ち**） |
 
 ---
 

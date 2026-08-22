@@ -440,18 +440,22 @@ print()
 print("[テスト22] 既存ファイルの無変更確認（git diff）")
 
 unchanged_paths_re = [
-    "main.py",
+    # main.py（および該当する場合 src/pipeline/news_pipeline_runner.py）は
+    # Release 6.30 Production Canonical Run & Outcome Contract Foundationの
+    # 承認済み変更対象のため、本チェック対象から除外する
+    # （docs/design/production_canonical_run_outcome_contract_foundation.md 24章）。
     "src/execution_history/execution_history_config.py",
     "src/execution_history/execution_history_event.py",
-    "src/execution_history/execution_history_manager.py",
-    "src/execution_history/execution_history_store.py",
-    "src/execution_history/json_execution_history_store.py",
+    # execution_history_manager.py / execution_history_store.py /
+    # json_execution_history_store.py / workflow_engine_executor.py /
+    # workflow_engine_result.py はRelease 6.30 Production Canonical Run &
+    # Outcome Contract Foundationの承認済み変更対象（run_idベースAPI移行・
+    # atomic save化）のため、本チェック対象から除外する
+    # （docs/design/production_canonical_run_outcome_contract_foundation.md 24章）。
     "src/execution_history/step_execution_record.py",
     "src/execution_history/workflow_execution_record.py",
-    "src/workflow_engine/workflow_engine_executor.py",
     "src/workflow_engine/workflow_engine_manager.py",
     "src/workflow_engine/workflow_engine_event.py",
-    "src/workflow_engine/workflow_engine_result.py",
     "src/workflow_monitor/workflow_monitor.py",
     "src/workflow_monitor/workflow_monitor_manager.py",
     "src/workflow_monitor/workflow_monitor_config.py",

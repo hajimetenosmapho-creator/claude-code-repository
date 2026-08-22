@@ -50,6 +50,7 @@ RELEASE_ORDER: tuple[str, ...] = (
     "v6.27.0",
     "v6.28.0",
     "v6.29.0",
+    "v6.30.0",
 )
 
 
@@ -139,6 +140,15 @@ _SOURCE_CHANGE_CONTRIBUTIONS: tuple[tuple[str, str, frozenset], ...] = (
     ("src/image_generation_config", "v6.27.0", frozenset({
         "src/image_generation_config/image_generation_config.py",
     })),
+    # v6.30.0（Production Canonical Run & Outcome Contract Foundation）：
+    # subprocess出力のbytes正規化（src/pipeline/news_pipeline_runner.py）と、
+    # run_workflow_engine.py の Outcome Contract対応（scripts/run_workflow_engine.py）。
+    ("src/pipeline", "v6.30.0", frozenset({
+        "src/pipeline/news_pipeline_runner.py",
+    })),
+    ("scripts", "v6.30.0", frozenset({
+        "scripts/run_workflow_engine.py",
+    })),
 )
 
 # ── tests/ allow-list への寄与（GR-9）。1要素 = 「このtest fileが、
@@ -207,6 +217,64 @@ _TEST_CHANGE_CONTRIBUTIONS: tuple[tuple[str, str], ...] = (
     # 本レジストリ自身の編集（RELEASE_ORDERへの"v6.29.0"追記本体）の2件を登録する。
     ("test_e2e_v6_29_0_retry_observability_pipeline_foundation.py", "v6.29.0"),
     ("zero_diff_guard_registry.py", "v6.29.0"),
+    # v6.30.0（Production Canonical Run & Outcome Contract Foundation）自身。
+    # 新規E2E追加と、その追加・上記2件のsource contributionを許容するための
+    # 本レジストリ自身の編集（RELEASE_ORDERへの"v6.30.0"追記本体）を登録する。
+    (
+        "test_e2e_v6_30_0_production_canonical_run_outcome_contract_foundation.py",
+        "v6.30.0",
+    ),
+    ("zero_diff_guard_registry.py", "v6.30.0"),
+    # v6.30.0：execution_history / workflow_engine のrun_idベースAPI移行に伴い、
+    # 既存E2E（v2.7.0 / v2.8.0 / v2.9.0）もあわせて改訂した3件を登録する。
+    ("test_e2e_v2_7_0_workflow_engine_foundation.py", "v6.30.0"),
+    ("test_e2e_v2_8_0_execution_history_foundation.py", "v6.30.0"),
+    ("test_e2e_v2_9_0_workflow_monitor_foundation.py", "v6.30.0"),
+    # v6.30.0：main.py（Outcome Contract）・src/pipeline/news_pipeline_runner.py
+    # （bytes正規化・NEWS Outcome Token）・src/execution_history/*・
+    # src/workflow_engine/*（run_idベースAPI移行）の承認済み変更により、
+    # これらpathへの「無変更」を独自にhardcodeしていた既存E2E（registry導入
+    # 以前の各Releaseが個別に持つ、本registryを参照しないstandalone guard）が
+    # 副作用として壊れるため、正規のRelease 6.30 Human-directed continuation
+    # としてPROTECTED_PATHS側のcontribution（本ファイル冒頭）とは別に、
+    # 該当pathの検査を狭く除外する改訂を行った既存E2E一式を登録する
+    # （個々の除外方法・対象pathは各ファイル内のコメントを参照）。
+    ("test_e2e_v2_2_0_news_agent_foundation.py", "v6.30.0"),
+    ("test_e2e_v2_3_0_workflow_trigger_agent_foundation.py", "v6.30.0"),
+    ("test_e2e_v2_4_0_publish_trigger_agent_foundation.py", "v6.30.0"),
+    ("test_e2e_v2_5_0_review_trigger_agent_foundation.py", "v6.30.0"),
+    ("test_e2e_v2_6_0_scheduler_agent_foundation.py", "v6.30.0"),
+    ("test_e2e_v3_0_0_retry_engine_foundation.py", "v6.30.0"),
+    ("test_e2e_v3_1_0_retry_queue_foundation.py", "v6.30.0"),
+    ("test_e2e_v3_2_0_retry_queue_integration.py", "v6.30.0"),
+    ("test_e2e_v3_3_0_retry_scheduler_integration.py", "v6.30.0"),
+    ("test_e2e_v3_8_0_retry_engine_event_consumption.py", "v6.30.0"),
+    ("test_e2e_v3_9_0_retry_engine_event_dispatch.py", "v6.30.0"),
+    ("test_e2e_v4_0_0_retry_execution_foundation.py", "v6.30.0"),
+    ("test_e2e_v4_1_0_retry_queue_update_foundation.py", "v6.30.0"),
+    ("test_e2e_v4_2_0_retry_queue_removal_foundation.py", "v6.30.0"),
+    ("test_e2e_v4_3_0_retry_queue_cleanup_foundation.py", "v6.30.0"),
+    ("test_e2e_v4_4_0_retry_queue_notfound_disabled_cleanup_foundation.py", "v6.30.0"),
+    ("test_e2e_v4_5_0_retry_policy_foundation.py", "v6.30.0"),
+    ("test_e2e_v4_6_0_retry_enqueue_trigger_foundation.py", "v6.30.0"),
+    ("test_e2e_v4_7_0_retry_history_foundation.py", "v6.30.0"),
+    ("test_e2e_v4_8_0_retry_enqueue_guard.py", "v6.30.0"),
+    ("test_e2e_v4_9_0_retry_attempt_synchronization_foundation.py", "v6.30.0"),
+    ("test_e2e_v5_0_0_retry_enqueue_guard_refinement_foundation.py", "v6.30.0"),
+    ("test_e2e_v5_1_0_retry_composition_root_foundation.py", "v6.30.0"),
+    ("test_e2e_v5_2_0_retry_runtime_orchestrator_foundation.py", "v6.30.0"),
+    ("test_e2e_v5_3_0_retry_runtime_run_once_foundation.py", "v6.30.0"),
+    ("test_e2e_v5_4_0_retry_runtime_script_entry_point_foundation.py", "v6.30.0"),
+    ("test_e2e_v5_5_0_retry_runtime_loop_foundation.py", "v6.30.0"),
+    ("test_e2e_v5_6_0_retry_runtime_safe_dry_run_foundation.py", "v6.30.0"),
+    ("test_e2e_v5_7_0_retry_runtime_safe_dry_run_wiring_foundation.py", "v6.30.0"),
+    ("test_e2e_v5_8_0_retry_enqueue_trigger_dry_run_foundation.py", "v6.30.0"),
+    ("test_e2e_v5_9_0_retry_runtime_loop_wiring_foundation.py", "v6.30.0"),
+    ("test_e2e_v6_28_0_article_media_upload_state_foundation.py", "v6.30.0"),
+    # v6.27.0自身のZERODIFF-4（main.pyのRELEASE_START_HEAD基準ゼロdiff検査）も、
+    # 既存のv6.28.0での前例と同一パターンでRelease 6.30以降スキップへ改訂した
+    # ため登録する。
+    ("test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py", "v6.30.0"),
 )
 
 

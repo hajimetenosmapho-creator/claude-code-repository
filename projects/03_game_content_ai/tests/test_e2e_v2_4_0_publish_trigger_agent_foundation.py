@@ -604,7 +604,10 @@ print()
 print("[テスト37] 既存ファイルの無変更確認（git diff）")
 
 unchanged_paths = [
-    "main.py",
+    # main.py（および該当する場合 src/pipeline/news_pipeline_runner.py）は
+    # Release 6.30 Production Canonical Run & Outcome Contract Foundationの
+    # 承認済み変更対象のため、本チェック対象から除外する
+    # （docs/design/production_canonical_run_outcome_contract_foundation.md 24章）。
     "src/ai/ai_publish_service.py",
     "src/ai/ai_publish_config.py",
     "src/ai/ai_publish_result.py",
@@ -624,7 +627,6 @@ unchanged_paths = [
     "src/ai/news_agent_config.py",
     "src/ai/workflow_trigger_agent.py",
     "src/ai/workflow_trigger_agent_config.py",
-    "src/pipeline/news_pipeline_runner.py",
     "src/pipeline/workflow_pipeline_runner.py",
     "src/pipeline/pipeline_result.py",
 ]

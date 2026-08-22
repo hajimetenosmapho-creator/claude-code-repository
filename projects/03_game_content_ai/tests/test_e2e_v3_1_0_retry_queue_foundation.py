@@ -409,16 +409,21 @@ print()
 print("[テスト24] 既存ファイルの無変更確認（git diff）")
 
 unchanged_paths_rq = [
-    "main.py",
+    # main.py（および該当する場合 src/pipeline/news_pipeline_runner.py）は
+    # Release 6.30 Production Canonical Run & Outcome Contract Foundationの
+    # 承認済み変更対象のため、本チェック対象から除外する
+    # （docs/design/production_canonical_run_outcome_contract_foundation.md 24章）。
     "src/retry_engine/retry_config.py",
     "src/retry_engine/retry_executor.py",
     "src/retry_engine/retry_manager.py",
     "src/retry_engine/retry_policy.py",
     "src/retry_engine/retry_request.py",
     "src/retry_engine/retry_result.py",
-    "src/execution_history/execution_history_manager.py",
-    "src/execution_history/json_execution_history_store.py",
-    "src/workflow_engine/workflow_engine_executor.py",
+    # execution_history_manager.py / json_execution_history_store.py /
+    # workflow_engine_executor.py はRelease 6.30 Production Canonical Run &
+    # Outcome Contract Foundationの承認済み変更対象（run_idベースAPI移行・
+    # atomic save化）のため、本チェック対象から除外する
+    # （docs/design/production_canonical_run_outcome_contract_foundation.md 24章）。
     "src/workflow_engine/workflow_engine_manager.py",
     "src/workflow_monitor/workflow_monitor.py",
     "src/workflow_monitor/workflow_monitor_manager.py",

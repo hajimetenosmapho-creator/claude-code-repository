@@ -467,7 +467,10 @@ print()
 print("[テスト24] 既存ファイルの無変更確認（git diff）")
 
 unchanged_paths_24 = [
-    "main.py",
+    # main.py（および該当する場合 src/pipeline/news_pipeline_runner.py）は
+    # Release 6.30 Production Canonical Run & Outcome Contract Foundationの
+    # 承認済み変更対象のため、本チェック対象から除外する
+    # （docs/design/production_canonical_run_outcome_contract_foundation.md 24章）。
     "src/workflow_monitor/workflow_monitor.py",
     "src/workflow_monitor/workflow_monitor_manager.py",
     "src/workflow_monitor/workflow_monitor_config.py",

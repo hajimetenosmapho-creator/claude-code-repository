@@ -209,7 +209,11 @@ with patch("pipeline.news_pipeline_runner.subprocess.run", return_value=fake_fai
     result5 = runner.run(params={})
 check_false("5. success=False（returncode!=0）", result5.success)
 check("5. returncode が 1", result5.returncode, 1)
-check("5. error_message が stderr を含む", result5.error_message, "Traceback: something failed")
+# Release 6.30でNEWS_OUTCOME_*token（§6）が付与されるようになったため、
+# error_messageは`{token}\n{stderr}`形式になる（完全一致ではなくcontainsへ変更）。
+check_contains("5. error_message が stderr を含む", result5.error_message, "Traceback: something failed")
+check_contains("5. error_message がNEWS_OUTCOME_GENERIC_FAILURE_EXIT_1で始まる（Release 6.30）",
+                result5.error_message, "NEWS_OUTCOME_GENERIC_FAILURE_EXIT_1")
 
 # テスト6: タイムアウト時
 with patch(
@@ -572,8 +576,18 @@ print()
 
 print("[テスト24] 既存ファイルの無変更確認（git diff）")
 
+# main.py はRelease 6.30 Production Canonical Run & Outcome Contractの対象として
+# 意図的に変更される（main()のsys.exit()をreturnへ統一、WordPress Outcome Contract追加。
+# docs/design/production_canonical_run_outcome_contract_foundation.md 5・24章）。
+# 本チェックを永続的なゼロdiffとして残すと将来の正当な変更を機械的に妨げるため、
+# Release 6.30以降はunchanged_pathsから除外しスキップする
+# （test_e2e_v6_27_0/test_e2e_v6_28_0のZERODIFF-4と同一パターン）。
+check_true(
+    "24. main.pyの差分確認はRelease 6.30以降の対象外（意図的な変更のため、スキップ）",
+    True,
+)
+
 unchanged_paths = [
-    "main.py",
     "src/collector.py",
     "src/keyword_filter.py",
     "src/duplicate_filter.py",

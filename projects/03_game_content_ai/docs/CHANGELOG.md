@@ -359,6 +359,200 @@
 - **対応状況**：**解消済み。** Release 6.1 Regression Test Maintenance（2026-07-14、Documentation/テストのみのFast Track、本番コード変更なし）で、`tests/test_e2e_v5_9_0_retry_runtime_loop_wiring_foundation.py` / `tests/test_e2e_v6_0_0_retry_runtime_lock_foundation.py`双方の`run_main_with_argv()`ヘルパーを、`run_retry_runtime.time.sleep`の直接monkeypatchから、`run_retry_runtime.RetryRuntimeShutdown`クラス自体をFake（`_FakeShutdown`）へ差し替える方式へ変更した（本Releaseの新規テストと同じ方式）。`_FakeShutdown.interruptible_sleep()`が従来の`sleep_fn`（`_make_counting_sleep()`が返す関数）へそのまま委譲するため、テスト意図・カバレッジ・Assertion・テストシナリオはいずれも変更していない（v5.9.0テスト13のみ、確認対象の文字列リテラルを`sleep_fn=time.sleep`から`sleep_fn=shutdown.interruptible_sleep`へ実装詳細の変更に追従して更新した）。実測の結果、`tests/test_e2e_v5_9_0_*.py`：**64/64 PASS**（元の記録どおり）、`tests/test_e2e_v6_0_0_*.py`：**43/43 PASS**（元の記録どおり）と、いずれもクラッシュなく完走し、元のPASS件数が回復したことを確認した
 - **今後の対応**：不要（本エントリで解消済み）
 
+### [KI-30] Release 6.30（Production Canonical Run & Outcome Contract Foundation）の承認済み変更により、`main.py` / `src/execution_history` / `src/workflow_engine` / `scripts/run_workflow_engine.py`の無変更を前提としていた既存E2E36ファイル（本Releaseでtests/を変更した全ファイル）のArchitecture Guardが構造的にFAILする状態が生じたため、各ファイルへ狭い除外編集を適用した（設計上の意図的な差分・対応記録）
+
+- **発見日**：2026-08-20（Release 6.30 Implementation工程実施時）。**2026-08-22、Codex Final Release Review Major指摘を受けた再確認で、当初「17ファイル」としていた対象範囲が実際には本Releaseでtests/配下を変更した全36ファイルに及んでいたことが判明し、本エントリのタイトル・対象範囲を訂正した**（訂正前の版は下記「訂正履歴」参照）。
+- **対象**：`git diff --quiet`ベースの無変更確認アサーションを内包し、Release 6.30で狭い除外編集（`unchanged_paths`等からの承認済み変更pathの削除、またはv6.27.0のようなRELEASE_START_HEAD基準チェックのスキップ化）を受けた既存E2E36ファイル全件。個別のファイル名・除外箇所・実行結果は「Historical Zero-Diff Guard Migration Verification」（`docs/design/production_canonical_run_outcome_contract_foundation.md` 32章）に完全な一覧を記録した。うち以下15ファイルは、除外編集後もRelease 6.30とは無関係のbaseline時点から独立した既存差分が残る（詳細は下記「対応状況」）：
+  `test_e2e_v3_0_0_retry_engine_foundation.py`（テスト22）／
+  `test_e2e_v3_2_0_retry_queue_integration.py`（テスト14）／
+  `test_e2e_v3_8_0_retry_engine_event_consumption.py`（テスト23）／
+  `test_e2e_v3_9_0_retry_engine_event_dispatch.py`（テスト19）／
+  `test_e2e_v4_0_0_retry_execution_foundation.py`（テスト24）／
+  `test_e2e_v4_1_0_retry_queue_update_foundation.py`（テスト21）／
+  `test_e2e_v4_2_0_retry_queue_removal_foundation.py`（テスト23）／
+  `test_e2e_v4_3_0_retry_queue_cleanup_foundation.py`（テスト31）／
+  `test_e2e_v4_4_0_retry_queue_notfound_disabled_cleanup_foundation.py`（テスト37）／
+  `test_e2e_v4_5_0_retry_policy_foundation.py`（テスト4）／
+  `test_e2e_v5_1_0_retry_composition_root_foundation.py`（テスト19）／
+  `test_e2e_v5_2_0_retry_runtime_orchestrator_foundation.py`（テスト24）／
+  `test_e2e_v5_3_0_retry_runtime_run_once_foundation.py`（テスト28）／
+  `test_e2e_v5_4_0_retry_runtime_script_entry_point_foundation.py`（テスト15・16）／
+  `test_e2e_v5_6_0_retry_runtime_safe_dry_run_foundation.py`（テスト23）。
+  `test_e2e_v4_7_0_retry_history_foundation.py`（テスト29相当）・
+  `test_e2e_v5_8_0_retry_enqueue_trigger_dry_run_foundation.py`（テスト17相当）は、
+  除外編集前は同種のFAILが1件あったが除外編集後は0 FAILで完走することを確認した
+  （残り21ファイルの一部として下記に記載）。
+  残り21ファイルの内訳：`test_e2e_v2_7_0_workflow_engine_foundation.py`・`test_e2e_v2_8_0_execution_history_foundation.py`・`test_e2e_v2_9_0_workflow_monitor_foundation.py`（run_idベースAPI移行に伴う改訂、既存意味は維持。それぞれ162/162・199/199・98/98 PASSで別途本CHANGELOGに記載済み）と、`test_e2e_v2_2_0_news_agent_foundation.py`〜`test_e2e_v2_6_0_scheduler_agent_foundation.py`・`test_e2e_v3_1_0_retry_queue_foundation.py`・`test_e2e_v3_3_0_retry_scheduler_integration.py`・`test_e2e_v4_6_0_retry_enqueue_trigger_foundation.py`・`test_e2e_v4_7_0_retry_history_foundation.py`・`test_e2e_v4_8_0_retry_enqueue_guard.py`・`test_e2e_v4_9_0_retry_attempt_synchronization_foundation.py`・`test_e2e_v5_0_0_retry_enqueue_guard_refinement_foundation.py`・`test_e2e_v5_5_0_retry_runtime_loop_foundation.py`・`test_e2e_v5_7_0_retry_runtime_safe_dry_run_wiring_foundation.py`・`test_e2e_v5_8_0_retry_enqueue_trigger_dry_run_foundation.py`・`test_e2e_v5_9_0_retry_runtime_loop_wiring_foundation.py`・`test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py`・`test_e2e_v6_28_0_article_media_upload_state_foundation.py`（本エントリで新たに個別実行確認、詳細は下記）
+- **症状（狭い除外編集を適用する前の状態）**：上記各テストは`unchanged_paths`リスト等に`main.py` / `src/execution_history/*` / `src/workflow_engine/*` / `scripts/run_workflow_engine.py`を含んでおり、Release 6.30の承認済み変更（Outcome Contract・run_idベースAPI移行・Canonical Admission実装等）によりこれらのpathの`git diff`が非ゼロを返すため、除外編集を適用しなければ機械的にFAILする状態だった。
+- **原因**：Release 6.30（`docs/design/production_canonical_run_outcome_contract_foundation.md`、Architecture Revision Round 10・Codex read-only review `APPROVED`）で、`main.py`のOutcome Contract（sys.exit→return統一、PARTIAL/ALL_FAILED追加）・`src/execution_history/`のrun_idベースAPI移行（Manager-owned snapshot・atomic save・recovery契約）・`src/workflow_engine/workflow_engine_executor.py`のCanonical Admission実装・`workflow_engine_result.py`への`history_write_failed`フィールド追加・`scripts/run_workflow_engine.py`のOutcome Contract対応を、いずれも正式承認済みの設計として実装した。上記36ファイルは、それぞれ自身の主題（news/review/publish/scheduler agent・retry_engine／retry_queue／retry_composition／retry_runtime系・image_generation_gate・article_media_upload_state等）とは別に、`git diff`ベースのArchitecture Guardとして「これらのpathに変更がないこと」をそのRelease時点の事実として固定していたものであり、`[KI-3]`〜`[KI-29]`と同型の既知差分である
+- **対応状況**：**対応済み。** `[KI-3]`以降の確立された方針（本質的な制約は残し、時点固定のArchitecture Guardのみ調整する）を踏襲し、上記36ファイルのうちv2.7.0/v2.8.0/v2.9.0の3ファイルを除く33ファイルについて、`unchanged_paths`リスト（またはv6.27.0の`RELEASE_START_HEAD`基準チェック）から本Releaseで承認済みの変更対象pathのみを除外するコメント付き最小差分を適用した（各ファイル1箇所、該当pathを削除しRelease 6.30・設計doc24章への参照コメントを追加。他のアサーション・各ファイル固有の契約検証ロジックはいずれも無改修）。残るv2.7.0/v2.8.0/v2.9.0の3ファイルは、単純な除外編集ではなく、run_idベースAPI移行（27章）に伴う全面改訂を受けている（既存意味は維持、詳細は下記）。この除外編集は`tests/zero_diff_guard_registry.py`の`_TEST_CHANGE_CONTRIBUTIONS`へ`"v6.30.0"`として登録済み。実測結果は「Historical Zero-Diff Guard Migration Verification」（`docs/design/production_canonical_run_outcome_contract_foundation.md` 32章、36ファイル全件の個別実行ログを含む）を参照。除外編集後は上記36ファイルいずれも当該guard自体はFAILしない（ただしv4.8.0・v4.9.0は下記の通りguard自体に実行が到達しないため「FAILしない」ことを直接確認できたわけではなく、guard未到達である点に注意）。うち15ファイルに残るFAILはRelease 6.30とは無関係のbaseline時点から独立した既存差分（v3.0.0テスト4・21×2・24、v3.2.0テスト16・17＝`[KI-7]`既存差分、v3.8.0テスト24・25、v3.9.0テスト20・21、v4.0.0テスト25・26、v4.1.0テスト22・23、v4.2.0テスト24・25、v4.3.0テスト32・33、v4.4.0テスト38・39、v4.5.0テスト11、v5.1.0テスト15・20、v5.2.0テスト18・22・23・25、v5.3.0テスト2、v5.4.0テスト7、v5.6.0テスト16・18・19・20）であることを32章の個別実行結果で確認した。残り21ファイルのうちv2.2.0〜v2.6.0・v4.7.0・v5.7.0・v5.8.0・v3.1.0・v5.9.0・v6.27.0・v6.28.0は0 FAILで完走し、v3.3.0（テスト17）・v4.6.0（テスト12・16・18）・v4.8.0（テスト1到達前に`RetryEnqueueGuard.decide()`が`has_history`引数を受け付けないことによる`TypeError`でクラッシュし、guard自体へは未到達）・v4.9.0（テスト2到達前に`_AlwaysAllowGuard.decide()`が`next_attempt`引数を受け付けないことによる`TypeError`でクラッシュし、guard自体へは未到達）・v5.0.0（テスト16・22）・v5.5.0（テスト16）には、いずれもRelease 6.30が触れていないsource（`src/retry_enqueue_trigger/`等、本Releaseの変更対象外であることをgit diffで確認済み）に起因するpre-existing差分が残るが、既存KIのどれにも対応しない未文書化の差分である。Architecture DesignはRound 10でCodex read-only review `APPROVED`（Blocking 0／Major 0／Minor 0／Suggestions 0）を取得済みであり、Human Gateで承認済み。本質的な制約（`src/execution_history` / `src/workflow_engine`の公開契約・recovery契約・Canonical Admission契約）は、改訂した`tests/test_e2e_v2_7_0_workflow_engine_foundation.py`（162/162 PASS）・`tests/test_e2e_v2_8_0_execution_history_foundation.py`（199/199 PASS）・`tests/test_e2e_v2_9_0_workflow_monitor_foundation.py`（98/98 PASS）、および新規`tests/test_e2e_v6_30_0_production_canonical_run_outcome_contract_foundation.py`（120/120 PASS）で別途確認済み
+- **今後の対応**：不要（本エントリで対応・検証を確定）。将来Releaseで`src/execution_history` / `src/workflow_engine` / `main.py` / `scripts/run_workflow_engine.py`側にさらに変更が入るたびに同種の除外編集が必要になりうるが、その都度Charter/Design側で「どのファイルが変更対象として承認されているか」を確認し、本エントリと同じ手順（狭い除外編集＋registry登録＋個別実行確認）を踏めばよい。なお、上記「baseline時点から独立した既存差分」とした項目群は、`[KI-9]`〜`[KI-17]`等の既存Known Issueで一部カバーされているものの、v3.0.0テスト24（`dry_run`時`outcome`）・v5.6.0テスト16/18/19/20・v3.3.0テスト17・v4.6.0テスト12/16/18・v4.8.0テスト1・v4.9.0テスト2・v5.0.0テスト16/22・v5.5.0テスト16等、既存Known Issueのどれにも対応しない未文書化の差分も含まれる。これらは本Release（6.30）が発生源ではないため本エントリの対応範囲外とし、別途整理を要する課題として記録するに留める
+- **訂正履歴（2026-08-22、1回目）**：Codex Final Release Review（read-only、reasoning effort High）のMajor指摘「対象17ファイルの一部の回帰実行証跡が個別に明示されていない」を受けて全36ファイルを個別に再実行した結果、当初「17ファイル」としていた対象範囲の記載が実態（全36ファイル）と一致していなかったことが判明した。本エントリのタイトル・対象・対応状況を実測に基づき訂正した。訂正前は「17ファイル」のみを対象と記載し、残り19ファイル（うちv2.7.0/v2.8.0/v2.9.0を除く16ファイル）についてはCHANGELOG上に記載がなかった
+- **訂正履歴（2026-08-22、2回目）**：Codex Final Release Review再実施（独立新規スレッド、read-only、reasoning effort High）のMinor指摘「`test_e2e_v4_7_0` / `test_e2e_v5_8_0`は32章の実測（0 FAIL）と本エントリの記載（残るFAILがある17ファイルに含まれる）が矛盾する」を受け、両ファイルを「残るFAILがある」リストから除外し（17→15ファイル）、「残り19ファイル」を「残り21ファイル」へ訂正した。また同レビューの「v4.8.0/v4.9.0はguardへ到達する前にクラッシュしており、`FAILしない`という表現は誤解を招く」という指摘を受け、両ファイルの表現を「guard自体はFAILしない」から「guard未到達」へ訂正した。なお同レビューでは、本エントリとは別にRelease 6.30 Implementation工程中に追加した`src/workflow_engine/workflow_engine_manager.py`のdocstring修正が、本エントリで記録した狭い除外編集の対象外だったため既存guard（13ファイル）を新たに破壊するというMajor指摘も受けたが、これは当該docstring修正自体を取り消すことで対応した（`workflow_engine_manager.py`はRelease 6.30の変更対象に含まれない）
+
+---
+
+## [v6.30.0] - 2026-08-22 ★ Production Canonical Run & Outcome Contract Foundation
+
+> Architecture Reconciliation（Roadmap v1.3）により、Monitor→Trigger→Queue→
+> RetryRuntimeの配線自体は既に完成しており、残るGapは「新規配線の構築」では
+> なく本番canonical runの確立だと判明した。本Releaseは既存の
+> `WorkflowEngineExecutor`（v2.7.0）→ NEWSステップ → `main.py` subprocess
+> 経路をMVP本番canonical runとして確立し、`main.py`の終了状態が外側
+> `WorkflowExecutionRecord`（Execution History、v2.8.0）へ安全に反映される
+> 契約を確定した。責務は「canonical `WorkflowExecutionRecord` →
+> FAILED/TIMEOUT candidateの生成」までとし、Retry Eligibilityへの引き渡し
+> 判定自体は6.31へ残した（6.30/6.31間の循環依存解消）。
+>
+> Architecture DesignはClaude Code単独設計→Codex read-only independent
+> review（codex-plugin-cc、reasoning effort High）をRound 8〜10実施して
+> 収束した。Round 8はMajor 4件（M8-1〜M8-4）・Minor 3件・Suggestion 2件で
+> `NEEDS_REVISION`、反映後のRound 9はMajor 1件（M9-1：`release_run()`が
+> Canonical Admission Failure全経路で保証されていなかった）・Minor 1件
+> （N9-1：subprocess出力正規化の対象漏れ）で`NEEDS_REVISION`、反映後の
+> Round 10で`APPROVED`（Blocking 0／Major 0／Minor 0／Suggestions 0）に
+> 収束した。2026-08-20、Round 10 APPROVED内容と23章
+> 「Canonical Admission FailureのGovernance Exception」をHuman Gateで承認。
+>
+> 実装は本番Pythonコード12ファイル（新規2ファイルを含む）に及んだ：
+> `main.py`のOutcome Contract（`sys.exit()`散在を廃し
+> `return`→`sys.exit(main())`へ統一、shell exit 0/1/20/21の確定）、
+> `src/execution_history/execution_history_manager.py` /
+> `execution_history_store.py` / `json_execution_history_store.py` /
+> `__init__.py`のrun_idベースAPI移行（`start_run` /
+> `start_step` / `finish_step` / `finish_run` / `release_run`が
+> `WorkflowExecutionRecord`ではなくrun_id/run_id+step_nameを受け取る形へ
+> 変更、Manager-owned snapshot・copy-on-write・atomic save・
+> finish_step/finish_run recovery・terminal immutability・
+> `history_write_failed`契約を含む）、新規
+> `src/execution_history/start_run_write_result.py`
+> （`StartRunWriteResult`frozen dataclass）、`src/workflow_engine/
+> workflow_engine_executor.py` / `__init__.py`のCanonical Admission実装
+> （`start_run()`の`ack=False`を新規例外`CanonicalAdmissionFailure`へ
+> 変換し fail-closed で伝播）、新規`src/workflow_engine/
+> workflow_engine_exceptions.py`（`CanonicalAdmissionFailure`定義）、
+> `workflow_engine_result.py`への`history_write_failed`フィールド追加、
+> `scripts/run_workflow_engine.py`のOutcome Contract対応、
+> `src/pipeline/news_pipeline_runner.py`のNEWS Outcome Token・subprocess
+> stdout/stderrのbytes正規化。
+>
+> Retry Runtime（`RetryExecutor` / `RetryManager`）は`CanonicalAdmissionFailure`
+> に対して新規catch/変換ロジックを追加せず、既存のfail-fastでそのまま
+> プロセスへ伝播させる方針（Codex Ruling A、確定・変更なし）とした。
+>
+> Governance Exceptionとして、Roadmap v1.3の「1 production invocation =
+> 1 canonical retryable record」に対する明示的例外を新設した。
+> `CanonicalAdmissionFailure`（`EXECUTION_HISTORY_DISABLED` /
+> `START_RUN_ACK_FAILED`）発生時、production invocationは開始済みだが
+> durable canonical recordが存在しない状態が起こりうる。この場合、6.31
+> History scannerから不可視・Retry Eligibility対象外となるが、NEWS/外部
+> side effect開始前のため重複副作用は発生しない。可観測性の喪失は
+> 「意図的に受容するoperational gap」として、`docs/MVP_COMPLETION_ROADMAP.md`
+> の「Architecture Reconciliation」章にも本Exceptionへの参照を追記した
+> （2026-08-20 Human Gate承認）。
+>
+> `[KI-30]`（本CHANGELOG冒頭）に記載のとおり、`main.py` /
+> `src/execution_history` / `src/workflow_engine` /
+> `scripts/run_workflow_engine.py`の無変更を前提とする既存E2E36ファイル
+> （本Releaseで`tests/`配下を変更した全ファイル）のArchitecture Guardが
+> 本Releaseの正当な変更によりFAILする状態が生じた（設計上の意図的な差分、
+> `[KI-3]`〜`[KI-29]`と同型）。各ファイルへ承認済み変更pathのみを対象と
+> する狭い除外編集を適用し、当該guard自体はFAILしない状態にした
+> （個別実行結果は`docs/design/production_canonical_run_outcome_contract_foundation.md`
+> 32章）。本質的な制約は改訂した`test_e2e_v2_7_0` / `test_e2e_v2_8_0` /
+> `test_e2e_v2_9_0`と新規`test_e2e_v6_30_0`で別途確認済みであり、上記36
+> ファイルの各ファイル固有の契約検証ロジックは無改修のまま維持し、本
+> Known Issueに記録する方針とした。
+
+### Added
+
+- `src/execution_history/start_run_write_result.py` 新規作成。
+  `StartRunWriteResult`（frozen dataclass、`run_id` / `acknowledged`）は
+  `ExecutionHistoryManager.start_run()`の戻り値。Manager自身は
+  `acknowledged=False`をどう扱うか（例外化するか等）を判断せず、
+  呼び出し側（`WorkflowEngineExecutor`）の責務とする。
+- `src/workflow_engine/workflow_engine_exceptions.py` 新規作成。
+  `CanonicalAdmissionFailure`（`run_id` / `reason`を保持する例外）は、
+  canonical runがExecution Historyへ受理されなかったことを表す。
+  `reason`は`"EXECUTION_HISTORY_DISABLED"` /
+  `"START_RUN_ACK_FAILED"`の2値を想定する。
+- `docs/design/production_canonical_run_outcome_contract_foundation.md`
+  新規作成（Architecture Revision Round 8〜10、Codex read-only review
+  `APPROVED`：Blocking 0／Major 0／Minor 0／Suggestions 0。Round 10時点
+  では全31章、Governance Exception・Zero-Diff境界・既存test/API
+  migration inventory・Runtime Verification E2E baseline（63項目）を
+  含む。実装完了後の2026-08-22、Final Release Review対応として32章
+  「Historical Zero-Diff Guard Migration Verification」を追記した）。
+- `tests/test_e2e_v6_30_0_production_canonical_run_outcome_contract_foundation.py`
+  新規作成（design doc 28章のE2Eシナリオに対応、**120/120 PASS**）。
+
+### Changed
+
+- `main.py`：`main()`の戻り値型を`int`化し、内部の`sys.exit(0/1)`散在を
+  すべて`return`へ統一。エントリポイントを`sys.exit(main())`へ変更。
+  末尾にOutcome Contract判定を追加（`wp_failed_count==0` → 0、
+  `wp_failed_count>0 and wp_success_count>0` → 20（PARTIAL）、
+  それ以外 → 21（ALL_FAILED）。`wp_skipped_count`は判定に関与しない）。
+- `src/execution_history/execution_history_manager.py`：公開APIを
+  run_idベースへ移行（`start_run`が`StartRunWriteResult`を返す、
+  `start_step` / `finish_step` / `finish_run`がrun_id・step_nameで
+  操作、`release_run`）。Manager-owned snapshot・copy-on-write（steps/
+  eventsのdeep copy）・`finish_step`/`finish_run`のack=False時recovery
+  （last-known-good RUNNINGへのfallback含む）・terminal immutability・
+  SKIPPED/NOT_REACHED記録の`started_at=None`契約を実装。
+- `src/execution_history/execution_history_store.py` /
+  `json_execution_history_store.py`：atomic save契約を強化
+  （same-directory unique temp → write → flush → fsync → close →
+  `os.replace()`。書き込み系全段階のOSErrorでfdの確実なclose・
+  tmpファイルのbest-effort unlinkを保証。cleanup自体の失敗はack戻り値
+  に影響しない）。
+- `src/workflow_engine/workflow_engine_executor.py`：Canonical
+  Admission実装。`start_run()`の`acknowledged=False`を
+  `CanonicalAdmissionFailure`へ変換してfail-closedで伝播。
+  History未設定×非dry-runでも同様に`EXECUTION_HISTORY_DISABLED`として
+  fail-closed。`release_run()`がCanonical Admission Failure全経路
+  （Round 10でM9-1修正）で確実に呼ばれるよう制御フローを整理。
+- `src/workflow_engine/workflow_engine_result.py`：`history_write_failed`
+  フィールド（`default=False`）を追加。`to_dict()`も追従して更新。
+- `scripts/run_workflow_engine.py`：`main.py`のOutcome Contract・
+  Canonical Admission Failureに対応する外側exit contractを実装。
+- `src/pipeline/news_pipeline_runner.py`：NEWS Outcome Token追加、
+  `subprocess.CompletedProcess` / `TimeoutExpired`の`stdout` /
+  `stderr`がbytesまたはNoneの場合でも例外を起こさず安全に文字列化する
+  正規化処理を追加（Round 10 N9-1対応）。
+- `tests/test_e2e_v2_7_0_workflow_engine_foundation.py` /
+  `test_e2e_v2_8_0_execution_history_foundation.py` /
+  `test_e2e_v2_9_0_workflow_monitor_foundation.py`：run_idベースAPIへの
+  migrationに追従して改訂（既存意味は維持）。それぞれ
+  **162/162 PASS** / **199/199 PASS** / **98/98 PASS**。
+- `tests/zero_diff_guard_registry.py`：`RELEASE_ORDER`へ`"v6.30.0"`を
+  append-onlyで追記。`_SOURCE_CHANGE_CONTRIBUTIONS`へ
+  `src/pipeline`・`scripts`の2件、`_TEST_CHANGE_CONTRIBUTIONS`へ新規
+  E2E自身・本レジストリ自身・run_idベースAPI移行に追従した既存3件
+  （v2.7.0/v2.8.0/v2.9.0）・既存33ファイル（v6.27.0のZERODIFF-4改訂を
+  含む）のArchitecture Guard除外改訂に伴う登録を追加（計38件）。
+  `PROTECTED_PATHS` / `BASELINE_COMMITS`・既存recordはいずれも無改修。
+- `docs/MVP_COMPLETION_ROADMAP.md`：「Architecture Reconciliation」章へ
+  Governance Exceptionを追記。6.30セクションへArchitecture Design
+  Status（Round 10 APPROVED、Human Gate承認）を追記。
+
+### Tested
+
+- `test_e2e_v6_30_0_production_canonical_run_outcome_contract_foundation.py`：
+  **120/120 PASS**
+- `test_e2e_v2_7_0_workflow_engine_foundation.py`：162/162 PASS（run_idベースAPI migration）
+- `test_e2e_v2_8_0_execution_history_foundation.py`：199/199 PASS（run_idベースAPI migration）
+- `test_e2e_v2_9_0_workflow_monitor_foundation.py`：98/98 PASS（run_idベースAPI migration）
+- Code Review：Codex Final Review `APPROVED`（Blocking 0／Major 0／Minor 0／Suggestion 0）
+- Formal Regression：正式Inventory**33ファイル**（v1.11.0＋v5.9.0＋v6.0.0〜v6.30.0）、合計**5512/5512 PASS**、FAIL 0／SKIP 0、全ファイルexit code 0
+- Runtime Verification：Git root外disposable copyでのE2Eシナリオ**全11 scenario PASS**
+  （Outcome 0/1/20/21・Case D（config error、side effect 0）・
+  Case E（side effect後failure）・History recovery・TIMEOUT等）。
+  Original Project 911ファイルZero-Diff（before/after manifest、relative
+  path・size・SHA-256）、Disposable Copy側もallow-list外diff 0、
+  外部I/Oなし（deterministic fake Anthropic・loopback fake WordPress・
+  local fixture RSS・non-loopback egress denied）を確認
+
 ---
 
 ## [v6.29.0] - 2026-08-17 ★ Retry Observability Pipeline Foundation

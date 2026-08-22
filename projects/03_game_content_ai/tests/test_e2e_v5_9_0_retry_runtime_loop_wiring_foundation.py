@@ -565,13 +565,31 @@ unchanged_paths_32 = [
     "src/retry_queue",
     "src/retry_history",
     "src/workflow_monitor",
-    "src/workflow_engine",
     "src/scheduler",
     "src/retry_scheduler_source",
     "src/retry_scheduler_decision",
     "src/ai",
-    "src/execution_history",
 ]
+
+# src/workflow_engine と src/execution_history は、Release 6.30 Production
+# Canonical Run & Outcome Contract Foundationにより承認済み変更対象ファイルを
+# 持つ（run_idベースAPI移行・atomic save化）。ディレクトリ全体のno-diff要求は
+# 撤廃せず、承認済み変更ファイルを除いた残り全体が引き続き無変更であることを
+# 要求する（docs/design/production_canonical_run_outcome_contract_foundation.md
+# 24章）。
+_ALLOWED_WORKFLOW_ENGINE_CHANGES_32 = {
+    "src/workflow_engine/__init__.py",
+    "src/workflow_engine/workflow_engine_executor.py",
+    "src/workflow_engine/workflow_engine_result.py",
+    "src/workflow_engine/workflow_engine_exceptions.py",
+}
+_ALLOWED_EXECUTION_HISTORY_CHANGES_32 = {
+    "src/execution_history/__init__.py",
+    "src/execution_history/execution_history_manager.py",
+    "src/execution_history/execution_history_store.py",
+    "src/execution_history/json_execution_history_store.py",
+    "src/execution_history/start_run_write_result.py",
+}
 
 if git_available:
     for rel_path in unchanged_paths_32:
@@ -580,6 +598,34 @@ if git_available:
             cwd=str(PROJECT_ROOT), capture_output=True, timeout=10,
         )
         check_true(f"32. {rel_path} に変更がない（git diff）", completed.returncode == 0)
+
+    _prefix_proc_32 = subprocess.run(
+        ["git", "rev-parse", "--show-prefix"],
+        cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=10,
+    )
+    _repo_prefix_32 = _prefix_proc_32.stdout.strip()
+    for _label, _dir, _allowed in (
+        ("workflow_engine", "src/workflow_engine", _ALLOWED_WORKFLOW_ENGINE_CHANGES_32),
+        ("execution_history", "src/execution_history", _ALLOWED_EXECUTION_HISTORY_CHANGES_32),
+    ):
+        _dir_diff = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all", "--", _dir],
+            cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=10,
+        )
+        _dir_changed = set()
+        for line in _dir_diff.stdout.splitlines():
+            if not line.strip():
+                continue
+            _p = line[3:].strip()
+            if _repo_prefix_32 and _p.startswith(_repo_prefix_32):
+                _p = _p[len(_repo_prefix_32):]
+            _dir_changed.add(_p)
+        check_true(
+            f"32. {_dir}の差分はRelease 6.30承認済み変更のみに限定される",
+            # Release 6.30 Code Review Minor対応: git command自体の失敗(非0終了)で
+            # 空stdoutが返るfail-openを防ぐため、returncode==0を明示的に要求する。
+            _dir_diff.returncode == 0 and _dir_changed <= _allowed,
+        )
 else:
     check_true("32. gitが利用できないため無変更確認をスキップ", True)
 print()

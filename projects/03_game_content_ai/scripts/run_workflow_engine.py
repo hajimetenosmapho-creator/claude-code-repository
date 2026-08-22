@@ -72,6 +72,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 from ai import AgentConfig
+from execution_history import ExecutionHistoryConfig
 from scheduler import (
     InMemorySchedulerRepository,
     SchedulerEngine,
@@ -82,6 +83,7 @@ from scheduler import (
 from workflow_engine import (
     SOURCE_MANUAL,
     SOURCE_SCHEDULER,
+    CanonicalAdmissionFailure,
     NullWorkflowEngineManager,
     WorkflowEngineConfig,
     WorkflowEngineEvent,
@@ -149,7 +151,7 @@ def print_result(result) -> None:
     print("=" * 50)
     print(
         f"Workflow Engine 完了: overall_success={result.overall_success}, "
-        f"stopped_early={result.stopped_early}"
+        f"stopped_early={result.stopped_early}, history_write_failed={result.history_write_failed}"
     )
     print("=" * 50)
 
@@ -169,9 +171,9 @@ def print_result(result) -> None:
         print(f"  警告: {warning}")
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Workflow Engine 実行スクリプト（v2.7.0）"
+        description="Workflow Engine 実行スクリプト（v2.7.0、Release 6.30でOutcome Contract対応）"
     )
     parser.add_argument(
         "--dry-run",
@@ -201,21 +203,42 @@ def main():
 
     manager = WorkflowEngineManager.from_config(agent_config, workflow_engine_config)
 
+    # 1. gate OFF -> successful no-op -> exit 0
     if isinstance(manager, NullWorkflowEngineManager):
         print("[情報] Workflow Engineが無効です。")
         print(
             "  AI_AGENT_ENABLED=true と WORKFLOW_ENGINE_ENABLED=true を"
             " .env に設定してください（二重ゲート）。"
         )
-        return
+        return 0
 
+    # 2. resolve_event() 対象なし -> no-op -> exit 0
     event = resolve_event(args)
     if event is None:
-        return
+        return 0
 
-    result = manager.run(event, dry_run=args.dry_run)
+    # 3. canonical non-dry-run かつ History disabled -> early diagnostic -> exit 1
+    #    dry-runは History OFF でも通す（Executor側Invariantが権威。本チェックは早期診断）
+    history_enabled = ExecutionHistoryConfig.from_env(project_root=base_dir).is_ready()
+    if not args.dry_run and not history_enabled:
+        print("[エラー] canonical non-dry-run実行には EXECUTION_HISTORY_ENABLED=true が必要です。")
+        return 1
+
+    # 4. Executor側 Invariant（CanonicalAdmissionFailure）が権威。3.は早期診断にすぎない。
+    try:
+        result = manager.run(event, dry_run=args.dry_run)
+    except CanonicalAdmissionFailure as e:
+        print(f"[エラー] Canonical Admission Failure: run_id={e.run_id}, reason={e.reason}")
+        print("  NEWS/Agentは開始されていません。")
+        return 1
+
     print_result(result)
+
+    # 6. overall_success AND NOT history_write_failed のみ 0
+    if result.overall_success and not result.history_write_failed:
+        return 0
+    return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

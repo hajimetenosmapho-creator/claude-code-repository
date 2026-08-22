@@ -254,7 +254,7 @@ def _handle_featured_media_failure(
     )
 
 
-def main():
+def main() -> int:
     start_time = time.time()
     started_at_iso = datetime.now(timezone.utc).astimezone().isoformat()
 
@@ -272,13 +272,13 @@ def main():
 
     if max_articles is not None and max_articles < 0:
         print("エラー: --max-articles には 0 以上の整数を指定してください。")
-        sys.exit(1)
+        return 1
 
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         print("エラー: ANTHROPIC_API_KEY が設定されていません。")
         print(".env ファイルに ANTHROPIC_API_KEY=your_key を追加してください。")
-        sys.exit(1)
+        return 1
 
     default_media_id = int(os.getenv("DEFAULT_MEDIA_ID", "0"))
     publishing_config = PublishingConfig.from_env()
@@ -293,7 +293,7 @@ def main():
         featured_media_runtime = ArticleFeaturedMediaRuntime.from_env()
     except ValueError as e:
         print(f"エラー: アイキャッチ画像生成の設定が不正です: {e}")
-        sys.exit(1)
+        return 1
 
     client = anthropic.Anthropic(api_key=api_key)
 
@@ -306,7 +306,7 @@ def main():
     all_news, feed_stats = collect_all_news(max_items_per_feed=20)
     if not all_news:
         print("ニュースを取得できませんでした。インターネット接続を確認してください。")
-        sys.exit(1)
+        return 1
 
     total_collected = len(all_news)
 
@@ -318,7 +318,7 @@ def main():
     if not target_news:
         print("フィルター通過後のニュースが0件でした。")
         print("保留ニュース数:", len(filtered["pending"]))
-        sys.exit(0)
+        return 0
 
     # Step 3: 重複排除（APIコスト削減のため重要度判定の前に実施）
     target_news = deduplicate_news(target_news)
@@ -332,7 +332,7 @@ def main():
 
     if not judged:
         print("記事化対象のニュースが見つかりませんでした。")
-        sys.exit(0)
+        return 0
 
     # Step 4: 重要度別に振り分けて記事化数を制限する
     s_items = [r for r in judged if r["importance"] == "S"]
@@ -375,7 +375,7 @@ def main():
 
     if not to_process:
         print("生成対象の記事がありません。")
-        sys.exit(0)
+        return 0
 
     # Step 5: 記事生成・保存
     # v6.21.0: PROPAGATE時にMarkdownのみ直接保存するためインスタンスを保持する
@@ -558,6 +558,14 @@ def main():
     print()
     _print_rss_summary(feed_stats, total_collected, filtered_count, deduped_count, len(saved_files))
 
+    # Release 6.30: main.py Outcome Contract（wp_skipped_countは判定に関与しない）
+    if wp_failed_count == 0:
+        return 0
+    elif wp_success_count > 0:
+        return 20
+    else:
+        return 21
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

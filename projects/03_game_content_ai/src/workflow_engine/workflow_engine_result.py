@@ -25,6 +25,7 @@ from ai import AgentResult
 from .workflow_engine_step import WorkflowEngineStep
 
 REASON_NOT_REACHED = "Not reached: an earlier step failed."
+REASON_HISTORY_WRITE_FAILED = "Not executed: start_step() history persistence failed."
 
 
 @dataclass
@@ -53,6 +54,7 @@ class WorkflowEngineResult:
     started_at: datetime
     finished_at: datetime
     warnings: list[str] = field(default_factory=list)
+    history_write_failed: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -62,6 +64,7 @@ class WorkflowEngineResult:
             "finished_at": self.finished_at.isoformat(),
             "warnings": list(self.warnings),
             "steps": [s.to_dict() for s in self.steps],
+            "history_write_failed": self.history_write_failed,
         }
 
     def to_json(self) -> str:

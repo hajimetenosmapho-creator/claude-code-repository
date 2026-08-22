@@ -432,8 +432,6 @@ print("[テスト43] 既存ファイルの無変更確認（git diff）")
 
 unchanged_paths = [
     "src/ai",
-    "src/pipeline",
-    "main.py",
 ]
 
 git_available = True
@@ -451,6 +449,27 @@ if git_available:
             timeout=10,
         )
         check_true(f"43. {rel_path} に変更がない（git diff）", completed.returncode == 0)
+
+    # src/pipeline はRelease 6.30 Production Canonical Run & Outcome Contract
+    # Foundationにより news_pipeline_runner.py のみ承認済み変更対象となった
+    # （bytes正規化・NEWS Outcome Token）。ディレクトリ全体のno-diff要求を
+    # 撤廃せず、承認済み変更ファイルだけを除いた残り全体は引き続き無変更で
+    # あることを要求する（docs/design/
+    # production_canonical_run_outcome_contract_foundation.md 24章）。
+    _pipeline_diff = subprocess.run(
+        ["git", "diff", "--name-only", "--relative", "--", "src/pipeline"],
+        cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=10,
+    )
+    _pipeline_changed = {line.strip() for line in _pipeline_diff.stdout.splitlines() if line.strip()}
+    # Release 6.30 Code Review Minor対応: git diffがコマンド自体の失敗（非0終了）で
+    # 空stdoutを返した場合、fail-open（誤ってPASS）してはならない。returncode==0を
+    # 明示的に要求する。
+    check(
+        "43. src/pipelineの差分はRelease 6.30承認済み変更"
+        "（src/pipeline/news_pipeline_runner.py）のみに限定される",
+        _pipeline_diff.returncode == 0 and _pipeline_changed <= {"src/pipeline/news_pipeline_runner.py"},
+        True,
+    )
 else:
     check_true("43. gitが利用できないため無変更確認をスキップ", True)
 print()

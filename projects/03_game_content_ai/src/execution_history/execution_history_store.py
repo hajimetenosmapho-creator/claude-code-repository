@@ -22,8 +22,13 @@ class ExecutionHistoryStore(ABC):
     """WorkflowExecutionRecordの永続化方式を抽象化するインターフェース。"""
 
     @abstractmethod
-    def save(self, record: WorkflowExecutionRecord) -> None:
-        """recordをrun_idで保存する（新規・上書き両対応）。"""
+    def save(self, record: WorkflowExecutionRecord) -> bool:
+        """recordをrun_idで保存する（新規・上書き両対応）。
+
+        保存に成功したか（acknowledged）を返す（Release 6.30）。呼び出し側は
+        この戻り値を用いて candidate を確定させるか破棄するかを判断する
+        （docs/design/production_canonical_run_outcome_contract_foundation.md 10章）。
+        """
         ...
 
     @abstractmethod

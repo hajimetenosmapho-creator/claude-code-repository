@@ -127,8 +127,9 @@ class InMemoryExecutionHistoryStore(ExecutionHistoryStore):
     def __init__(self):
         self._records: dict[str, WorkflowExecutionRecord] = {}
 
-    def save(self, record: WorkflowExecutionRecord) -> None:
+    def save(self, record: WorkflowExecutionRecord) -> bool:
         self._records[record.run_id] = record
+        return True
 
     def get(self, run_id: str):
         return self._records.get(run_id)
@@ -376,18 +377,26 @@ completed_run = subprocess.run(
     [sys.executable, str(script_path_we), "--dry-run", "--job-id", "show-status-e2e"],
     cwd=str(PROJECT_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace", env=env_we, timeout=60,
 )
-check("20. run_workflow_engine.py が正常終了する", completed_run.returncode, 0)
+check("20. run_workflow_engine.py --dry-run が正常終了する", completed_run.returncode, 0)
 
 store_20 = JsonExecutionHistoryStore(shared_history_dir)
 records_20 = store_20.list_all()
-check_true("20. run_workflow_engine.py実行後に履歴が1件以上記録される", len(records_20) >= 1)
+check(
+    "20. --dry-run実行はHistoryへゼロwrite（Release 6.30 Canonical History Invariant）",
+    len(records_20), 0,
+)
 
-if records_20:
-    run_id_20 = records_20[0].run_id
-    completed_20 = run_show_cli(["--run-id", run_id_20], {"EXECUTION_HISTORY_DIR": str(shared_history_dir)})
-    check("20. --run-id 指定で詳細表示が正常終了する", completed_20.returncode, 0)
-    check_contains("20. 詳細表示にrun_idが含まれる", completed_20.stdout, run_id_20)
-    check_contains("20. 詳細表示にmonitor_statusが含まれる", completed_20.stdout, "monitor_status")
+# --run-id 詳細表示の確認は、dry-run zero-writeとは独立に record を直接書き込んで検証する
+seeded_record_20 = WorkflowExecutionRecord(
+    run_id="seeded-show-status-e2e", workflow_name="workflow_engine", source="manual",
+    job_id="show-status-e2e", status=WorkflowExecutionStatus.SUCCESS,
+    started_at=datetime.now(), finished_at=datetime.now(),
+)
+store_20.save(seeded_record_20)
+completed_20 = run_show_cli(["--run-id", "seeded-show-status-e2e"], {"EXECUTION_HISTORY_DIR": str(shared_history_dir)})
+check("20. --run-id 指定で詳細表示が正常終了する", completed_20.returncode, 0)
+check_contains("20. 詳細表示にrun_idが含まれる", completed_20.stdout, "seeded-show-status-e2e")
+check_contains("20. 詳細表示にmonitor_statusが含まれる", completed_20.stdout, "monitor_status")
 
 completed_21 = run_show_cli([], {
     "EXECUTION_HISTORY_DIR": str(shared_history_dir), "WORKFLOW_MONITOR_ENABLED": "false",
@@ -421,15 +430,14 @@ print()
 print("[テスト23] 既存ファイルの無変更確認（git diff）")
 
 unchanged_paths_wm = [
-    "main.py",
+    # main.py / execution_history_manager.py / execution_history_store.py /
+    # json_execution_history_store.py / workflow_engine_executor.py はいずれも
+    # Release 6.30 Production Canonical Run & Outcome Contractの対象として
+    # 意図的に変更される（対象外）
     "src/execution_history/execution_history_config.py",
     "src/execution_history/execution_history_event.py",
-    "src/execution_history/execution_history_manager.py",
-    "src/execution_history/execution_history_store.py",
-    "src/execution_history/json_execution_history_store.py",
     "src/execution_history/step_execution_record.py",
     "src/execution_history/workflow_execution_record.py",
-    "src/workflow_engine/workflow_engine_executor.py",
     "src/workflow_engine/workflow_engine_manager.py",
     "src/ai/agent_manager.py",
     "src/scheduler/scheduler_engine.py",

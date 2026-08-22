@@ -467,8 +467,14 @@ print()
 
 print("[テスト7] ZERODIFF: 既存protected pathへの無変更確認")
 
+# main.py はRelease 6.30 Production Canonical Run & Outcome Contract Foundationの
+# 対象として意図的に変更される（test_e2e_v6_27_0のZERODIFF-4と同一パターン）。
+check_true(
+    "7. main.pyの差分確認はRelease 6.30以降の対象外（意図的な変更のため、スキップ）",
+    True,
+)
+
 unchanged_paths = [
-    "main.py",
     "src/retry_queue",
     "src/article_featured_media",
     "src/article_featured_media_composition",

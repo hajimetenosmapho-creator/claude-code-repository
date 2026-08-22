@@ -23,12 +23,14 @@ from .workflow_engine_step import ALL_WORKFLOW_ENGINE_STEPS, WorkflowEngineStep
 from .workflow_engine_definition import WorkflowEngineDefinition
 from .workflow_engine_event import SOURCE_MANUAL, SOURCE_SCHEDULER, WorkflowEngineEvent
 from .workflow_engine_result import (
+    REASON_HISTORY_WRITE_FAILED,
     REASON_NOT_REACHED,
     WorkflowEngineResult,
     WorkflowEngineStepResult,
 )
 from .workflow_engine_context import WorkflowEngineContext
 from .workflow_engine_config import WorkflowEngineConfig
+from .workflow_engine_exceptions import CanonicalAdmissionFailure
 from .workflow_engine_executor import WorkflowEngineExecutor
 from .workflow_engine_manager import NullWorkflowEngineManager, WorkflowEngineManager
 
@@ -42,8 +44,10 @@ __all__ = [
     "WorkflowEngineStepResult",
     "WorkflowEngineResult",
     "REASON_NOT_REACHED",
+    "REASON_HISTORY_WRITE_FAILED",
     "WorkflowEngineContext",
     "WorkflowEngineConfig",
+    "CanonicalAdmissionFailure",
     "WorkflowEngineExecutor",
     "WorkflowEngineManager",
     "NullWorkflowEngineManager",

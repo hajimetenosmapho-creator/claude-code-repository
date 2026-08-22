@@ -105,6 +105,7 @@ from ai import (
     AgentTask,
     BaseAgent,
 )
+from execution_history import ExecutionHistoryManager, JsonExecutionHistoryStore
 from workflow_engine import (
     ALL_WORKFLOW_ENGINE_STEPS,
     REASON_NOT_REACHED,
@@ -273,13 +274,21 @@ def make_engine_context(dry_run: bool = False) -> WorkflowEngineContext:
     return WorkflowEngineContext(event=event, dry_run=dry_run, run_id="fake-run-id")
 
 
+def make_real_history_manager() -> ExecutionHistoryManager:
+    """Release 6.30: non-dry-run実行にはCanonical History Invariantにより実History
+    （Null不可）が必要なため、本ファイルのAgent/Step実行ロジック単体テスト（History内容自体は
+    対象外）でも実ExecutionHistoryManagerを渡す。"""
+    d = Path(tempfile.mkdtemp()) / "history"
+    return ExecutionHistoryManager(store=JsonExecutionHistoryStore(d))
+
+
 # テスト8: 全ステップGate閉鎖
 step_executors_8 = {
     WorkflowEngineStep.NEWS: None,
     WorkflowEngineStep.REVIEW: None,
     WorkflowEngineStep.PUBLISH: None,
 }
-executor_8 = WorkflowEngineExecutor(WorkflowEngineDefinition(), step_executors_8)
+executor_8 = WorkflowEngineExecutor(WorkflowEngineDefinition(), step_executors_8, history_manager=make_real_history_manager())
 result_8 = executor_8.run(make_engine_context())
 check_true("8. 全ステップGate閉鎖 → overall_success=True", result_8.overall_success)
 check_false("8. stopped_early=False", result_8.stopped_early)
@@ -300,7 +309,7 @@ step_executors_9 = {
         FakeAgent("publish_trigger_agent", AgentDecision(True, "go"), make_agent_result("publish_trigger_agent", True))
     ),
 }
-executor_9 = WorkflowEngineExecutor(WorkflowEngineDefinition(), step_executors_9)
+executor_9 = WorkflowEngineExecutor(WorkflowEngineDefinition(), step_executors_9, history_manager=make_real_history_manager())
 result_9 = executor_9.run(make_engine_context())
 check_true("9. 全ステップ成功 → overall_success=True", result_9.overall_success)
 check_false("9. stopped_early=False", result_9.stopped_early)
@@ -321,7 +330,7 @@ step_executors_10 = {
         FakeAgent("publish_trigger_agent", AgentDecision(True, "go"), make_agent_result("publish_trigger_agent", True))
     ),
 }
-executor_10 = WorkflowEngineExecutor(WorkflowEngineDefinition(), step_executors_10)
+executor_10 = WorkflowEngineExecutor(WorkflowEngineDefinition(), step_executors_10, history_manager=make_real_history_manager())
 result_10 = executor_10.run(make_engine_context())
 check_false("10. News失敗 → overall_success=False", result_10.overall_success)
 check_true("10. stopped_early=True", result_10.stopped_early)
@@ -347,7 +356,7 @@ step_executors_11 = {
         FakeAgent("publish_trigger_agent", AgentDecision(True, "go"), make_agent_result("publish_trigger_agent", True))
     ),
 }
-executor_11 = WorkflowEngineExecutor(WorkflowEngineDefinition(), step_executors_11)
+executor_11 = WorkflowEngineExecutor(WorkflowEngineDefinition(), step_executors_11, history_manager=make_real_history_manager())
 result_11 = executor_11.run(make_engine_context())
 check_true("11. Newsがdecide()スキップでもoverall_success=True", result_11.overall_success)
 check_false("11. stopped_early=False", result_11.stopped_early)
@@ -371,6 +380,7 @@ executor_12 = WorkflowEngineExecutor(
     WorkflowEngineDefinition(),
     step_executors_12,
     step_skip_reasons={WorkflowEngineStep.REVIEW: "custom skip reason"},
+    history_manager=make_real_history_manager(),
 )
 result_12 = executor_12.run(make_engine_context())
 news_sr_12, review_sr_12, publish_sr_12 = result_12.steps
@@ -389,7 +399,7 @@ for label, result in (
 
 # テスト14: WorkflowEngineContextの更新確認
 context_14 = make_engine_context()
-executor_14 = WorkflowEngineExecutor(WorkflowEngineDefinition(), step_executors_9)
+executor_14 = WorkflowEngineExecutor(WorkflowEngineDefinition(), step_executors_9, history_manager=make_real_history_manager())
 result_14 = executor_14.run(context_14)
 check("14. context.step_resultsがresult.stepsと一致", context_14.step_results, result_14.steps)
 check(
@@ -565,7 +575,7 @@ print()
 print("[テスト27] 既存ファイルの無変更確認（git diff）")
 
 unchanged_paths_we = [
-    "main.py",
+    # main.py はRelease 6.30 Outcome Contractの対象として意図的に変更される（対象外）
     "src/ai/base_agent.py",
     "src/ai/agent_executor.py",
     "src/ai/agent_manager.py",
@@ -585,7 +595,8 @@ unchanged_paths_we = [
     "src/ai/workflow_step.py",
     "src/ai/workflow_context.py",
     "src/ai/workflow_result.py",
-    "src/pipeline/news_pipeline_runner.py",
+    # src/pipeline/news_pipeline_runner.py はRelease 6.30 subprocess出力正規化の対象として
+    # 意図的に変更される（対象外）
     "src/pipeline/review_pipeline_runner.py",
     "src/pipeline/publish_pipeline_runner.py",
     "src/pipeline/workflow_pipeline_runner.py",

@@ -18,15 +18,16 @@ E2E テスト: v2.8.0 Execution History Foundation
     9.  list_all() が started_at の新しい順でソートされる
     10. 壊れたJSONファイルは読み飛ばされる（他のrecordには影響しない）
 
-    ── ExecutionHistoryManager ──
-    11. start_run() がRUNNING状態のrecordを作成・保存する
-    12. start_step() → finish_step() で直近のRUNNINGステップが更新される
-    13. finish_step()（start_step未呼び出し）は新規レコードとして確定する（Gate閉鎖/未到達パターン）
-    14. finish_run() でstatus/finished_atが確定する
+    ── ExecutionHistoryManager（Release 6.30でrun_idベースAPIへ移行） ──
+    11. start_run() がStartRunWriteResult(acknowledged=True)を返しRUNNING状態のrecordを保存する
+    12. start_step() → finish_step() で直近のRUNNINGステップが更新される（戻り値はbool）
+    13. finish_step()（start_step未呼び出し）は新規レコードとして確定する（Gate閉鎖/未到達パターン、
+        started_at=None）
+    14. finish_run() でstatus/finished_atが確定する（戻り値はbool）
     15. ExecutionHistoryManager.from_config()：enabled/disabledの分岐
 
-    ── NullExecutionHistoryManager ──
-    16. すべてのメソッドがNoneを返し、ファイルが作成されない
+    ── NullExecutionHistoryManager（Release 6.30） ──
+    16. すべてのメソッドが明示的な成功acknowledgementを返し、ファイルが作成されない
 
     ── WorkflowEngineExecutor統合（FakeAgent、v2.7.0テスト8-12と同型シナリオ） ──
     17. 全ステップGate閉鎖 → 全SKIPPED
@@ -34,7 +35,9 @@ E2E テスト: v2.8.0 Execution History Foundation
     19. News失敗 → Review/PublishがNOT_REACHED
     20. Newsがdecide()スキップ（success=True） → SUCCESSとして記録される
     21. ReviewのみGate閉鎖 → News/PublishはSUCCESS、ReviewはSKIPPED（カスタム理由）
-    22. history_manager省略時（2引数コンストラクタ）でも既存動作に影響しない
+    22. history_manager省略×非dry-runはCanonicalAdmissionFailureを送出する（Release 6.30、
+        Canonical History Invariant）
+    22b. history_manager省略×dry-runは例外なく実行できる（zero-write許容）
 
     ── scripts/show_execution_history.py ──
     23. スクリプトが存在する
@@ -116,6 +119,7 @@ from execution_history import (
     ExecutionHistoryManager,
     JsonExecutionHistoryStore,
     NullExecutionHistoryManager,
+    StartRunWriteResult,
     StepExecutionRecord,
     StepExecutionStatus,
     WorkflowExecutionRecord,
@@ -124,6 +128,7 @@ from execution_history import (
 from workflow_engine import (
     REASON_NOT_REACHED,
     SOURCE_MANUAL,
+    CanonicalAdmissionFailure,
     WorkflowEngineDefinition,
     WorkflowEngineEvent,
     WorkflowEngineExecutor,
@@ -264,31 +269,41 @@ tmp_mgr_dir = Path(tempfile.mkdtemp()) / "history"
 mgr_store = JsonExecutionHistoryStore(tmp_mgr_dir)
 manager = ExecutionHistoryManager(store=mgr_store)
 
-record_11 = manager.start_run(run_id="run-11", workflow_name="workflow_engine", source=SOURCE_MANUAL, job_id="job-11")
-check("11. start_run() の run_id", record_11.run_id, "run-11")
-check("11. start_run() の status=RUNNING", record_11.status, WorkflowExecutionStatus.RUNNING)
+start_result_11 = manager.start_run(run_id="run-11", workflow_name="workflow_engine", source=SOURCE_MANUAL, job_id="job-11")
+check("11. start_run() が StartRunWriteResult を返す", isinstance(start_result_11, StartRunWriteResult), True)
+check("11. start_run() の run_id", start_result_11.run_id, "run-11")
+check_true("11. start_run() の acknowledged=True", start_result_11.acknowledged)
 saved_11 = mgr_store.get("run-11")
 check("11. start_run() が即座に保存される", saved_11.run_id, "run-11")
-check_true("11. events に EVENT_WORKFLOW_STARTED が含まれる", any(e.event_type == EVENT_WORKFLOW_STARTED for e in record_11.events))
+check("11. 保存されたrecordのstatus=RUNNING", saved_11.status, WorkflowExecutionStatus.RUNNING)
+check_true("11. events に EVENT_WORKFLOW_STARTED が含まれる", any(e.event_type == EVENT_WORKFLOW_STARTED for e in saved_11.events))
 
-manager.start_step(record_11, "news")
-check("12. start_step() で StepExecutionRecord が追加される", len(record_11.steps), 1)
-check("12. start_step() 直後は status=RUNNING", record_11.steps[0].status, StepExecutionStatus.RUNNING)
-manager.finish_step(record_11, "news", StepExecutionStatus.SUCCESS)
-check("12. finish_step() で直近のRUNNINGステップが更新される", len(record_11.steps), 1)
-check("12. finish_step() 後は status=SUCCESS", record_11.steps[0].status, StepExecutionStatus.SUCCESS)
-check_true("12. finished_at が設定される", record_11.steps[0].finished_at is not None)
+ok_12a = manager.start_step("run-11", "news")
+check_true("12. start_step() がTrueを返す", ok_12a)
+saved_12a = mgr_store.get("run-11")
+check("12. start_step() で StepExecutionRecord が追加される", len(saved_12a.steps), 1)
+check("12. start_step() 直後は status=RUNNING", saved_12a.steps[0].status, StepExecutionStatus.RUNNING)
 
-manager.finish_step(record_11, "review", StepExecutionStatus.SKIPPED, skipped_reason="gate closed")
-check("13. start_step未呼び出しのfinish_step()は新規レコードとして追加される", len(record_11.steps), 2)
-check("13. 新規レコードの status=SKIPPED", record_11.steps[1].status, StepExecutionStatus.SKIPPED)
-check("13. skipped_reason が記録される", record_11.steps[1].skipped_reason, "gate closed")
+ok_12b = manager.finish_step("run-11", "news", StepExecutionStatus.SUCCESS)
+check_true("12. finish_step() がTrueを返す", ok_12b)
+saved_12b = mgr_store.get("run-11")
+check("12. finish_step() で直近のRUNNINGステップが更新される", len(saved_12b.steps), 1)
+check("12. finish_step() 後は status=SUCCESS", saved_12b.steps[0].status, StepExecutionStatus.SUCCESS)
+check_true("12. finished_at が設定される", saved_12b.steps[0].finished_at is not None)
 
-manager.finish_run(record_11, WorkflowExecutionStatus.SUCCESS)
-check("14. finish_run() で status=SUCCESS", record_11.status, WorkflowExecutionStatus.SUCCESS)
-check_true("14. finish_run() で finished_at が設定される", record_11.finished_at is not None)
+ok_13 = manager.finish_step("run-11", "review", StepExecutionStatus.SKIPPED, skipped_reason="gate closed")
+check_true("13. start_step未呼び出しのfinish_step()もTrueを返す", ok_13)
+saved_13 = mgr_store.get("run-11")
+check("13. start_step未呼び出しのfinish_step()は新規レコードとして追加される", len(saved_13.steps), 2)
+check("13. 新規レコードの status=SKIPPED", saved_13.steps[1].status, StepExecutionStatus.SKIPPED)
+check("13. skipped_reason が記録される", saved_13.steps[1].skipped_reason, "gate closed")
+check_none("13. SKIPPEDレコードのstarted_atはNone（Release 6.30、実際には開始していないため）", saved_13.steps[1].started_at)
+
+ok_14 = manager.finish_run("run-11", WorkflowExecutionStatus.SUCCESS)
+check_true("14. finish_run() がTrueを返す", ok_14)
 final_saved = mgr_store.get("run-11")
-check("14. finish_run() 後の保存内容が一致する", final_saved.status, WorkflowExecutionStatus.SUCCESS)
+check("14. finish_run() 後の保存内容のstatus=SUCCESS", final_saved.status, WorkflowExecutionStatus.SUCCESS)
+check_true("14. finish_run() で finished_at が設定される", final_saved.finished_at is not None)
 check("14. 保存内容のsteps件数が一致する", len(final_saved.steps), 2)
 
 clear_env()
@@ -314,10 +329,12 @@ print("[テスト16] NullExecutionHistoryManager")
 tmp_null_dir = Path(tempfile.mkdtemp()) / "should_not_be_created"
 null_mgr = NullExecutionHistoryManager()
 r16 = null_mgr.start_run(run_id="r", workflow_name="w", source="s", job_id="j")
-check_none("16. start_run() はNoneを返す", r16)
-check_none("16. start_step() はNoneを返す", null_mgr.start_step(r16, "news"))
-check_none("16. finish_step() はNoneを返す", null_mgr.finish_step(r16, "news", StepExecutionStatus.SUCCESS))
-check_none("16. finish_run() はNoneを返す", null_mgr.finish_run(r16, WorkflowExecutionStatus.SUCCESS))
+check("16. start_run() の run_id", r16.run_id, "r")
+check_true("16. start_run() の acknowledged=True", r16.acknowledged)
+check_true("16. start_step() はTrueを返す", null_mgr.start_step("r", "news"))
+check_true("16. finish_step() はTrueを返す", null_mgr.finish_step("r", "news", StepExecutionStatus.SUCCESS))
+check_true("16. finish_run() はTrueを返す", null_mgr.finish_run("r", WorkflowExecutionStatus.SUCCESS))
+check_none("16. release_run() はNoneを返す", null_mgr.release_run("r"))
 check_false("16. ディレクトリが作成されない", tmp_null_dir.exists())
 print()
 
@@ -364,12 +381,12 @@ def make_agent_result(agent_name: str, success: bool, error_message: str | None 
     )
 
 
-def make_engine_context(run_id: str):
+def make_engine_context(run_id: str, dry_run: bool = False):
     from workflow_engine import WorkflowEngineContext
     event = WorkflowEngineEvent(
         job_id="fake-job", source=SOURCE_MANUAL, triggered_at=datetime.now(), trigger_reason="test"
     )
-    return WorkflowEngineContext(event=event, dry_run=False, run_id=run_id)
+    return WorkflowEngineContext(event=event, dry_run=dry_run, run_id=run_id)
 
 
 def new_history_manager() -> tuple[ExecutionHistoryManager, Path]:
@@ -448,11 +465,24 @@ check("21. Newsはexecutedし SUCCESS", saved_21.steps[0].status, StepExecutionS
 check("21. ReviewはSKIPPEDでカスタム理由が記録される", (saved_21.steps[1].status, saved_21.steps[1].skipped_reason), (StepExecutionStatus.SKIPPED, "custom skip reason"))
 check("21. PublishはSUCCESS", saved_21.steps[2].status, StepExecutionStatus.SUCCESS)
 
-# テスト22: history_manager省略時（2引数コンストラクタ）でも既存動作に影響しない
+# テスト22（Release 6.30改訂）: history_manager省略（Null）×非dry-runは
+# Canonical History Invariantにより CanonicalAdmissionFailure を送出する
 executor_22 = WorkflowEngineExecutor(WorkflowEngineDefinition(), step_executors_18)
-result_22 = executor_22.run(make_engine_context("run-22"))
-check_true("22. history_manager省略（2引数）でも例外なく実行できる", result_22.overall_success)
-check("22. steps件数が3", len(result_22.steps), 3)
+admission_failed_22 = False
+try:
+    executor_22.run(make_engine_context("run-22"))
+except CanonicalAdmissionFailure as e:
+    admission_failed_22 = True
+    check("22. CanonicalAdmissionFailureのreasonがEXECUTION_HISTORY_DISABLED", e.reason, "EXECUTION_HISTORY_DISABLED")
+    check("22. CanonicalAdmissionFailureのrun_idが一致する", e.run_id, "run-22")
+check_true("22. history_manager省略×非dry-runはCanonicalAdmissionFailureを送出する（Release 6.30）", admission_failed_22)
+
+# テスト22b（Release 6.30新規）: history_manager省略でもdry-runなら例外なく実行できる（zero-write）
+executor_22b = WorkflowEngineExecutor(WorkflowEngineDefinition(), step_executors_18)
+result_22b = executor_22b.run(make_engine_context("run-22b", dry_run=True))
+check_true("22b. history_manager省略×dry-runは例外なく実行できる", result_22b.overall_success)
+check("22b. steps件数が3", len(result_22b.steps), 3)
+check_false("22b. history_write_failedはFalse（Null admission許可）", result_22b.history_write_failed)
 print()
 
 
@@ -497,18 +527,26 @@ completed_run = subprocess.run(
     [sys.executable, str(script_path_we2), "--dry-run", "--job-id", "show-history-e2e"],
     cwd=str(PROJECT_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace", env=env_we, timeout=60,
 )
-check("25. run_workflow_engine.py が正常終了する", completed_run.returncode, 0)
+check("25. run_workflow_engine.py --dry-run が正常終了する", completed_run.returncode, 0)
 
 store_25 = JsonExecutionHistoryStore(shared_history_dir)
 records_25 = store_25.list_all()
-check_true("25. run_workflow_engine.py実行後に履歴が1件以上記録される", len(records_25) >= 1)
+check(
+    "25. --dry-run実行はHistoryへゼロwrite（Release 6.30 Canonical History Invariant）",
+    len(records_25), 0,
+)
 
-if records_25:
-    run_id_25 = records_25[0].run_id
-    completed_25 = run_show_cli(["--run-id", run_id_25], {"EXECUTION_HISTORY_DIR": str(shared_history_dir)})
-    check("25. --run-id 指定で詳細表示が正常終了する", completed_25.returncode, 0)
-    check_contains("25. 詳細表示にrun_idが含まれる", completed_25.stdout, run_id_25)
-    check_contains("25. 詳細表示にstepsが含まれる", completed_25.stdout, "steps:")
+# --run-id 詳細表示の確認は、dry-run zero-writeとは独立に record を直接書き込んで検証する
+seeded_record_25 = WorkflowExecutionRecord(
+    run_id="seeded-show-history-e2e", workflow_name="workflow_engine", source=SOURCE_MANUAL,
+    job_id="show-history-e2e", status=WorkflowExecutionStatus.SUCCESS,
+    started_at=datetime.now(), finished_at=datetime.now(),
+)
+store_25.save(seeded_record_25)
+completed_25 = run_show_cli(["--run-id", "seeded-show-history-e2e"], {"EXECUTION_HISTORY_DIR": str(shared_history_dir)})
+check("25. --run-id 指定で詳細表示が正常終了する", completed_25.returncode, 0)
+check_contains("25. 詳細表示にrun_idが含まれる", completed_25.stdout, "seeded-show-history-e2e")
+check_contains("25. 詳細表示にstepsが含まれる", completed_25.stdout, "steps:")
 print()
 
 
@@ -536,7 +574,7 @@ print()
 print("[テスト27] 既存ファイルの無変更確認（git diff）")
 
 unchanged_paths_eh = [
-    "main.py",
+    # main.py はRelease 6.30 Outcome Contractの対象として意図的に変更される（対象外）
     "src/ai/base_agent.py",
     "src/ai/agent_executor.py",
     "src/ai/agent_manager.py",
@@ -556,7 +594,8 @@ unchanged_paths_eh = [
     "src/ai/workflow_step.py",
     "src/ai/workflow_context.py",
     "src/ai/workflow_result.py",
-    "src/pipeline/news_pipeline_runner.py",
+    # src/pipeline/news_pipeline_runner.py はRelease 6.30 subprocess出力正規化の対象として
+    # 意図的に変更される（対象外）
     "src/pipeline/review_pipeline_runner.py",
     "src/pipeline/publish_pipeline_runner.py",
     "src/pipeline/workflow_pipeline_runner.py",
@@ -572,7 +611,8 @@ unchanged_paths_eh = [
     "src/workflow_engine/workflow_engine_definition.py",
     "src/workflow_engine/workflow_engine_event.py",
     "src/workflow_engine/workflow_engine_context.py",
-    "src/workflow_engine/workflow_engine_result.py",
+    # src/workflow_engine/workflow_engine_result.py はRelease 6.30で history_write_failed
+    # フィールドが追加されるため意図的に変更される（対象外）
     "src/workflow_engine/workflow_engine_config.py",
 ]
 
@@ -601,7 +641,8 @@ for name in (
     "ExecutionHistoryConfig", "ExecutionHistoryEvent",
     "EVENT_WORKFLOW_STARTED", "EVENT_WORKFLOW_FINISHED", "EVENT_STEP_STARTED", "EVENT_STEP_FINISHED",
     "StepExecutionRecord", "StepExecutionStatus", "WorkflowExecutionRecord", "WorkflowExecutionStatus",
-    "ExecutionHistoryStore", "JsonExecutionHistoryStore", "ExecutionHistoryManager", "NullExecutionHistoryManager",
+    "ExecutionHistoryStore", "JsonExecutionHistoryStore", "StartRunWriteResult",
+    "ExecutionHistoryManager", "NullExecutionHistoryManager",
 ):
     check_true(f"28. {name} が execution_history パッケージからエクスポートされている", hasattr(eh_pkg, name))
     check_true(f"28. {name} が execution_history.__all__ に含まれる", name in eh_pkg.__all__)

@@ -287,6 +287,18 @@ try:
 
     print("[ZERODIFF] image_generation_config以外への無改修確認")
 
+    # src/pipeline・scripts は、Release 6.30 Production Canonical Run &
+    # Outcome Contract Foundationにより承認済み変更ファイル（news_pipeline_runner.py・
+    # run_workflow_engine.py）を持つ（zero_diff_guard_registry.pyの
+    # _SOURCE_CHANGE_CONTRIBUTIONSにv6.30.0として登録済み）。本ループの
+    # RELEASE_START_HEAD基準ゼロdiff要求は撤廃せず、これら2 pathのみ承認済み
+    # 変更ファイル1件に限定した狭い例外とする（docs/design/
+    # production_canonical_run_outcome_contract_foundation.md 24章）。
+    _ZERODIFF1_ALLOWED_EXCEPTIONS = {
+        "src/pipeline": {"src/pipeline/news_pipeline_runner.py"},
+        "scripts": {"scripts/run_workflow_engine.py"},
+    }
+
     for _path in registry.PROTECTED_PATHS:
         if _path == "src/image_generation_config":
             continue
@@ -295,13 +307,28 @@ try:
             cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=30,
         )
         _changed = [line.strip() for line in _diff_proc.stdout.splitlines() if line.strip()]
-        check(f"ZERODIFF-1[{_path}]. 開始基準HEADからの差分が0件である", _changed, [])
+        # Release 6.30 Code Review Minor対応: git diff自体が失敗（非0終了）した場合、
+        # 空stdoutをfail-open（誤ってPASS）してはならない。両分岐ともreturncode==0を
+        # 明示的に要求する。
+        if _path in _ZERODIFF1_ALLOWED_EXCEPTIONS:
+            check_true(
+                f"ZERODIFF-1[{_path}]. 開始基準HEADからの差分がRelease 6.30承認済み変更のみに限定される",
+                _diff_proc.returncode == 0 and set(_changed) <= _ZERODIFF1_ALLOWED_EXCEPTIONS[_path],
+            )
+        else:
+            check_true(
+                f"ZERODIFF-1[{_path}]. 開始基準HEADからの差分が0件である",
+                _diff_proc.returncode == 0 and _changed == [],
+            )
         _status_proc = subprocess.run(
             ["git", "status", "--porcelain", "--untracked-files=all", "--", _path],
             cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=30,
         )
         _untracked = [line for line in _status_proc.stdout.splitlines() if line.startswith("??")]
-        check(f"ZERODIFF-2[{_path}]. untracked集合が空である", _untracked, [])
+        check_true(
+            f"ZERODIFF-2[{_path}]. untracked集合が空である",
+            _status_proc.returncode == 0 and _untracked == [],
+        )
 
     _igc_diff_proc = subprocess.run(
         ["git", "diff", "--name-only", "--relative", RELEASE_START_HEAD, "--", "src/image_generation_config"],
@@ -311,12 +338,16 @@ try:
     check("ZERODIFF-3. src/image_generation_config配下の差分がimage_generation_config.pyのみである",
           _igc_changed, {"src/image_generation_config/image_generation_config.py"})
 
-    _mainpy_diff_proc = subprocess.run(
-        ["git", "diff", "--name-only", "--relative", RELEASE_START_HEAD, "--", "main.py"],
-        cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=30,
+    # main.py はRelease 6.30 Production Canonical Run & Outcome Contract
+    # Foundationの対象として意図的に変更される（main()のsys.exit()をreturnへ
+    # 統一、WordPress Outcome Contract追加）。本チェックをRELEASE_START_HEAD
+    # 基準の永続的ゼロdiffとして残すと将来の正当な変更を機械的に妨げるため、
+    # Release 6.30以降はスキップする（docs/design/
+    # production_canonical_run_outcome_contract_foundation.md 24章）。
+    check_true(
+        "ZERODIFF-4. main.pyの差分確認はRelease 6.30以降の対象外（意図的な変更のため、スキップ）",
+        True,
     )
-    check("ZERODIFF-4. main.pyの差分が0件である（呼び出し境界は無改修）",
-          [line.strip() for line in _mainpy_diff_proc.stdout.splitlines() if line.strip()], [])
     print()
 
     # =====================================================================
