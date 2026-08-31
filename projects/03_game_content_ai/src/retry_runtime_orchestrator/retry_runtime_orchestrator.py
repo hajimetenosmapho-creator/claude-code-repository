@@ -61,6 +61,14 @@ RetryRuntimeOrchestrator: Retry Runtimeの実行順序を管理する場所。
       なり、v5.6.0時点のKnown Issue（KI-23）が解消した。run_once()自体の
       シグネチャ・実行順序・他の呼び出し（scheduler.run_due() /
       execute_dispatchable_retries()以降）はいずれも無変更。
+
+    - （Release 6.31）lineage（RetryLineageManager）を保持し、run_once()の冒頭で
+      lineage.reconcile_all(resolve_status_fn=self.monitor.get_status)を呼ぶ
+      （docs/design/retry_lineage_eligibility_durable_attempt_state.md 16章）。
+      RETRY_LINEAGE_ENABLED=false（デフォルト）でもreconcile_all()自体は動作継続
+      する（claim()のみがこのゲートのfail-closedスイッチの対象）。monitor
+      （WorkflowMonitorManager）を新たにConstructor Injectionで保持する
+      （resolve_status_fnとして渡すため）。
 """
 from __future__ import annotations
 
@@ -79,8 +87,10 @@ from retry_engine import (
 )
 from retry_enqueue_trigger import RetryEnqueueTrigger
 from retry_history import RetryHistoryManager
+from retry_lineage import RetryLineageManager
 from retry_queue import NullRetryQueueManager, RetryQueueManager
 from scheduler import SchedulerEngine
+from workflow_monitor import NullWorkflowMonitorManager, WorkflowMonitorManager
 
 from .retry_runtime_cycle_result import RetryRuntimeCycleResult
 
@@ -102,6 +112,8 @@ class RetryRuntimeOrchestrator:
         queue: "RetryQueueManager | NullRetryQueueManager",
         history: RetryHistoryManager,
         policy: RetryPolicy,
+        lineage: RetryLineageManager,
+        monitor: "WorkflowMonitorManager | NullWorkflowMonitorManager",
     ):
         self.trigger = trigger
         self.scheduler = scheduler
@@ -109,6 +121,8 @@ class RetryRuntimeOrchestrator:
         self.queue = queue
         self.history = history
         self.policy = policy
+        self.lineage = lineage
+        self.monitor = monitor
 
     @classmethod
     def from_composition_root(cls, root: RetryCompositionRoot) -> "RetryRuntimeOrchestrator":
@@ -123,6 +137,8 @@ class RetryRuntimeOrchestrator:
             queue=root.queue,
             history=root.history,
             policy=root.policy,
+            lineage=root.lineage,
+            monitor=root.monitor,
         )
 
     def run_once(self, dry_run: bool = False) -> RetryRuntimeCycleResult:
@@ -159,7 +175,14 @@ class RetryRuntimeOrchestrator:
         新規登録）もdry_runを受け取り、実際のenqueueを抑止する（v5.8.0でKI-23を
         解消。Monitor走査・History参照・Guard判定・Queue重複確認は通常どおり
         実行される）。
+
+        Release 6.31：0. self.lineage.reconcile_all(resolve_status_fn=self.monitor.get_status)
+        を、上記1.より前の最初のステップとして呼ぶ（16章）。dry_runの値に関わらず
+        常に実行する——reconcile_all()自体はRETRY_LINEAGE_ENABLED=falseでも動作継続する
+        仕様であり、既存のdry_run伝播ステップ（1.以降）とは独立している。
         """
+        reconcile_summary = self.lineage.reconcile_all(resolve_status_fn=self.monitor.get_status)
+
         trigger_result = self.trigger.enqueue_pending_failures(
             max_attempts=self.policy.max_attempts, dry_run=dry_run,
         )
@@ -188,4 +211,5 @@ class RetryRuntimeOrchestrator:
             cleanup_results=cleanup_results,
             terminal_cleanup_results=terminal_cleanup_results,
             history_results=history_results,
+            reconcile_summary=reconcile_summary,
         )

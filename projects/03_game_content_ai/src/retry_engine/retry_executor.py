@@ -1,12 +1,12 @@
 """
-Retry Executor（v3.0.0）
+Retry Executor（v3.0.0、Release 6.31でRetry Lineage統合）
 
 RetryExecutor: WorkflowEngineManagerの公開APIを呼び出すだけの薄いコンポーネント
 
 設計方針:
     - 再実行の可否判定（RetryPolicyの適用）・RetryRequestの生成は RetryManager の責務であり、
       RetryExecutorはRetryManagerによってすでに「再実行する」と判定された RetryRequest の
-      みを受け取る。ここでの唯一の仕事は、RetryRequest / WorkflowMonitorRecord を
+      みを受け取る。ここでの唯一の仕事は、RetryRequest / lineage / claim情報を
       WorkflowEngineEvent へ変換して WorkflowEngineManager.run() を呼び出し、戻り値を
       RetryResult へ詰め替えて返すことだけである
       （docs/design/retry_engine_foundation.md 10章 Design Decision #10、Architecture Review反映）。
@@ -22,41 +22,182 @@ RetryExecutor: WorkflowEngineManagerの公開APIを呼び出すだけの薄い�
       Decider/Executor群（RetryQueueUpdateDecider等）が「実際に再実行された」と誤判定し
       Queue除去・履歴記録という副作用を発生させることを防ぐ
       （docs/design/retry_runtime_safe_dry_run_foundation.md 参照）。
+
+Release 6.31での変更（docs/design/retry_lineage_eligibility_durable_attempt_state.md
+9.3.2・9.7・10.1〜10.3・11.4〜11.5章）:
+    - execute()のシグネチャを`(request, record)`（WorkflowMonitorRecord）から
+      `(request, lineage, claim)`（RetryLineageRecord・ClaimResult）へ変更した。
+    - claim.steps_to_executeを`target_step_filter`として`.run()`へ渡す（11.4章）。
+    - post-admission hookを構築し、`self._lineage.mark_execution_started()`へ委譲する
+      （10.2章）。hookは`claim`ごとに新しいクロージャとして構築され、
+      WorkflowEngineManagerのコンストラクタではなく`.run()`の呼び出しごとの引数として
+      渡される（workflow_engine_post_admission_hook.py参照）。
+    - correlation_metadataを"retry_lineage"namespace配下に構築し`.run()`へ渡す（10.3章）。
+    - dry_runでない場合、`.run()`完了後に`decide_disposition()`/`compute_newly_confirmed()`
+      でdispositionを算出し、`self._lineage.mark_terminal()`を呼ぶ。dry_runの場合は
+      lineageのdurable stateを一切変更しない（既存のdry-run zero-write契約を維持）。
+    - `RetryExecutor.__init__`が`lineage: RetryLineageManager`を新たに保持する。
+
+Architecture Amendment（Code Review Blocking#1・Blocking#2対応、10.2.4章）:
+    - post-admission hookのdurable ack（`mark_execution_started()`の戻り値）を
+      closureが捕捉し、未ack（`False`）の場合は`decide_disposition()`/`mark_terminal()`
+      を一切呼ばずに`release_claim()`でCLAIMEDを解放し`RetryOutcome.SKIPPED`を返す。
+      hookが例外を送出した場合（`.run()`自体が例外を送出、10.2.3章の既存fail-fast契約）
+      も、durable ackがTrueに達していなければ再raise前にclaimを解放する。
+    - `mark_terminal()`の戻り値（`MarkTerminalResult.acknowledged`）を必ず確認し、
+      Falseの場合は`RetryOutcome.RETRIED`を返さず`RetryOutcome.SKIPPED`を返す
+      （`reconcile_all()`側の16章(a)走査に解決を委ねる）。
 """
 from __future__ import annotations
 
-from workflow_engine import SOURCE_MANUAL, WorkflowEngineEvent, WorkflowEngineManager
-from workflow_monitor import WorkflowMonitorRecord
+from typing import TYPE_CHECKING
+
+from workflow_engine import (
+    SOURCE_MANUAL,
+    PostAdmissionHookResult,
+    WorkflowEngineEvent,
+    WorkflowEngineManager,
+    WorkflowEngineStep,
+)
+
+from retry_lineage import compute_newly_confirmed, decide_disposition
 
 from .retry_request import RetryRequest
 from .retry_result import RetryOutcome, RetryResult
+
+if TYPE_CHECKING:
+    from retry_lineage import ClaimResult, RetryLineageManager, RetryLineageRecord
 
 
 class RetryExecutor:
     """WorkflowEngineManagerの公開APIを呼び出すだけの薄いコンポーネント。"""
 
-    def __init__(self, workflow_engine_manager: WorkflowEngineManager):
+    def __init__(self, workflow_engine_manager: WorkflowEngineManager, lineage: "RetryLineageManager"):
         self._engine = workflow_engine_manager
+        self._lineage = lineage
 
-    def execute(self, request: RetryRequest, record: WorkflowMonitorRecord) -> RetryResult:
-        """RetryRequestをWorkflowEngineEventへ変換し、再実行を依頼する。"""
+    def execute(
+        self, request: RetryRequest, lineage: "RetryLineageRecord", claim: "ClaimResult",
+    ) -> RetryResult:
+        """RetryRequest・lineage・claimをWorkflowEngineEventへ変換し、再実行を依頼する。
+
+        Architecture Amendment（Code Review Blocking#1・Blocking#2対応、
+        docs/design/retry_lineage_eligibility_durable_attempt_state.md 10.2.4章）：
+        post-admission hook（mark_execution_started()）のdurable ack、および
+        mark_terminal()のdurable ackを、いずれも必ず確認する。hook未ack時は
+        disposition計算・mark_terminal()呼び出しを一切行わずclaimを解放し、
+        SUCCEEDED/COMPLETEへ到達しないfail-closed経路を通す。
+        """
+        correlation_metadata = {
+            "retry_lineage": {
+                "root_run_id": lineage.root_run_id,
+                "intended_attempt_no": str(claim.attempt_no),
+                "correlation_id": claim.correlation_id or "",
+            }
+        }
+        target_step_filter = [WorkflowEngineStep(s) for s in (claim.steps_to_execute or [])]
+
+        # hookのdurable ack結果は、WorkflowEngineResult側からは（hook例外時は
+        # 戻り値自体が得られないため）安定して取得できない。closureが捕捉した
+        # 値（durable ackそのもの）を唯一の真実として使う（10.2.4.2章）。
+        hook_ack_state: dict[str, bool | None] = {"acknowledged": None}
+
+        def post_admission_hook(run_id: str) -> PostAdmissionHookResult:
+            ack = self._lineage.mark_execution_started(lineage.root_run_id, run_id)
+            hook_ack_state["acknowledged"] = ack
+            return PostAdmissionHookResult(acknowledged=ack)
+
         event = WorkflowEngineEvent(
-            job_id=record.job_id,
+            job_id=lineage.root_run_id,
             source=SOURCE_MANUAL,
             triggered_at=request.requested_at,
             trigger_reason=(
-                f"Retry of run_id={request.run_id} "
-                f"(monitor_status={record.monitor_status.value}, attempt={request.attempt})."
+                f"Retry of root_run_id={lineage.root_run_id} (attempt={claim.attempt_no})."
             ),
-            metadata={"retried_from": request.run_id, "attempt": request.attempt},
+            metadata={"retried_from": lineage.root_run_id, "attempt": claim.attempt_no},
         )
-        engine_result = self._engine.run(event, dry_run=request.dry_run)
+        try:
+            engine_result = self._engine.run(
+                event,
+                dry_run=request.dry_run,
+                target_step_filter=target_step_filter,
+                post_admission_hook=post_admission_hook,
+                correlation_metadata=correlation_metadata,
+            )
+        except Exception:
+            # hook例外経路（10.2.3・10.2.4.2章）：既存のfail-fast契約どおり例外は
+            # 再raiseする。durable ackが得られていない（True未達）場合のみ、
+            # 再raiseの前にclaimを解放し、CLAIMEDのまま取り残さない
+            # （17章crash matrix行23、16章(c)のクラッシュ経路と対をなす同期回収）。
+            if not request.dry_run and hook_ack_state["acknowledged"] is not True:
+                self._lineage.release_claim(lineage.root_run_id)
+            raise
+
+        if not request.dry_run and hook_ack_state["acknowledged"] is False:
+            self._lineage.release_claim(lineage.root_run_id)
+            return RetryResult(
+                original_run_id=lineage.root_run_id,
+                outcome=RetryOutcome.SKIPPED,
+                attempt=claim.attempt_no or request.attempt,
+                monitor_status=None,
+                reason=(
+                    "post-admission hook did not acknowledge (mark_execution_started() "
+                    "failed); claim released back to READY_ELIGIBLE (Architecture "
+                    "Amendment, Blocking#1)."
+                ),
+                workflow_engine_result=engine_result,
+                requested_attempt_argument=request.attempt,
+                authoritative_attempt_no=claim.attempt_no,
+                attempt_argument_mismatch=(
+                    claim.attempt_no is not None and request.attempt != claim.attempt_no
+                ),
+            )
+
         outcome = RetryOutcome.DRY_RUN if request.dry_run else RetryOutcome.RETRIED
+
+        if not request.dry_run:
+            newly_confirmed = compute_newly_confirmed(engine_result)
+            disposition = decide_disposition(engine_result)
+            mark_result = self._lineage.mark_terminal(
+                lineage.root_run_id, disposition, engine_result.run_id, newly_confirmed,
+            )
+            if not mark_result.acknowledged:
+                return RetryResult(
+                    original_run_id=lineage.root_run_id,
+                    outcome=RetryOutcome.SKIPPED,
+                    attempt=claim.attempt_no or request.attempt,
+                    monitor_status=None,
+                    reason=(
+                        f"mark_terminal() did not acknowledge ({mark_result.reason}); "
+                        f"deferring to reconcile_all() (Architecture Amendment, Blocking#2)."
+                    ),
+                    workflow_engine_result=engine_result,
+                    requested_attempt_argument=request.attempt,
+                    authoritative_attempt_no=claim.attempt_no,
+                    attempt_argument_mismatch=(
+                        claim.attempt_no is not None and request.attempt != claim.attempt_no
+                    ),
+                )
+
         return RetryResult(
-            original_run_id=request.run_id,
+            original_run_id=lineage.root_run_id,
             outcome=outcome,
-            attempt=request.attempt,
-            monitor_status=record.monitor_status,
+            attempt=claim.attempt_no or request.attempt,
+            monitor_status=None,
             reason=None,
             workflow_engine_result=engine_result,
+            requested_attempt_argument=request.attempt,
+            authoritative_attempt_no=claim.attempt_no,
+            attempt_argument_mismatch=(
+                claim.attempt_no is not None and request.attempt != claim.attempt_no
+            ),
+        )
+
+    def preview(self, event: WorkflowEngineEvent, target_step_filter: list[WorkflowEngineStep] | None):
+        """RetryManager._dry_run_retry()専用のread-onlyプレビュー。post_admission_hookを
+        渡さない（Noneのため、mark_execution_started()は一切呼ばれない）ことで、
+        Execution History・Retry Lineage双方についてzero-writeを構造的に保証する。"""
+        return self._engine.run(
+            event, dry_run=True, target_step_filter=target_step_filter,
+            post_admission_hook=None, correlation_metadata=None,
         )

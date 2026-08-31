@@ -26,10 +26,16 @@ NullWorkflowEngineManager: 二重ゲートが閉じている場合（デフォ�
       WorkflowEngineExecutor へDIする。EXECUTION_HISTORY_ENABLED=false の場合は
       NullExecutionHistoryManager が渡り、既存の実行制御には一切影響しない
       （docs/design/execution_history_foundation.md 7.3節）。
+    - [Release 6.31] run()へtarget_step_filter / post_admission_hook /
+      correlation_metadataを追加した（いずれも呼び出しごとの値、省略時None）。
+      RetryExecutorがclaim()結果ごとに異なる値を渡せるようにするための拡張であり、
+      既存の非retry呼び出し元（scripts/run_workflow_engine.py等）には一切影響しない
+      （docs/design/retry_lineage_eligibility_durable_attempt_state.md 11.4章）。
 """
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
 from ai import (
     AgentConfig,
@@ -51,6 +57,9 @@ from .workflow_engine_event import WorkflowEngineEvent
 from .workflow_engine_executor import WorkflowEngineExecutor
 from .workflow_engine_result import WorkflowEngineResult
 from .workflow_engine_step import WorkflowEngineStep
+
+if TYPE_CHECKING:
+    from .workflow_engine_post_admission_hook import PostAdmissionHook
 
 REASON_REVIEW_GATE_CLOSED = (
     "review step skipped: REVIEW_TRIGGER_AGENT_ENABLED is not set."
@@ -141,12 +150,28 @@ class WorkflowEngineManager:
         """Workflow Engineが実行可能な状態か返す。"""
         return self._config.is_ready()
 
-    def run(self, event: WorkflowEngineEvent, dry_run: bool = False) -> WorkflowEngineResult:
-        """WorkflowEngineEventを起点にWorkflowEngineContextを組み立て、Executorへ委譲する。"""
+    def run(
+        self,
+        event: WorkflowEngineEvent,
+        dry_run: bool = False,
+        target_step_filter: list[WorkflowEngineStep] | None = None,
+        post_admission_hook: "PostAdmissionHook | None" = None,
+        correlation_metadata: dict[str, dict[str, str]] | None = None,
+    ) -> WorkflowEngineResult:
+        """WorkflowEngineEventを起点にWorkflowEngineContextを組み立て、Executorへ委譲する。
+
+        target_step_filter / post_admission_hook / correlation_metadataはRelease 6.31
+        （Retry Lineage）で追加した呼び出しごとの引数。いずれも省略時（None）は
+        既存の全非retry呼び出し元に対して完全にZero-Diff
+        （docs/design/retry_lineage_eligibility_durable_attempt_state.md 11.4・21章）。
+        """
         context = WorkflowEngineContext(
             event=event,
             dry_run=dry_run,
             run_id=self._generate_run_id(),
+            target_step_filter=target_step_filter,
+            post_admission_hook=post_admission_hook,
+            correlation_metadata=correlation_metadata,
         )
         return self._executor.run(context)
 
@@ -164,7 +189,14 @@ class NullWorkflowEngineManager:
     def is_available(self) -> bool:
         return False
 
-    def run(self, event: WorkflowEngineEvent, dry_run: bool = False) -> None:
+    def run(
+        self,
+        event: WorkflowEngineEvent,
+        dry_run: bool = False,
+        target_step_filter: list[WorkflowEngineStep] | None = None,
+        post_admission_hook: "PostAdmissionHook | None" = None,
+        correlation_metadata: dict[str, dict[str, str]] | None = None,
+    ) -> None:
         print(
             "  [WORKFLOW ENGINE] Workflow Engineが無効です"
             "（AI_AGENT_ENABLED かつ WORKFLOW_ENGINE_ENABLED が必要です）。"

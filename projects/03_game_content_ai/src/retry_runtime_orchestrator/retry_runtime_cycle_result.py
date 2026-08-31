@@ -12,6 +12,12 @@ RetryRuntimeCycleResult: RetryRuntimeOrchestrator.run_once() 1回分の実行結
     - scheduler_events を保持する理由：Schedulerが何件のRetry候補を返したかを
       trigger_result（Enqueue件数）と突き合わせて確認できるようにするため
       （docs/design/retry_runtime_run_once_foundation.md 参照）。
+
+Release 6.31での変更（docs/design/retry_lineage_eligibility_durable_attempt_state.md
+16章）:
+    - reconcile_summary（ReconcileSummary、retry_lineage）を追加した。run_once()
+      冒頭のlineage.reconcile_all()呼び出し結果を保持する。デフォルトNone
+      （既存呼び出し元へのZero-Diff、通常はrun_once()が必ず設定する）。
 """
 from __future__ import annotations
 
@@ -25,6 +31,7 @@ from retry_engine import (
     RetryQueueTerminalCleanupResult,
 )
 from retry_enqueue_trigger import RetryEnqueueTriggerResult
+from retry_lineage import ReconcileSummary
 from scheduler import SchedulerEvent
 
 
@@ -39,3 +46,4 @@ class RetryRuntimeCycleResult:
     cleanup_results: list[RetryQueueCleanupResult]
     terminal_cleanup_results: list[RetryQueueTerminalCleanupResult]
     history_results: list[RetryHistoryRecordResult]
+    reconcile_summary: "ReconcileSummary | None" = None

@@ -51,10 +51,40 @@ NullRetryEnqueueTrigger: RetryEnqueueTriggerのダミー実装（Null Object）�
       いずれにも加算しない）。RetryEnqueueTriggerResultのフィールド構成は
       本Releaseでも無変更（KI-23、docs/design/retry_enqueue_trigger_dry_run_
       foundation.md参照）。
+    - （Release 6.31）lineage（RetryLineageManager）を省略可能な追加依存として
+      Constructor Injectionできるようにした（docs/design/
+      retry_lineage_eligibility_durable_attempt_state.md 10.3.3・19章）。
+      membership-first判定：候補run_idについて、まず
+      `lineage.find_by_member_run_id(candidate_run_id)`を試み、既存lineageの
+      membershipに既に記録されている（＝mark_execution_started()が過去に成功した
+      attemptのrun_idである）場合、この候補run_idを独立候補として扱わず
+      enqueue対象から除外する（skipped_lineage_memberとして計上）。
+      lineage省略時（None）は既存の全呼び出し元に対して完全にZero-Diff。
+    - （Release 6.31、correlation-fallback実装）history_store
+      （execution_history.ExecutionHistoryStore）を省略可能な追加依存として
+      Constructor Injectionできるようにした。membership-firstで見つからなかった
+      候補についてのみ（hook失敗由来のorphan候補、10.2章）、
+      `history_store.get(candidate_run_id).correlation_metadata["retry_lineage"]`
+      を読み取り、`lineage.verify_orphan_correlation()`（root_run_id実在・
+      intended_attempt_no厳密一致・correlation_id完全一致の3条件、10.3.3章(b)）で
+      検証する。3条件すべてを満たした場合のみ独立候補から除外する
+      （skipped_lineage_correlationとして計上）。malformed（型不正・キー欠落）・
+      forged（存在しないroot_run_idを騙る）・stale（古いattempt_noを騙る）は
+      いずれもfail-closed（`_extract_retry_lineage_correlation()`・
+      `verify_orphan_correlation()`双方が、条件を満たさない限り通常の独立候補
+      処理へフォールバックさせる、10.3.4章）ため、無関係なFAILED候補を誤って
+      除外することはない。
+      `WorkflowMonitorRecord`（workflow_monitor、本Releaseの承認済み変更対象外、
+      22章「無改修（明示）」）は`correlation_metadata`を保持していないため、
+      本機能はworkflow_monitorを経由せず、execution_historyへの新規の直接依存
+      （`ExecutionHistoryStore`のみ、`ExecutionHistoryManager`等の書き込み系APIは
+      importしない）を追加することで実現した。history_store省略時（None）は
+      既存の全呼び出し元に対して完全にZero-Diff。
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from retry_history import NullRetryHistoryManager, RetryHistoryManager
 from retry_queue import RetryQueueManager, RetryQueueOutcome
@@ -62,7 +92,36 @@ from workflow_monitor import WorkflowMonitorManager, WorkflowMonitorStatus
 
 from .retry_enqueue_guard import RetryEnqueueGuard, RetryEnqueueGuardOutcome
 
+if TYPE_CHECKING:
+    from execution_history import ExecutionHistoryStore
+    from retry_lineage import RetryLineageManager
+
 _RETRY_TARGET_STATUSES = frozenset({WorkflowMonitorStatus.FAILED, WorkflowMonitorStatus.TIMEOUT})
+
+
+def _extract_retry_lineage_correlation(record) -> "tuple[str, str, str] | None":
+    """WorkflowExecutionRecord.correlation_metadataから"retry_lineage"namespaceを
+    fail-closedに抽出する（10.3.4章）。期待する型・キーが揃っていない場合は
+    Noneを返し、呼び出し元は相関情報が存在しない場合と同一の経路（通常の独立候補
+    処理）へフォールバックする。"""
+    if record is None:
+        return None
+    metadata = record.correlation_metadata
+    if not isinstance(metadata, dict):
+        return None
+    namespace = metadata.get("retry_lineage")
+    if not isinstance(namespace, dict):
+        return None
+    root_run_id = namespace.get("root_run_id")
+    intended_attempt_no = namespace.get("intended_attempt_no")
+    correlation_id = namespace.get("correlation_id")
+    if not isinstance(root_run_id, str) or not root_run_id:
+        return None
+    if not isinstance(intended_attempt_no, str) or not intended_attempt_no:
+        return None
+    if not isinstance(correlation_id, str) or not correlation_id:
+        return None
+    return root_run_id, intended_attempt_no, correlation_id
 
 
 @dataclass(frozen=True)
@@ -75,6 +134,8 @@ class RetryEnqueueTriggerResult:
     skipped_status: int
     failed: int
     skipped_history: int = 0
+    skipped_lineage_member: int = 0
+    skipped_lineage_correlation: int = 0
 
 
 class RetryEnqueueTrigger:
@@ -94,11 +155,15 @@ class RetryEnqueueTrigger:
         queue: RetryQueueManager,
         history: "RetryHistoryManager | NullRetryHistoryManager | None" = None,
         guard: RetryEnqueueGuard | None = None,
+        lineage: "RetryLineageManager | None" = None,
+        history_store: "ExecutionHistoryStore | None" = None,
     ):
         self._monitor = monitor
         self._queue = queue
         self._history = history if history is not None else NullRetryHistoryManager()
         self._guard = guard if guard is not None else RetryEnqueueGuard()
+        self._lineage = lineage
+        self._history_store = history_store
 
     def enqueue_pending_failures(
         self, limit: int | None = None, max_attempts: int = 1, dry_run: bool = False,
@@ -124,12 +189,43 @@ class RetryEnqueueTrigger:
         skipped_existing = 0
         skipped_status = 0
         skipped_history = 0
+        skipped_lineage_member = 0
+        skipped_lineage_correlation = 0
         failed = 0
 
         for record in records:
             if record.monitor_status not in _RETRY_TARGET_STATUSES:
                 skipped_status += 1
                 continue
+
+            if self._lineage is not None:
+                if self._lineage.find_by_member_run_id(record.run_id) is not None:
+                    # membership-first（10.3.3章(1)）：既存lineageのmembershipに
+                    # 既に記録されているrun_id（例：open_next_attempt()後のattemptが
+                    # それ自体FAILED/TIMEOUTとしてMonitor上に観測された場合）は、
+                    # 独立候補として扱わない。retry_lineageの通常のreconcile経路が
+                    # 既にこのlineageを処理する。
+                    skipped_lineage_member += 1
+                    continue
+
+                if self._history_store is not None:
+                    # correlation-fallback（10.3.3章(2)）：membership-firstで
+                    # 見つからなかった候補（＝mark_execution_started()が一度も
+                    # 成功していない、hook ack失敗由来のorphan候補、10.2章）に
+                    # 限り、correlation_metadataのexact-match検証を試みる。
+                    exec_record = self._history_store.get(record.run_id)
+                    correlation = _extract_retry_lineage_correlation(exec_record)
+                    if correlation is not None:
+                        root_run_id, intended_attempt_no, correlation_id = correlation
+                        if self._lineage.verify_orphan_correlation(
+                            root_run_id, intended_attempt_no, correlation_id,
+                        ):
+                            skipped_lineage_correlation += 1
+                            continue
+                    # correlationがNone、またはverify_orphan_correlation()がFalse
+                    # （a・b・cのいずれか不成立）の場合は、相関情報が存在しない場合と
+                    # 全く同じ扱い（fail-closed、盲目的に信頼しない、10.3.4章）で
+                    # 通常の独立候補処理へフォールバックする。
 
             history_record = self._history.get(record.run_id)
             next_attempt = history_record.attempt_count + 1 if history_record is not None else 1
@@ -162,6 +258,8 @@ class RetryEnqueueTrigger:
             skipped_status=skipped_status,
             failed=failed,
             skipped_history=skipped_history,
+            skipped_lineage_member=skipped_lineage_member,
+            skipped_lineage_correlation=skipped_lineage_correlation,
         )
 
 

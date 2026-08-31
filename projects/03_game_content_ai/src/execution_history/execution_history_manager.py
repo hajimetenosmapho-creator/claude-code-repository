@@ -39,6 +39,7 @@ from .execution_history_store import ExecutionHistoryStore
 from .json_execution_history_store import JsonExecutionHistoryStore
 from .start_run_write_result import StartRunWriteResult
 from .step_execution_record import StepExecutionRecord, StepExecutionStatus
+from .step_skip_category import StepSkipCategory
 from .workflow_execution_record import WorkflowExecutionRecord, WorkflowExecutionStatus
 
 
@@ -62,9 +63,19 @@ class ExecutionHistoryManager:
         return cls(store=JsonExecutionHistoryStore(config.history_dir))
 
     def start_run(
-        self, run_id: str, workflow_name: str, source: str, job_id: str
+        self,
+        run_id: str,
+        workflow_name: str,
+        source: str,
+        job_id: str,
+        correlation_metadata: dict[str, dict[str, str]] | None = None,
     ) -> StartRunWriteResult:
-        """RUNNING状態のcandidateを作成し、保存を試みる。"""
+        """RUNNING状態のcandidateを作成し、保存を試みる。
+
+        correlation_metadata省略時（既存の全非retry呼び出し元）は{}のまま保存される
+        （Release 6.31、docs/design/retry_lineage_eligibility_durable_attempt_state.md
+        10.3.2章、Zero-Diff）。
+        """
         now = datetime.now()
         candidate = WorkflowExecutionRecord(
             run_id=run_id,
@@ -73,6 +84,7 @@ class ExecutionHistoryManager:
             job_id=job_id,
             status=WorkflowExecutionStatus.RUNNING,
             started_at=now,
+            correlation_metadata=correlation_metadata or {},
         )
         candidate.events.append(
             ExecutionHistoryEvent(
@@ -119,12 +131,18 @@ class ExecutionHistoryManager:
         status: StepExecutionStatus,
         error_message: str | None = None,
         skipped_reason: str | None = None,
+        action_taken: bool | None = None,
+        skip_category: StepSkipCategory | None = None,
     ) -> bool:
         """直近のRUNNING stepを確定させるか、SKIPPED/NOT_REACHEDの正式recordを追加する。
 
         persist失敗時は、runをFAILEDへ終端させるrecoveryを1回だけ試行する（13章）。
         executed RUNNING stepはFAILEDへ正規化する。SKIPPED/NOT_REACHEDはstatusを保持
         したまま、run自体のみFAILEDへ終端する。いずれの場合も戻り値はFalse。
+
+        action_taken / skip_category省略時（既存の全非retry呼び出し元）はNoneのまま
+        記録される（Release 6.31、docs/design/
+        retry_lineage_eligibility_durable_attempt_state.md 11.7.2章、Zero-Diff）。
         """
         snapshot = self._last_acknowledged.get(run_id)
         if snapshot is None or snapshot.status != WorkflowExecutionStatus.RUNNING:
@@ -138,6 +156,8 @@ class ExecutionHistoryManager:
             pending.finished_at = now
             pending.error_message = error_message
             pending.skipped_reason = skipped_reason
+            pending.action_taken = action_taken
+            pending.skip_category = skip_category
         else:
             # SKIPPED / NOT_REACHED：正式なStepExecutionRecordを作成する。started_at=None
             # とする（実際には開始していないため。旧v2.8.0のstarted_at=nowから修正）。
@@ -149,6 +169,8 @@ class ExecutionHistoryManager:
                     finished_at=now,
                     error_message=error_message,
                     skipped_reason=skipped_reason,
+                    action_taken=action_taken,
+                    skip_category=skip_category,
                 )
             )
         candidate.events.append(
@@ -187,6 +209,7 @@ class ExecutionHistoryManager:
                     finished_at=recovery_now,
                     error_message=error_message,
                     skipped_reason=skipped_reason,
+                    skip_category=skip_category,
                 )
             )
         recovery_candidate.status = WorkflowExecutionStatus.FAILED
@@ -288,7 +311,14 @@ class NullExecutionHistoryManager:
     docs/design/production_canonical_run_outcome_contract_foundation.md 9章）。
     """
 
-    def start_run(self, run_id: str, workflow_name: str, source: str, job_id: str) -> StartRunWriteResult:
+    def start_run(
+        self,
+        run_id: str,
+        workflow_name: str,
+        source: str,
+        job_id: str,
+        correlation_metadata: dict[str, dict[str, str]] | None = None,
+    ) -> StartRunWriteResult:
         return StartRunWriteResult(run_id=run_id, acknowledged=True)
 
     def start_step(self, run_id: str, step: str) -> bool:
@@ -301,6 +331,8 @@ class NullExecutionHistoryManager:
         status: StepExecutionStatus,
         error_message: str | None = None,
         skipped_reason: str | None = None,
+        action_taken: bool | None = None,
+        skip_category: StepSkipCategory | None = None,
     ) -> bool:
         return True
 

@@ -33,6 +33,22 @@ Release 6.30での変更（docs/design/production_canonical_run_outcome_contract
       APIを一切呼ばない（finish_runも含む）。残stepはin-memoryのみNOT_REACHED。
     - history_write_failed（latch）をWorkflowEngineResultへ記録する。
     - release_run() は try/finally の finally で必ず1回呼ばれる。
+
+Release 6.31での変更（docs/design/retry_lineage_eligibility_durable_attempt_state.md
+10.2.2・10.3.2・11.3.2・11.4.3章）:
+    - `context.post_admission_hook`が設定されている場合、`start_run()` ack確認の
+      直後・step実行ループの直前に呼び出す（引数はrun_idのみ）。hook失敗
+      （ack=False）・hook例外の場合、既存の`history_closed`変数駆動の規律
+      （NOT_REACHED終端処理）と一字一句同型の処理で全stepをNOT_REACHEDへ終端させる。
+      hook例外は、Execution Historyを安全に終端させた後に再raiseする。
+    - `context.target_step_filter`が指定されている場合、gate-closed判定より前に
+      「このstepはtarget_step_filterに含まれるか」を確認し、含まれない場合は
+      `skip_category=NOT_TARGETED`でスキップする（gate-closed skipと同型のパターン）。
+    - `context.correlation_metadata`を`start_run()`へそのまま渡す（意味非解釈）。
+    - 全skip分岐（gate-closed・NOT_TARGETED・NOT_REACHED・history_write_failed）へ
+      対応する`skip_category`を明示的に設定する。
+    - `WorkflowEngineResult.run_id`を設定する（呼び出し元がこの実行のrun_idを
+      `WorkflowEngineResult`から直接取得できるようにする、21章）。
 """
 from __future__ import annotations
 
@@ -43,6 +59,7 @@ from execution_history import (
     ExecutionHistoryManager,
     NullExecutionHistoryManager,
     StepExecutionStatus,
+    StepSkipCategory,
     WorkflowExecutionStatus,
 )
 
@@ -52,12 +69,47 @@ from .workflow_engine_exceptions import CanonicalAdmissionFailure
 from .workflow_engine_result import (
     REASON_HISTORY_WRITE_FAILED,
     REASON_NOT_REACHED,
+    REASON_NOT_TARGETED,
     WorkflowEngineResult,
     WorkflowEngineStepResult,
 )
 from .workflow_engine_step import WorkflowEngineStep
 
+REASON_POST_ADMISSION_HOOK_NOT_ACKNOWLEDGED = "Not executed: post-admission hook did not acknowledge."
+REASON_POST_ADMISSION_HOOK_EXCEPTION = "Not executed: post-admission hook raised an exception."
+
 WORKFLOW_NAME = "workflow_engine"
+
+
+def _call_start_run(history_manager, run_id, workflow_name, source, job_id, correlation_metadata):
+    """Release 6.31（10.3.2章）：correlation_metadataがNone（既存の全非retry呼び出し元の
+    既定値）の場合、start_run()へこのキーワード引数自体を渡さない。history_managerに
+    duck-typingで渡される、correlation_metadataパラメータを持たない旧形式のFake実装
+    （本Release以前から存在するテスト等）とのZero-Diffを、呼び出し引数の形の面でも
+    厳密に保証するため。"""
+    kwargs = {}
+    if correlation_metadata is not None:
+        kwargs["correlation_metadata"] = correlation_metadata
+    return history_manager.start_run(
+        run_id=run_id, workflow_name=workflow_name, source=source, job_id=job_id, **kwargs,
+    )
+
+
+def _call_finish_step(
+    history_manager, run_id, step, status, error_message=None, skipped_reason=None,
+    action_taken=None, skip_category=None,
+):
+    """Release 6.31（11.3.2・11.7.2章）：action_taken/skip_categoryがNoneの場合、
+    finish_step()へこれらのキーワード引数自体を渡さない。_call_start_run()と同じ
+    理由（旧形式Fakeとのzero-diff）。"""
+    kwargs = {}
+    if action_taken is not None:
+        kwargs["action_taken"] = action_taken
+    if skip_category is not None:
+        kwargs["skip_category"] = skip_category
+    return history_manager.finish_step(
+        run_id, step, status, error_message=error_message, skipped_reason=skipped_reason, **kwargs,
+    )
 
 
 class WorkflowEngineExecutor:
@@ -99,11 +151,13 @@ class WorkflowEngineExecutor:
             ):
                 raise CanonicalAdmissionFailure(run_id, reason="EXECUTION_HISTORY_DISABLED")
 
-            start_result = effective_history_manager.start_run(
+            start_result = _call_start_run(
+                effective_history_manager,
                 run_id=run_id,
                 workflow_name=WORKFLOW_NAME,
                 source=context.event.source,
                 job_id=context.event.job_id,
+                correlation_metadata=context.correlation_metadata,
             )
             if not start_result.acknowledged:
                 raise CanonicalAdmissionFailure(run_id, reason="START_RUN_ACK_FAILED")
@@ -115,6 +169,65 @@ class WorkflowEngineExecutor:
             owe_closing_finish_run = False  # control-flow専用フラグ。start_step ack失敗経路でのみ
                                              # True。実際のdurable terminal状態を推測・claimしない。
 
+            # Release 6.31（10.2.2章）：post-admission hookは start_run() ack確認の直後・
+            # step実行ループの直前に呼ぶ。Noneの場合（既存の全非retry呼び出し元）は
+            # 従来どおりhook呼び出し自体をスキップする（Zero-Diff）。
+            if context.post_admission_hook is not None:
+                hook_exception: Exception | None = None
+                try:
+                    hook_result = context.post_admission_hook(run_id)
+                    hook_ack = hook_result.acknowledged
+                except Exception as exc:
+                    hook_ack = False
+                    hook_exception = exc
+
+                if not hook_ack:
+                    reason = (
+                        REASON_POST_ADMISSION_HOOK_EXCEPTION
+                        if hook_exception is not None
+                        else REASON_POST_ADMISSION_HOOK_NOT_ACKNOWLEDGED
+                    )
+                    for step in self._definition.steps:
+                        step_results.append(
+                            WorkflowEngineStepResult(
+                                step=step, executed=False, agent_result=None, success=False,
+                                skipped_reason=reason,
+                                skip_category=(
+                                    StepSkipCategory.HOOK_EXCEPTION
+                                    if hook_exception is not None
+                                    else StepSkipCategory.HOOK_NOT_ACKNOWLEDGED
+                                ),
+                            )
+                        )
+                        if history_closed:
+                            continue  # 既存規律：一度失敗したら以降History APIを呼ばない
+                        ok = _call_finish_step(
+                            effective_history_manager,
+                            run_id, step.value, StepExecutionStatus.NOT_REACHED, skipped_reason=reason,
+                        )
+                        if not ok:
+                            history_write_failed = True
+                            history_closed = True
+
+                    if not history_closed:
+                        ok = effective_history_manager.finish_run(run_id, WorkflowExecutionStatus.FAILED)
+                        if not ok:
+                            history_write_failed = True
+                    # else: finish_step失敗経路。既存規律どおりManagerが既にrecovery試行済みのため
+                    #       finish_run は呼ばない（history_write_failedがTrueのままWorkflowEngineResultへ伝播する）。
+
+                    context.step_results = step_results
+                    result = WorkflowEngineResult(
+                        run_id=run_id,
+                        steps=step_results, overall_success=False, stopped_early=True,
+                        started_at=started_at, finished_at=datetime.now(),
+                        warnings=list(context.warnings), history_write_failed=history_write_failed,
+                    )
+                    if hook_exception is not None:
+                        # Execution Historyを既存規律どおり終端させた後に再raiseする（10.2.3節）。
+                        raise hook_exception
+                    return result
+
             for step in self._definition.steps:
                 if history_closed or stopped_early:
                     step_results.append(
@@ -124,15 +237,39 @@ class WorkflowEngineExecutor:
                             agent_result=None,
                             success=False,
                             skipped_reason=REASON_NOT_REACHED,
+                            skip_category=StepSkipCategory.NOT_REACHED,
                         )
                     )
                     if history_closed:
                         continue  # in-memoryのみ。History API呼び出しなし
-                    ok = effective_history_manager.finish_step(
+                    ok = _call_finish_step(
+                        effective_history_manager,
                         run_id,
                         step.value,
                         StepExecutionStatus.NOT_REACHED,
                         skipped_reason=REASON_NOT_REACHED,
+                    )
+                    if not ok:
+                        history_write_failed = True
+                        history_closed = True
+                    continue
+
+                # Release 6.31（11.4.3章）：gate-closed判定より前に、target_step_filterに
+                # 含まれるかを確認する。既にconfirmed doneのstepを今回のattemptで
+                # 再実行しないための仕組み。target_step_filter=None（既存の全非retry
+                # 呼び出し元）の場合は従来どおり全stepが対象（Zero-Diff）。
+                if context.target_step_filter is not None and step not in context.target_step_filter:
+                    step_results.append(
+                        WorkflowEngineStepResult(
+                            step=step, executed=False, agent_result=None, success=True,
+                            skipped_reason=REASON_NOT_TARGETED,
+                            skip_category=StepSkipCategory.NOT_TARGETED,
+                        )
+                    )
+                    ok = _call_finish_step(
+                        effective_history_manager,
+                        run_id, step.value, StepExecutionStatus.SKIPPED,
+                        skipped_reason=REASON_NOT_TARGETED, skip_category=StepSkipCategory.NOT_TARGETED,
                     )
                     if not ok:
                         history_write_failed = True
@@ -152,10 +289,13 @@ class WorkflowEngineExecutor:
                             agent_result=None,
                             success=True,
                             skipped_reason=reason,
+                            skip_category=StepSkipCategory.GATE_CLOSED,
                         )
                     )
-                    ok = effective_history_manager.finish_step(
-                        run_id, step.value, StepExecutionStatus.SKIPPED, skipped_reason=reason
+                    ok = _call_finish_step(
+                        effective_history_manager,
+                        run_id, step.value, StepExecutionStatus.SKIPPED, skipped_reason=reason,
+                        skip_category=StepSkipCategory.GATE_CLOSED,
                     )
                     if not ok:
                         history_write_failed = True
@@ -172,6 +312,7 @@ class WorkflowEngineExecutor:
                             agent_result=None,
                             success=False,
                             skipped_reason=REASON_HISTORY_WRITE_FAILED,
+                            skip_category=StepSkipCategory.HISTORY_WRITE_FAILED,
                         )
                     )
                     history_closed = True
@@ -202,11 +343,14 @@ class WorkflowEngineExecutor:
                 )
 
                 if agent_result.success:
-                    ok = effective_history_manager.finish_step(
-                        run_id, step.value, StepExecutionStatus.SUCCESS
+                    ok = _call_finish_step(
+                        effective_history_manager,
+                        run_id, step.value, StepExecutionStatus.SUCCESS,
+                        action_taken=agent_result.action_taken,
                     )
                 else:
-                    ok = effective_history_manager.finish_step(
+                    ok = _call_finish_step(
+                        effective_history_manager,
                         run_id,
                         step.value,
                         StepExecutionStatus.FAILED,
@@ -239,6 +383,7 @@ class WorkflowEngineExecutor:
             # finish_run は呼ばない（recovery成否は問わない）。
 
             return WorkflowEngineResult(
+                run_id=run_id,
                 steps=step_results,
                 overall_success=overall_success,
                 stopped_early=stopped_early,

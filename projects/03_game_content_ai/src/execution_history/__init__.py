@@ -22,6 +22,15 @@ Workflow Engine（v2.7.0）が実行した各Workflowについて、実行の開
       （WorkflowEngineExecutor）が`CanonicalAdmissionFailure(EXECUTION_HISTORY_DISABLED)`
       へ変換しfail-closedで拒否する（docs/design/
       production_canonical_run_outcome_contract_foundation.md 9・11・19章）。
+
+Release 6.31での変更（docs/design/retry_lineage_eligibility_durable_attempt_state.md）:
+    - `WorkflowExecutionRecord.correlation_metadata`（10.3章）・
+      `StepExecutionRecord.action_taken`/`skip_category`（11.7.2章）を追加した。
+      いずれも省略時Zero-Diff（既存呼び出し元は無変更のまま動作する）。
+    - `StepSkipCategory`（新設）を本パッケージへ定義した。retry_lineageパッケージが
+      importする一方向依存（execution_history → retry_lineageの依存は発生させない）。
+      本パッケージ自体はretry_lineage / workflow_engine / ai / pipeline / scheduler の
+      いずれもimportしないという既存原則を維持する。
 """
 from .execution_history_config import ExecutionHistoryConfig
 from .execution_history_event import (
@@ -32,6 +41,7 @@ from .execution_history_event import (
     ExecutionHistoryEvent,
 )
 from .step_execution_record import StepExecutionRecord, StepExecutionStatus
+from .step_skip_category import StepSkipCategory
 from .workflow_execution_record import WorkflowExecutionRecord, WorkflowExecutionStatus
 from .execution_history_store import ExecutionHistoryStore
 from .json_execution_history_store import JsonExecutionHistoryStore
@@ -47,6 +57,7 @@ __all__ = [
     "EVENT_STEP_FINISHED",
     "StepExecutionRecord",
     "StepExecutionStatus",
+    "StepSkipCategory",
     "WorkflowExecutionRecord",
     "WorkflowExecutionStatus",
     "ExecutionHistoryStore",

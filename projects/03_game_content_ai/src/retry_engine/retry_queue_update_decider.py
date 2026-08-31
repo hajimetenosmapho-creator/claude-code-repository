@@ -23,6 +23,15 @@ RetryQueueUpdateDecider:  RetryExecutionResult のリストを受け取り、各
       NOOP のまま次Releaseまで Queue に滞留し続ける可能性がある。この滞留の扱いは
       本Foundationの対象外とし、Release 4.2「Retry Queue Removal」の検討事項として
       申し送る（同設計書12章 Future Extension・16.3節 Recommendation 2）。
+
+Release 6.31での変更（docs/design/retry_lineage_eligibility_durable_attempt_state.md
+9.8.1.3・11.5章）:
+    - RETRIEDの場合のCOMPLETE/FAIL判定を、`workflow_engine_result.overall_success`
+      （SILENT_NO_ACTIONなstepもsuccess=Trueのため、NOT_ACTIONED dispositionを
+      誤ってCOMPLETEに倒してしまう）から、`retry_lineage.decide_disposition()`
+      （lineageのmark_terminal()が実際に使うのと同一の判定ロジック）へ変更した。
+      `SUCCEEDED`→COMPLETE、`FAILED`／`NOT_ACTIONED`→FAIL（いずれもlineage側では
+      retryableとして扱われるため、Queue側もCOMPLETEにはしない）。
 """
 from __future__ import annotations
 
@@ -30,6 +39,8 @@ from dataclasses import dataclass
 from enum import Enum
 
 from retry_queue import RetryQueueStatus
+
+from retry_lineage import RetryLineageDisposition, decide_disposition
 
 from .retry_execution_coordinator import RetryExecutionResult
 from .retry_result import RetryOutcome
@@ -65,18 +76,19 @@ class RetryQueueUpdateDecider:
         retry_result = execution_result.retry_result
 
         if retry_result.outcome == RetryOutcome.RETRIED:
-            if retry_result.workflow_engine_result.overall_success:
+            disposition = decide_disposition(retry_result.workflow_engine_result)
+            if disposition == RetryLineageDisposition.SUCCEEDED:
                 return RetryQueueUpdateDecision(
                     execution_result=execution_result,
                     outcome=RetryQueueUpdateOutcome.COMPLETE,
                     target_status=RetryQueueStatus.COMPLETED,
-                    reason="retry was executed and workflow_engine_result.overall_success=True.",
+                    reason="retry was executed and decide_disposition()==SUCCEEDED.",
                 )
             return RetryQueueUpdateDecision(
                 execution_result=execution_result,
                 outcome=RetryQueueUpdateOutcome.FAIL,
                 target_status=RetryQueueStatus.FAILED,
-                reason="retry was executed but workflow_engine_result.overall_success=False.",
+                reason=f"retry was executed but decide_disposition()=={disposition.value}.",
             )
 
         # SKIPPED / NOT_FOUND / DISABLED: 再実行が行われていないため、

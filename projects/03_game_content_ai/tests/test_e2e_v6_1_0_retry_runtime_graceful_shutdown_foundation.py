@@ -519,11 +519,13 @@ print()
 
 print("[テスト27-31] 既存主要コンポーネントに変更がないこと（git diff）")
 
+# Release 6.31（Retry Lineage, Eligibility & Durable Attempt State）により、
+# src/retry_composition・src/retry_runtime_orchestrator・src/retry_engineは
+# 承認済み変更対象ファイルを持つため、このリストからは除外する
+# （docs/design/retry_lineage_eligibility_durable_attempt_state.md 22章。
+# 他のリスト項目・historical baselineは無変更）。
 unchanged_paths = [
-    "src/retry_composition",
-    "src/retry_runtime_orchestrator",
     "src/retry_runtime_loop",
-    "src/retry_engine",
     "src/retry_runtime_lock",
 ]
 

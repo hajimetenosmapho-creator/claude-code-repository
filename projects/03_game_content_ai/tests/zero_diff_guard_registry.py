@@ -51,6 +51,7 @@ RELEASE_ORDER: tuple[str, ...] = (
     "v6.28.0",
     "v6.29.0",
     "v6.30.0",
+    "v6.31.0",
 )
 
 
@@ -275,6 +276,34 @@ _TEST_CHANGE_CONTRIBUTIONS: tuple[tuple[str, str], ...] = (
     # 既存のv6.28.0での前例と同一パターンでRelease 6.30以降スキップへ改訂した
     # ため登録する。
     ("test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py", "v6.30.0"),
+    # v6.31.0（Retry Lineage, Eligibility & Durable Attempt State）自身。新規独立
+    # パッケージ（src/retry_lineage）はPROTECTED_PATHS対象外のためsource
+    # contributionは不要（v6.29.0と同じ扱い）。tests/への新規E2E追加と、その追加を
+    # 許容するための本レジストリ自身の編集（RELEASE_ORDERへの"v6.31.0"追記本体）の
+    # 2件を登録する。
+    ("test_e2e_v6_31_0_retry_lineage_eligibility_durable_attempt_state.py", "v6.31.0"),
+    ("zero_diff_guard_registry.py", "v6.31.0"),
+    # v6.31.0：Release 6.31の承認済み変更（src/retry_engine・src/retry_composition・
+    # src/retry_enqueue_trigger・src/retry_runtime_orchestrator・
+    # src/workflow_engine・src/execution_historyの一部ファイル）により、これらpathへの
+    # 「無変更」を独自にhardcodeしていた既存E2E（registry導入以前の各Releaseが個別に
+    # 持つ、本registryを参照しないstandalone guard）が副作用として壊れるため、
+    # 6.30の§32 Historical Zero-Diff Guard Migrationと同一パターンで、該当pathの
+    # 検査を狭く除外する改訂を行った既存E2E一式を登録する（個々の除外方法・対象path
+    # は各ファイル内のコメントを参照）。
+    ("test_e2e_v5_9_0_retry_runtime_loop_wiring_foundation.py", "v6.31.0"),
+    ("test_e2e_v6_0_0_retry_runtime_lock_foundation.py", "v6.31.0"),
+    ("test_e2e_v6_1_0_retry_runtime_graceful_shutdown_foundation.py", "v6.31.0"),
+    ("test_e2e_v6_2_0_structured_loop_logging_foundation.py", "v6.31.0"),
+    ("test_e2e_v6_3_0_retry_metrics_foundation.py", "v6.31.0"),
+    ("test_e2e_v6_4_0_retry_monitoring_foundation.py", "v6.31.0"),
+    # v6.31.0：test_e2e_v6_30_0自身のテスト#39（Retry Runtime Ruling A）が
+    # RetryManager/RetryExecutorを旧APIで直接構築していたため、新しい必須引数
+    # （lineage）を満たす最小限のFakeを追加する改訂を行った。
+    (
+        "test_e2e_v6_30_0_production_canonical_run_outcome_contract_foundation.py",
+        "v6.31.0",
+    ),
 )
 
 

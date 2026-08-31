@@ -180,16 +180,41 @@ NullRetryManager: RETRY_ENGINE_ENABLED=false（デフォルト）、または下
       retry_queue_cleanup_executor.py / retry_queue_terminal_cleanup_decider.py /
       retry_queue_terminal_cleanup_executor.py / retry_outcome_terminality.py /
       retry_policy.py / retry_policy_protocol.py はいずれも本Releaseでも無改修
+
+    - （Release 6.31）retry()の内部実装を`_retry_locked()`（RetryExecutionLock保護下、
+      retry_lineage）へ全面改訂した（docs/design/
+      retry_lineage_eligibility_durable_attempt_state.md 9.3.2章）。既存lineageへの
+      再接続時（attempt 2以降）はWorkflowMonitorManager.get_status()を一切呼ばない
+      構造となり、上記「retry()はその場でWorkflowMonitorManager.get_status()を呼んで
+      最新状態を取得する（Read Before Retry）」という記述は、新規lineage作成時
+      （attempt 1相当）にのみ当てはまる。RetryManagerは新たにretry_lineageパッケージ
+      への依存を負う（RetryLineageManagerを必須のConstructor Injection依存として
+      保持する）——上記「execution_history / ai / pipeline / schedulerを一切import
+      せず、workflow_engineとworkflow_monitorの2パッケージのみに依存する」という
+      原則は、retry_lineageを新たな第3の直接依存として明示的に緩和する
+      （retry_lineage自体はexecution_history/workflow_engine/workflow_monitorへは
+      依存するが、ai/pipeline/schedulerはいずれも一切importしない設計を維持して
+      いるため、それらへの間接的な波及は生じない）。retry()の公開シグネチャ
+      （run_id, attempt=1, dry_run=False）自体は無変更。dry_run=Trueの場合は
+      RetryExecutionLockを取得せず、lineageのdurable stateを一切変更しない
+      read-onlyプレビュー経路（_dry_run_retry()）へ委譲する。
 """
 from __future__ import annotations
 
 from datetime import datetime
 
 from retry_history import NullRetryHistoryManager, RetryHistoryManager
+from retry_lineage import RetryExecutionLock, RetryExecutionLockBusyError, RetryLineageManager
 from retry_queue import NullRetryQueueManager, RetryQueueManager, RetryQueueOutcome, RetryQueueResult
 from scheduler import SchedulerEvent
-from workflow_engine import NullWorkflowEngineManager, WorkflowEngineManager
-from workflow_monitor import NullWorkflowMonitorManager, WorkflowMonitorManager, WorkflowMonitorStatus
+from workflow_engine import (
+    SOURCE_MANUAL,
+    NullWorkflowEngineManager,
+    WorkflowEngineEvent,
+    WorkflowEngineManager,
+    WorkflowEngineStep,
+)
+from workflow_monitor import NullWorkflowMonitorManager, WorkflowMonitorManager
 
 from .retry_config import RetryConfig
 from .retry_event_consumer import RetryCandidateEvent, RetryEventConsumer
@@ -228,6 +253,7 @@ class RetryManager:
         policy: ExplainableRetryPolicy,
         executor: RetryExecutor,
         monitor: WorkflowMonitorManager,
+        lineage: "RetryLineageManager",
         queue: "RetryQueueManager | NullRetryQueueManager | None" = None,
         event_consumer: RetryEventConsumer | None = None,
         event_dispatcher: RetryEventDispatcher | None = None,
@@ -245,6 +271,7 @@ class RetryManager:
         self._policy = policy
         self._executor = executor
         self._monitor = monitor
+        self._lineage = lineage
         self._queue = queue if queue is not None else NullRetryQueueManager()
         self._event_consumer = event_consumer if event_consumer is not None else RetryEventConsumer()
         self._event_dispatcher = event_dispatcher if event_dispatcher is not None else RetryEventDispatcher()
@@ -284,6 +311,7 @@ class RetryManager:
         retry_policy: ExplainableRetryPolicy,
         workflow_engine_manager: "WorkflowEngineManager | NullWorkflowEngineManager",
         workflow_monitor_manager: "WorkflowMonitorManager | NullWorkflowMonitorManager",
+        lineage: "RetryLineageManager",
         retry_queue_manager: "RetryQueueManager | NullRetryQueueManager | None" = None,
         event_consumer: RetryEventConsumer | None = None,
         event_dispatcher: RetryEventDispatcher | None = None,
@@ -347,17 +375,25 @@ class RetryManager:
         history_recorder も省略可能（デフォルト None）。省略した場合は
         RetryManager.__init__ 内で RetryHistoryRecordExecutor() にフォールバックするため、
         本引数を渡さない既存の呼び出しはすべて本Release前と同じ挙動になる（v4.7.0）。
+
+        lineage（Release 6.31、必須）：呼び出し元（RetryCompositionRoot）が構築済みの
+        RetryLineageManagerをDependency Injectionで受け取る。省略不可（デフォルトなし）。
+        retry() の内部実装（_retry_locked()）がlineageのfind_existing_lineage() /
+        create_new_lineage() / claim() へ委譲するため、本Releaseでは他の多くの引数と
+        異なりフォールバックを持たない必須依存とする（docs/design/
+        retry_lineage_eligibility_durable_attempt_state.md 9.3.2章）。
         """
         if not retry_config.is_ready():
             return NullRetryManager()
         if isinstance(workflow_engine_manager, NullWorkflowEngineManager):
             return NullRetryManager()
 
-        executor = RetryExecutor(workflow_engine_manager=workflow_engine_manager)
+        executor = RetryExecutor(workflow_engine_manager=workflow_engine_manager, lineage=lineage)
         return cls(
             policy=retry_policy,
             executor=executor,
             monitor=workflow_monitor_manager,
+            lineage=lineage,
             queue=retry_queue_manager,
             event_consumer=event_consumer,
             event_dispatcher=event_dispatcher,
@@ -375,28 +411,99 @@ class RetryManager:
 
     def retry(self, run_id: str, attempt: int = 1, dry_run: bool = False) -> RetryResult:
         """
-        run_idの現在の状態をWorkflow Monitorから都度読み取り（Read Before Retry）、
-        RetryPolicyを適用して再実行可否を判定し、対象であればRetryRequestを生成して
-        RetryExecutorへ委譲する。dry_runはそのままRetryRequest.dry_runへ渡される。
-        """
-        record = self._monitor.get_status(run_id)
-        if record is None:
-            return RetryResult(
-                original_run_id=run_id, outcome=RetryOutcome.NOT_FOUND, attempt=attempt,
-                monitor_status=None, reason=f"run_id={run_id} was not found in Workflow Monitor.",
-                workflow_engine_result=None,
-            )
+        公開API。RetryExecutionLockを取得し、_retry_locked()（実処理）へ委譲する
+        （docs/design/retry_lineage_eligibility_durable_attempt_state.md 9.3.2章）。
+        RetryExecutionLockを取得する経路はこのメソッドのみとする。
 
-        if not self._policy.should_retry(record.monitor_status, attempt):
+        dry_run=Trueの場合は_dry_run_retry()（lineageのdurable stateを一切
+        変更しないread-onlyプレビュー経路）へ委譲する。lock取得・claim()・
+        mark_execution_started()等はいずれも行わない（lineage store側の
+        dry-run zero-write契約）。
+        """
+        if dry_run:
+            return self._dry_run_retry(run_id, attempt)
+        try:
+            with RetryExecutionLock(self._lineage.execution_lock_path):
+                return self._retry_locked(run_id, attempt)
+        except RetryExecutionLockBusyError:
             return RetryResult(
                 original_run_id=run_id, outcome=RetryOutcome.SKIPPED, attempt=attempt,
-                monitor_status=record.monitor_status,
-                reason=self._skip_reason(record.monitor_status, attempt),
+                monitor_status=None,
+                reason=(
+                    "execution lock busy: another retry()/reconcile_all() is in flight "
+                    "(single-flight by design, 9.3.3節)"
+                ),
                 workflow_engine_result=None,
             )
 
-        request = RetryRequest(run_id=run_id, attempt=attempt, requested_at=datetime.now(), dry_run=dry_run)
-        return self._executor.execute(request, record)
+    def _retry_locked(self, run_id: str, attempt: int) -> RetryResult:
+        """RetryExecutionLockが既に取得済みであることを前提とする内部専用メソッド。
+        このメソッド自身はRetryExecutionLockを取得しない（二重取得禁止）。
+        公開API（retry()）を再帰的に呼び出さない（9.3.5章）。呼び出し元はretry()のみ。
+
+        既存lineageが見つかった場合（分岐(1)(2)）、self._monitor.get_status(run_id)
+        自体を呼ばない——このifブロック内ではMonitor取得コードへ到達しないため、
+        attempt 2以降でMonitor lookup 0回であることが構造的に保証される
+        （MAJ-R9-1対応、9.8.1.2章）。
+        """
+        existing = self._lineage.find_existing_lineage(run_id)
+        if existing is not None:
+            lineage = existing
+        else:
+            monitor_record = self._monitor.get_status(run_id)
+            if monitor_record is None:
+                return RetryResult(
+                    original_run_id=run_id, outcome=RetryOutcome.NOT_FOUND, attempt=attempt,
+                    monitor_status=None, reason=f"run_id={run_id} was not found in Workflow Monitor.",
+                    workflow_engine_result=None,
+                )
+            created = self._lineage.create_new_lineage(run_id, monitor_record)
+            if created.admission_rejected:
+                return RetryResult(
+                    original_run_id=run_id, outcome=RetryOutcome.SKIPPED, attempt=attempt,
+                    monitor_status=monitor_record.monitor_status, reason=created.reason,
+                    workflow_engine_result=None,
+                )
+            lineage = created.lineage
+
+        claim = self._lineage.claim(lineage.root_run_id)
+        if not claim.acknowledged:
+            return RetryResult(
+                original_run_id=run_id, outcome=RetryOutcome.SKIPPED, attempt=attempt,
+                monitor_status=None, reason=claim.reason, workflow_engine_result=None,
+            )
+
+        request = RetryRequest(run_id=lineage.root_run_id, attempt=attempt, requested_at=datetime.now(), dry_run=False)
+        return self._executor.execute(request, lineage, claim)
+
+    def _dry_run_retry(self, run_id: str, attempt: int) -> RetryResult:
+        """lineageのdurable stateを一切変更しないread-onlyプレビュー経路。
+
+        既存lineageがあれば、その保存済みattempt_scopes[-1].steps_to_executeを
+        target_step_filterとして`.run(dry_run=True)`を呼ぶ。post_admission_hookは
+        渡さない（Noneのため、mark_execution_started()は一切呼ばれない）ため、
+        Execution History・Retry Lineage双方についてzero-writeが構造的に保証される。
+        """
+        existing = self._lineage.find_existing_lineage(run_id)
+        target_step_filter = None
+        job_id = run_id
+        if existing is not None:
+            job_id = existing.root_run_id
+            if existing.attempt_scopes:
+                target_step_filter = [
+                    WorkflowEngineStep(s) for s in existing.attempt_scopes[-1].steps_to_execute
+                ]
+
+        event = WorkflowEngineEvent(
+            job_id=job_id, source=SOURCE_MANUAL, triggered_at=datetime.now(),
+            trigger_reason=f"Dry-run preview of retry for run_id={run_id} (attempt={attempt}).",
+            metadata={"retried_from": run_id, "attempt": attempt},
+        )
+        engine_result = self._executor.preview(event, target_step_filter)
+        return RetryResult(
+            original_run_id=run_id, outcome=RetryOutcome.DRY_RUN, attempt=attempt,
+            monitor_status=None, reason=None, workflow_engine_result=engine_result,
+        )
 
     def enqueue_retry(
         self,
@@ -601,14 +708,6 @@ class RetryManager:
         """
         execution_results = self.execute_dispatchable_retries(events, dry_run=dry_run)
         return self._history_recorder.record_all(execution_results, record_fn=self._history.record)
-
-    def _skip_reason(self, monitor_status: WorkflowMonitorStatus, attempt: int) -> str:
-        if monitor_status not in self._policy.target_statuses:
-            return (
-                f"monitor_status={monitor_status.value} is not a retry target "
-                f"({sorted(s.value for s in self._policy.target_statuses)})."
-            )
-        return f"attempt {attempt} has reached max_attempts={self._policy.max_attempts}."
 
 
 class NullRetryManager:

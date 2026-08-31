@@ -40,16 +40,31 @@ RetryCompositionRoot: workflow_monitor / retry_queue / retry_history /
     - （v5.2.0）retry_scheduler_source / retry_scheduler_decision / scheduler はいずれも
       本Releaseでも無改修。RetryCompositionRoot が既存の公開コンストラクタを呼び出す
       だけであり、新規business logicは追加しない。
+
+    - （Release 6.31）RetryLineageManager（retry_lineage、新設）を組み立て、
+      RetryManager・RetryEnqueueTriggerの両方へ同一インスタンスとして注入する
+      （queue/historyと同じ「共有インスタンス」パターン）。RETRY_LINEAGE_ENABLED
+      （デフォルトfalse）に関わらず常に実体を構築する——claim()のみがこのゲートの
+      fail-closedスイッチの対象であり、find_existing_lineage() / reconcile_all()等
+      は常に動作する必要があるため（docs/design/
+      retry_lineage_eligibility_durable_attempt_state.md 16章）。
+    - （Release 6.31、correlation-fallback対応）RetryEnqueueTriggerへ
+      history_store（execution_history.JsonExecutionHistoryStore）を追加で注入する。
+      workflow_monitorが構築する内部store（同じExecutionHistoryConfig.history_dir
+      を指す、別インスタンス）とは独立した、correlation_metadata読み取り専用の
+      参照であり、workflow_monitorパッケージ自体には一切触れない
+      （同設計書10.3.3・22章）。
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 from ai import AgentConfig
-from execution_history import ExecutionHistoryConfig
+from execution_history import ExecutionHistoryConfig, JsonExecutionHistoryStore
 from retry_engine import NullRetryManager, RetryConfig, RetryManager, RetryPolicy
 from retry_enqueue_trigger import RetryEnqueueGuard, RetryEnqueueTrigger
 from retry_history import RetryHistoryManager
+from retry_lineage import JsonRetryLineageStore, RetryLineageConfig, RetryLineageManager
 from retry_queue import NullRetryQueueManager, RetryQueueConfig, RetryQueueManager
 from retry_scheduler_decision import RetrySchedulerDecision
 from retry_scheduler_source import NullRetrySchedulerSource, RetrySchedulerSource
@@ -75,6 +90,7 @@ class RetryCompositionRoot:
         guard: RetryEnqueueGuard,
         trigger: RetryEnqueueTrigger,
         policy: RetryPolicy,
+        lineage: RetryLineageManager,
         manager: "RetryManager | NullRetryManager",
         retry_source: "RetrySchedulerSource | NullRetrySchedulerSource",
         retry_decision: RetrySchedulerDecision,
@@ -86,6 +102,7 @@ class RetryCompositionRoot:
         self.guard = guard
         self.trigger = trigger
         self.policy = policy
+        self.lineage = lineage
         self.manager = manager
         self.retry_source = retry_source
         self.retry_decision = retry_decision
@@ -101,21 +118,39 @@ class RetryCompositionRoot:
         （scripts/run_workflow_engine.py の base_dir 解決と同じ考え方）。
         """
         project_root = base_dir if base_dir is not None else _PROJECT_ROOT
+        execution_history_config = ExecutionHistoryConfig.from_env(project_root=project_root)
 
         monitor = WorkflowMonitorManager.from_config(
-            ExecutionHistoryConfig.from_env(project_root=project_root),
+            execution_history_config,
             WorkflowMonitorConfig.from_env(),
         )
         queue = RetryQueueManager.from_config(RetryQueueConfig.from_env())
         history = RetryHistoryManager()
         guard = RetryEnqueueGuard()
-        trigger = RetryEnqueueTrigger(monitor=monitor, queue=queue, history=history, guard=guard)
+
+        policy = RetryPolicy.from_env()
+        lineage_config = RetryLineageConfig.from_env(project_root=project_root)
+        lineage = RetryLineageManager(
+            store=JsonRetryLineageStore(lineage_config.store_dir),
+            config=lineage_config,
+            policy=policy,
+        )
+
+        # correlation-fallback（10.3.3章）用のread-only参照。workflow_monitorが
+        # 内部で持つstoreとは別インスタンスだが、同一のExecutionHistoryConfig.
+        # history_dirを指すため、同じディスク上のrecordを参照する。
+        # workflow_monitorパッケージ自体はimportしない。
+        history_store = JsonExecutionHistoryStore(execution_history_config.history_dir)
+
+        trigger = RetryEnqueueTrigger(
+            monitor=monitor, queue=queue, history=history, guard=guard, lineage=lineage,
+            history_store=history_store,
+        )
 
         retry_source = RetrySchedulerSource(queue)
         retry_decision = RetrySchedulerDecision(retry_source)
         scheduler = SchedulerEngine(retry_source=retry_source, retry_decision=retry_decision)
 
-        policy = RetryPolicy.from_env()
         agent_config = AgentConfig.from_env(base_dir=project_root)
         workflow_engine_manager = WorkflowEngineManager.from_config(
             agent_config,
@@ -126,6 +161,7 @@ class RetryCompositionRoot:
             retry_policy=policy,
             workflow_engine_manager=workflow_engine_manager,
             workflow_monitor_manager=monitor,
+            lineage=lineage,
             retry_queue_manager=queue,
             retry_history_manager=history,
         )
@@ -137,6 +173,7 @@ class RetryCompositionRoot:
             guard=guard,
             trigger=trigger,
             policy=policy,
+            lineage=lineage,
             manager=manager,
             retry_source=retry_source,
             retry_decision=retry_decision,

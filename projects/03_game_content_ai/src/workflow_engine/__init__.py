@@ -25,6 +25,7 @@ from .workflow_engine_event import SOURCE_MANUAL, SOURCE_SCHEDULER, WorkflowEngi
 from .workflow_engine_result import (
     REASON_HISTORY_WRITE_FAILED,
     REASON_NOT_REACHED,
+    REASON_NOT_TARGETED,
     WorkflowEngineResult,
     WorkflowEngineStepResult,
 )
@@ -33,6 +34,7 @@ from .workflow_engine_config import WorkflowEngineConfig
 from .workflow_engine_exceptions import CanonicalAdmissionFailure
 from .workflow_engine_executor import WorkflowEngineExecutor
 from .workflow_engine_manager import NullWorkflowEngineManager, WorkflowEngineManager
+from .workflow_engine_post_admission_hook import PostAdmissionHook, PostAdmissionHookResult
 
 __all__ = [
     "WorkflowEngineStep",
@@ -45,10 +47,13 @@ __all__ = [
     "WorkflowEngineResult",
     "REASON_NOT_REACHED",
     "REASON_HISTORY_WRITE_FAILED",
+    "REASON_NOT_TARGETED",
     "WorkflowEngineContext",
     "WorkflowEngineConfig",
     "CanonicalAdmissionFailure",
     "WorkflowEngineExecutor",
     "WorkflowEngineManager",
     "NullWorkflowEngineManager",
+    "PostAdmissionHook",
+    "PostAdmissionHookResult",
 ]

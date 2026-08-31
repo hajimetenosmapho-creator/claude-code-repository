@@ -1147,6 +1147,58 @@ from retry_engine.retry_policy import RetryPolicy
 from workflow_engine import WorkflowEngineManager
 from workflow_monitor import WorkflowMonitorRecord, WorkflowMonitorStatus
 
+# Release 6.31（Retry Lineage, Eligibility & Durable Attempt State）により、
+# RetryManager / RetryExecutor のコンストラクタが lineage（RetryLineageManager）を
+# 必須引数として要求するようになった（docs/design/
+# retry_lineage_eligibility_durable_attempt_state.md 9.3.2章）。本テストの意図
+# （CanonicalAdmissionFailureがRetryManager.retry()経由で変換されずfail-fast
+# 伝播すること）自体は無変更のまま、_AdmissionFailingWorkflowEngineManagerが
+# 例外を送出する前にRetryExecutor.execute()が通過する新しい経路
+# （find_existing_lineage() → create_new_lineage() → claim()）を駆動する
+# 最小限のFakeを追加する。
+
+
+class _FakeLineageManagerFor39:
+    """RetryExecutor.execute()呼び出しまでを駆動する最小限のFake。
+
+    _AdmissionFailingWorkflowEngineManager.run()が即座に例外を送出するため、
+    mark_execution_started() / mark_terminal()は本シナリオでは呼ばれない。
+
+    Architecture Amendment（Code Review Blocking#1対応、6.31 10.2.4章）で
+    RetryExecutor.execute()がhook例外/admission例外経路でrelease_claim()を
+    呼ぶようになったため、本Fakeにも追加した（durable ackがTrueに達していない
+    ため呼ばれる。CanonicalAdmissionFailureはhook呼び出し自体より前の
+    start_run()時点で発生するため、post_admission_hook()は本シナリオでも
+    やはり呼ばれない）。
+    """
+
+    @property
+    def execution_lock_path(self):
+        return Path(tempfile.mkdtemp()) / "execution.lock"
+
+    def find_existing_lineage(self, run_id):
+        return None
+
+    def create_new_lineage(self, run_id, monitor_record):
+        from retry_lineage import CreateNewLineageResult, RetryLineagePhase, RetryLineageRecord
+        lineage = RetryLineageRecord(
+            root_run_id=run_id, parent_run_id=None, latest_run_id=run_id,
+            attempt_count=0, max_attempts=3, next_attempt_ordinal=1,
+            phase=RetryLineagePhase.READY_ELIGIBLE, terminal_disposition=None,
+            next_eligible_at=None, owner_token=None, steps_confirmed_done=[],
+        )
+        return CreateNewLineageResult(lineage=lineage, admission_rejected=False)
+
+    def claim(self, root_run_id):
+        from retry_lineage import ClaimResult
+        return ClaimResult(
+            acknowledged=True, attempt_no=1, correlation_id="fake-correlation-39",
+            steps_to_execute=["news", "review", "publish"],
+        )
+
+    def release_claim(self, root_run_id):
+        return True
+
 
 class _AdmissionFailingWorkflowEngineManager:
     """WorkflowEngineManager.run()がCanonicalAdmissionFailureを送出するFake。"""
@@ -1154,7 +1206,8 @@ class _AdmissionFailingWorkflowEngineManager:
     def is_available(self):
         return True
 
-    def run(self, event, dry_run=False):
+    def run(self, event, dry_run=False, target_step_filter=None, post_admission_hook=None,
+            correlation_metadata=None):
         raise CanonicalAdmissionFailure(run_id="retry-r1", reason="EXECUTION_HISTORY_DISABLED")
 
 
@@ -1171,8 +1224,12 @@ class _FixedStatusMonitor:
 
 retry_manager_39 = RetryManager(
     policy=RetryPolicy(target_statuses={WorkflowMonitorStatus.FAILED}, max_attempts=3),
-    executor=RetryExecutor(workflow_engine_manager=_AdmissionFailingWorkflowEngineManager()),
+    executor=RetryExecutor(
+        workflow_engine_manager=_AdmissionFailingWorkflowEngineManager(),
+        lineage=_FakeLineageManagerFor39(),
+    ),
     monitor=_FixedStatusMonitor(),
+    lineage=_FakeLineageManagerFor39(),
 )
 raised_39 = None
 try:

@@ -522,11 +522,12 @@ print()
 
 print("[テスト26-31] 主要コンポーネントに変更がないこと（git diff）")
 
+# Release 6.31により、src/retry_runtime_orchestrator/retry_runtime_cycle_result.py・
+# src/retry_composition・src/retry_engineは承認済み変更対象ファイルを持つため、
+# このリストからは除外する（下記テスト32のallow-list方式でより精密に検査する。
+# 他のリスト項目・historical baselineは無変更）。
 unchanged_paths_26_31 = [
-    "src/retry_runtime_orchestrator/retry_runtime_cycle_result.py",
     "src/retry_runtime_loop",
-    "src/retry_composition",
-    "src/retry_engine",
 ]
 
 git_available = True
@@ -556,12 +557,17 @@ print()
 
 print("[テスト32] Retry関連の既存主要パッケージに意図しない変更がない（git diff一括確認）")
 
+# Release 6.31（Retry Lineage, Eligibility & Durable Attempt State）により、
+# src/retry_runtime_orchestrator・src/retry_composition・src/retry_engine・
+# src/retry_enqueue_trigger は承認済み変更対象ファイルを持つため、workflow_engine /
+# execution_history と同じ「ディレクトリ全体のno-diff要求は撤廃せず、承認済み
+# 変更ファイルを除いた残り全体が引き続き無変更であることを要求する」パターンへ
+# 移行する（下記allow-list方式、docs/design/
+# retry_lineage_eligibility_durable_attempt_state.md 22章）。厳格な完全一致要求の
+# リストからはこの4件を除外する（他のリスト項目・historical baseline・v4.8.0/
+# v4.9.0関連のcontractはいずれも無変更）。
 unchanged_paths_32 = [
     "src/retry_runtime_loop",
-    "src/retry_runtime_orchestrator",
-    "src/retry_composition",
-    "src/retry_engine",
-    "src/retry_enqueue_trigger",
     "src/retry_queue",
     "src/retry_history",
     "src/workflow_monitor",
@@ -577,11 +583,22 @@ unchanged_paths_32 = [
 # 撤廃せず、承認済み変更ファイルを除いた残り全体が引き続き無変更であることを
 # 要求する（docs/design/production_canonical_run_outcome_contract_foundation.md
 # 24章）。
+# Release 6.31（Retry Lineage, Eligibility & Durable Attempt State）で
+# workflow_engine_context.py・workflow_engine_manager.py（呼び出しごとの
+# target_step_filter/post_admission_hook/correlation_metadata追加）・
+# workflow_engine_post_admission_hook.py（新規ファイル）、
+# step_execution_record.py・workflow_execution_record.py
+# （action_taken/skip_category/correlation_metadata追加）・
+# step_skip_category.py（新規ファイル）が承認済み変更対象へ追加された
+# （同設計書22章）ため、両allow-listへ追記する（既存要素は削除しない）。
 _ALLOWED_WORKFLOW_ENGINE_CHANGES_32 = {
     "src/workflow_engine/__init__.py",
     "src/workflow_engine/workflow_engine_executor.py",
     "src/workflow_engine/workflow_engine_result.py",
     "src/workflow_engine/workflow_engine_exceptions.py",
+    "src/workflow_engine/workflow_engine_context.py",
+    "src/workflow_engine/workflow_engine_manager.py",
+    "src/workflow_engine/workflow_engine_post_admission_hook.py",
 }
 _ALLOWED_EXECUTION_HISTORY_CHANGES_32 = {
     "src/execution_history/__init__.py",
@@ -589,6 +606,29 @@ _ALLOWED_EXECUTION_HISTORY_CHANGES_32 = {
     "src/execution_history/execution_history_store.py",
     "src/execution_history/json_execution_history_store.py",
     "src/execution_history/start_run_write_result.py",
+    "src/execution_history/step_execution_record.py",
+    "src/execution_history/workflow_execution_record.py",
+    "src/execution_history/step_skip_category.py",
+}
+
+# Release 6.31：src/retry_engine・src/retry_composition・src/retry_enqueue_trigger・
+# src/retry_runtime_orchestratorも同じallow-list方式へ移行する（新規独立パッケージ
+# src/retry_lineageはこの4パッケージのいずれの配下でもないため対象外）。
+_ALLOWED_RETRY_ENGINE_CHANGES_32 = {
+    "src/retry_engine/retry_manager.py",
+    "src/retry_engine/retry_executor.py",
+    "src/retry_engine/retry_result.py",
+    "src/retry_engine/retry_queue_update_decider.py",
+}
+_ALLOWED_RETRY_COMPOSITION_CHANGES_32 = {
+    "src/retry_composition/retry_composition_root.py",
+}
+_ALLOWED_RETRY_ENQUEUE_TRIGGER_CHANGES_32 = {
+    "src/retry_enqueue_trigger/retry_enqueue_trigger.py",
+}
+_ALLOWED_RETRY_RUNTIME_ORCHESTRATOR_CHANGES_32 = {
+    "src/retry_runtime_orchestrator/retry_runtime_orchestrator.py",
+    "src/retry_runtime_orchestrator/retry_runtime_cycle_result.py",
 }
 
 if git_available:
@@ -607,6 +647,13 @@ if git_available:
     for _label, _dir, _allowed in (
         ("workflow_engine", "src/workflow_engine", _ALLOWED_WORKFLOW_ENGINE_CHANGES_32),
         ("execution_history", "src/execution_history", _ALLOWED_EXECUTION_HISTORY_CHANGES_32),
+        ("retry_engine", "src/retry_engine", _ALLOWED_RETRY_ENGINE_CHANGES_32),
+        ("retry_composition", "src/retry_composition", _ALLOWED_RETRY_COMPOSITION_CHANGES_32),
+        ("retry_enqueue_trigger", "src/retry_enqueue_trigger", _ALLOWED_RETRY_ENQUEUE_TRIGGER_CHANGES_32),
+        (
+            "retry_runtime_orchestrator", "src/retry_runtime_orchestrator",
+            _ALLOWED_RETRY_RUNTIME_ORCHESTRATOR_CHANGES_32,
+        ),
     ):
         _dir_diff = subprocess.run(
             ["git", "status", "--porcelain", "--untracked-files=all", "--", _dir],
@@ -621,7 +668,7 @@ if git_available:
                 _p = _p[len(_repo_prefix_32):]
             _dir_changed.add(_p)
         check_true(
-            f"32. {_dir}の差分はRelease 6.30承認済み変更のみに限定される",
+            f"32. {_dir}の差分はRelease 6.30/6.31承認済み変更のみに限定される",
             # Release 6.30 Code Review Minor対応: git command自体の失敗(非0終了)で
             # 空stdoutが返るfail-openを防ぐため、returncode==0を明示的に要求する。
             _dir_diff.returncode == 0 and _dir_changed <= _allowed,

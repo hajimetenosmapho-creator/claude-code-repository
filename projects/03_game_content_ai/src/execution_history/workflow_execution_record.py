@@ -10,6 +10,12 @@ WorkflowExecutionRecord: 1回のWorkflow実行の履歴を保持するデータ�
       （docs/design/execution_history_foundation.md 5章）。
     - workflow_name は Foundation Releaseでは固定値 "workflow_engine" を想定する
       （src/ai/workflow_*.py の WorkflowRunner は対象外、同設計書4章）。
+
+Release 6.31での変更（docs/design/retry_lineage_eligibility_durable_attempt_state.md
+10.3.2・10.3.5章）:
+    - `correlation_metadata: dict[str, dict[str, str]] = {}` を追加した。
+      本パッケージはこのフィールドの中身を一切解釈しない。旧レコード読込時は
+      `{}` へフォールバックする（後方互換、既存出力への影響なし）。
 """
 from __future__ import annotations
 
@@ -39,6 +45,11 @@ class WorkflowExecutionRecord:
     steps: list[StepExecutionRecord] = field(default_factory=list)
     events: list[ExecutionHistoryEvent] = field(default_factory=list)
     error_message: str | None = None
+    # Release 6.31（docs/design/retry_lineage_eligibility_durable_attempt_state.md
+    # 10.3.2章）：namespaceごとにネストした汎用metadata。execution_historyはキー・値の
+    # いずれも一切解釈しない（意味非解釈のデータ）。retry-lineage固有の情報は
+    # 予約済みnamespace "retry_lineage" 配下にのみ格納される（retry_lineageパッケージ側の責務）。
+    correlation_metadata: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -52,6 +63,7 @@ class WorkflowExecutionRecord:
             "steps": [s.to_dict() for s in self.steps],
             "events": [e.to_dict() for e in self.events],
             "error_message": self.error_message,
+            "correlation_metadata": dict(self.correlation_metadata),
         }
 
     def to_json(self) -> str:
@@ -71,4 +83,6 @@ class WorkflowExecutionRecord:
             steps=[StepExecutionRecord.from_dict(s) for s in data.get("steps", [])],
             events=[ExecutionHistoryEvent.from_dict(e) for e in data.get("events", [])],
             error_message=data.get("error_message"),
+            # 旧レコード（本フィールド導入前に保存されたJSON）は空dictへフォールバックする（後方互換）。
+            correlation_metadata=data.get("correlation_metadata", {}),
         )

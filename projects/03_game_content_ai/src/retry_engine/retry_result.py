@@ -45,3 +45,10 @@ class RetryResult:
     monitor_status: WorkflowMonitorStatus | None
     reason: str | None
     workflow_engine_result: WorkflowEngineResult | None
+    # Release 6.31（docs/design/retry_lineage_eligibility_durable_attempt_state.md
+    # 9.7章）：`attempt`引数（呼び出し元指定）は、6.31以降authoritativeではない
+    # （実際のattempt_noはretry_lineageのclaim()結果・durable stateから決まる）。
+    # 診断用に、呼び出し元の指定値・authoritativeな値・両者の不一致有無を残す。
+    requested_attempt_argument: int | None = None
+    authoritative_attempt_no: int | None = None
+    attempt_argument_mismatch: bool = False
