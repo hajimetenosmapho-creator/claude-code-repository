@@ -5736,3 +5736,51 @@ FAILED/TIMEOUT candidateをRetry Eligibilityへ渡す判定（6.31、Retry Linea
 
 詳細は`docs/design/production_canonical_run_outcome_contract_foundation.md`
 （Project Charter・Architecture Design・Codex read-only review Round 8〜10の記録、全31章を含む）を参照。
+
+## Retry Lineage, Eligibility & Durable Attempt State Foundation層（`src/retry_lineage/`、v6.31.0 実装完了）
+
+> **本節は実装完了時点の記録である。新規E2E（`test_e2e_v6_31_0_retry_lineage_eligibility_durable_attempt_state.py`）は151/151 PASS。Final Release Review `APPROVED`（Blocking/Major いずれも0）。Formal Regression（正式Inventory34ファイル：v1.11.0＋v5.9.0＋v6.0.0〜v6.31.0）は5644/5644 PASS、FAIL 0／SKIP 0、全ファイルexit code 0で完了した。**
+
+`docs/MVP_COMPLETION_ROADMAP.md` v1.3が定める6.31スコープに対応し、6.30（v6.30.0）が生成するcanonical `WorkflowExecutionRecord`のFAILED/TIMEOUT candidateを実際にRetry Eligibilityへ引き渡す実装、retryの親子関係（`root_run_id`単位のlineage）、attemptのcrash boundaryを安全な契約として確立した。
+
+### Retry Lineage（`src/retry_lineage/`）
+
+新規パッケージ。`RetryLineageManager`が中核となり、以下を管理する：
+
+- **4-phase state machine**：`READY_ELIGIBLE`（Retry対象として認識、未claim）→ `CLAIMED`（Retry実行のために占有、未実行開始）→ `EXECUTION_STARTED`（実行へ制御が渡された、この時点でattemptを1消費）→ `TERMINAL`（最終結果確定）。通常のRetry実行はこの4 phaseを必ずこの順序で経由する。
+- **lineage契約**：初回canonical runでは`root_run_id = run_id`。Retry実行では新しい`run_id`を生成してよいが、retry派生runは同じ`root_run_id`をdurableに継承する。attempt数・eligibility判定は`root_run_id`単位で管理し、`RetryLineageManager.find_existing_lineage()`（既存lineage再接続、read-only、Monitor/RetryPolicy不参照）と`create_new_lineage()`（新規lineage作成時のみのinitial admission gate）へ二段階分離した。
+- **`max_attempts` snapshot**：lineage作成時に`RetryPolicy.max_attempts`から`RetryLineageRecord.max_attempts`へsnapshotし、以後そのlineageの生涯にわたり不変（`RETRY_MAX_ATTEMPTS`環境変数の運用中変更は新規lineageにのみ適用され、既存lineageへ遡及しない）。
+- **`NOT_ACTIONED`のbudget消費**：interval guard等によるgenuineなno-opも、`FAILED`と同様にbudgetを消費する（無制限retryのliveness問題を回避するため、genuineな成功機会を得られないまま有限停止することを優先する設計判断）。
+- **crash safety**：`CLAIMED`後・`EXECUTION_STARTED`前にプロセスが停止した場合、attemptは非消費のまま扱われ、Runtime再起動後に`reconcile_all()`が`RetryExecutionLock`下で安全に回収・再評価する。`EXECUTION_STARTED`確定後のクラッシュはattempt消費済みとして扱う（安全側）。
+
+### Execution History拡張（`src/execution_history/`）
+
+`StepExecutionRecord`へ`action_taken` / `skip_category`（`StepSkipCategory`：`GATE_CLOSED` / `NOT_TARGETED` / `HOOK_NOT_ACKNOWLEDGED` / `HOOK_EXCEPTION` / `HISTORY_WRITE_FAILED` / `UNKNOWN`）を追加。`WorkflowExecutionRecord`へ`correlation_metadata`を追加（namespace化されたスキーマ）。legacy record（`action_taken`未設定）は`UNKNOWN`へfail-closedし、attempt 1のconfirmed setから除外される（除外＝安全側で再実行対象に残る）。
+
+### Workflow Engine拡張（`src/workflow_engine/`）
+
+`WorkflowEngineContext`へ`post_admission_hook`（`start_run()` ack確認直後・step実行ループ直前に呼び出し、hook失敗/例外時は全stepをNOT_REACHEDへ終端）・`target_step_filter`（gate-closed判定より前に対象stepを絞り込み、confirmed済みstepを再実行しない）・`correlation_metadata`を追加。`WorkflowEngineResult`へ`run_id`を追加。v6.30.0のCanonical Admission契約・Outcome Contractはいずれも無変更。
+
+### Retry Runtime統合（`src/retry_engine/` / `src/retry_composition/` / `src/retry_enqueue_trigger/` / `src/retry_runtime_orchestrator/`）
+
+`RetryExecutor.execute()`が`RetryLineageManager`の`claim()` → `EXECUTION_STARTED`確定 → `mark_terminal()`の一連の流れを呼び出す。`mark_terminal()`の戻り値（`acknowledged`）を必ず確認し、False時は`RetryOutcome.RETRIED`ではなく`RetryOutcome.SKIPPED`を返す（post-admission hook未ack時の誤ったQueue完了を防止）。`RetryCompositionRoot`が`RetryLineageManager`を配線する。
+
+### Architecture Reviewの経緯（Codex独立review、Round 8〜11+Cleanup）
+
+Claude Code単独設計→Codex独立adversarial review（実コードとの突き合わせあり）をRound 8〜11+Cleanupで実施した。Round 8はMajor 3件（`max_attempts`の出所未定義、`NOT_ACTIONED`無制限retryのliveness問題、二重ゲート矛盾）・Minor 4件で`NEEDS_REVISION`。Round 9はMajor 2件（initial admissionのMonitor lookup条件化不足、`resolve_or_create()`分岐の疑似コード欠落）・Minor 1件。Round 10はMajor 2件（`max_attempts` validation順序、attempt 1 scope導出契約との矛盾）・Minor 3件・Suggestion 2件。Round 11で`Blocking/Major指摘 0件`（Pass with minor corrections）に収束し、Minor 2件・Suggestion 3件をRound 11 Cleanupで反映した。2026-08-31、§26 Architecture Gate ChecklistのHuman Gate必須15項目をユーザーが明示的に承認した。
+
+実装完了後、独立Code Review（実コードレビュー）でBlocking 2件（post-admission hook未ack時のdisposition誤判定によるQueue誤完了／`mark_terminal()`のack=False無視）・Major 2件（グローバルmembership一意性チェックの欠落／`next_attempt_ordinal`不変条件のfail-closed検証欠落）を検出し、限定的な設計整合修正として反映した（4-phase state machine・locking契約・attempt accounting・admission gate分離・6.31 scope境界はいずれも無変更）。追加のHuman Gate 4件を2026-08-31にユーザーが承認した。
+
+### 既存Architecture Guardへの影響（設計上の既知差分）
+
+`src/retry_engine` / `src/retry_composition` / `src/retry_enqueue_trigger` / `src/retry_runtime_orchestrator` / `src/workflow_engine` / `src/execution_history`の無変更を前提とする既存E2E7ファイルのArchitecture Guardが、本Releaseの正式承認済み変更によりFAILする状態が生じたため、`[KI-30]`と同型の狭い除外編集を適用した（`docs/CHANGELOG.md` `[KI-31]`参照）。
+
+### Test Review・Regressionの実績
+
+新規E2E（`tests/test_e2e_v6_31_0_retry_lineage_eligibility_durable_attempt_state.py`）は151/151 PASS。Final Release Review `APPROVED`（Blocking 0／Major 0）。正式Formal Regression（正式Inventory34ファイル：v1.11.0＋v5.9.0＋v6.0.0〜v6.31.0）は5644/5644 PASS、FAIL 0／SKIP 0、全ファイルexit code 0で完了した。
+
+### Future Extension
+
+partial success・外部副作用発生済みrunのwrite-ahead fail-closed契約とdurable Human Review terminal disposition（6.32、Side-Effect Fail-Closed & Human Review Safety）。
+
+詳細は`docs/design/retry_lineage_eligibility_durable_attempt_state.md`（Architecture Design・Codex独立review Round 8〜11+Cleanup、Human Gate承認記録§0・§26を含む全28章）を参照。

@@ -390,6 +390,104 @@
 - **訂正履歴（2026-08-22、1回目）**：Codex Final Release Review（read-only、reasoning effort High）のMajor指摘「対象17ファイルの一部の回帰実行証跡が個別に明示されていない」を受けて全36ファイルを個別に再実行した結果、当初「17ファイル」としていた対象範囲の記載が実態（全36ファイル）と一致していなかったことが判明した。本エントリのタイトル・対象・対応状況を実測に基づき訂正した。訂正前は「17ファイル」のみを対象と記載し、残り19ファイル（うちv2.7.0/v2.8.0/v2.9.0を除く16ファイル）についてはCHANGELOG上に記載がなかった
 - **訂正履歴（2026-08-22、2回目）**：Codex Final Release Review再実施（独立新規スレッド、read-only、reasoning effort High）のMinor指摘「`test_e2e_v4_7_0` / `test_e2e_v5_8_0`は32章の実測（0 FAIL）と本エントリの記載（残るFAILがある17ファイルに含まれる）が矛盾する」を受け、両ファイルを「残るFAILがある」リストから除外し（17→15ファイル）、「残り19ファイル」を「残り21ファイル」へ訂正した。また同レビューの「v4.8.0/v4.9.0はguardへ到達する前にクラッシュしており、`FAILしない`という表現は誤解を招く」という指摘を受け、両ファイルの表現を「guard自体はFAILしない」から「guard未到達」へ訂正した。なお同レビューでは、本エントリとは別にRelease 6.30 Implementation工程中に追加した`src/workflow_engine/workflow_engine_manager.py`のdocstring修正が、本エントリで記録した狭い除外編集の対象外だったため既存guard（13ファイル）を新たに破壊するというMajor指摘も受けたが、これは当該docstring修正自体を取り消すことで対応した（`workflow_engine_manager.py`はRelease 6.30の変更対象に含まれない）
 
+### [KI-31] Release 6.31（Retry Lineage, Eligibility & Durable Attempt State）の承認済み変更により、既存E2E7ファイルのArchitecture Guardが構造的にFAILする状態が生じたため、各ファイルへ狭い除外編集を適用した（`[KI-30]`と同型の設計上の既知差分・対応記録）
+
+- **発見日**：2026-08-31（Release 6.31実装時）
+- **対象**：`tests/test_e2e_v5_9_0_retry_runtime_loop_wiring_foundation.py`・`test_e2e_v6_0_0_retry_runtime_lock_foundation.py`・`test_e2e_v6_1_0_retry_runtime_graceful_shutdown_foundation.py`・`test_e2e_v6_2_0_structured_loop_logging_foundation.py`・`test_e2e_v6_3_0_retry_metrics_foundation.py`・`test_e2e_v6_4_0_retry_monitoring_foundation.py`・`test_e2e_v6_30_0_production_canonical_run_outcome_contract_foundation.py`の計7ファイル
+- **症状（除外編集前の状態）**：上記各テストは`src/retry_engine` / `src/retry_composition` / `src/retry_enqueue_trigger` / `src/retry_runtime_orchestrator` / `src/workflow_engine` / `src/execution_history`の一部pathへの無変更を、registry導入以前から個別ファイルが持つstandalone guard（`git diff`ベース）として前提としており、Release 6.31の承認済み変更によりこれらのpathの`git diff`が非ゼロを返すため、除外編集を適用しなければ機械的にFAILする状態だった
+- **原因**：`docs/design/retry_lineage_eligibility_durable_attempt_state.md`（Architecture Design Round 8〜11+Cleanup、Codex独立review・2026-08-31 Human Gate承認）で確定した、4-phase state machine（`READY_ELIGIBLE`/`CLAIMED`/`EXECUTION_STARTED`/`TERMINAL`）・retry lineage・durable attempt stateの実装が、上記6パッケージへ及んだことによる、`[KI-3]`〜`[KI-30]`と同型の既知差分
+- **対応状況**：対応済み。承認済み変更pathのみを対象とする狭い除外編集を各ファイルへ適用し、`tests/zero_diff_guard_registry.py`の`_TEST_CHANGE_CONTRIBUTIONS`へ`"v6.31.0"`として本レジストリ自身・新規E2E自身とあわせて登録した（`RELEASE_ORDER`への`"v6.31.0"`追記を含む）。`test_e2e_v6_30_0`自身についても、テスト#39（Retry Runtime Ruling A）が`RetryManager`/`RetryExecutor`を旧APIで直接構築していたため、新しい必須引数（`lineage`）を満たす最小限のFakeを追加する改訂を行った
+- **今後の対応**：不要（本エントリで対応を確定）。将来Releaseで上記6パッケージにさらに変更が入るたびに同種の除外編集が必要になりうるが、その都度Charter/Design側で変更対象の承認範囲を確認し、`[KI-3]`以降と同じ手順（狭い除外編集＋registry登録）を踏めばよい
+
+---
+
+## [v6.31.0] - 2026-08-31 ★ Retry Lineage, Eligibility & Durable Attempt State
+
+> `docs/MVP_COMPLETION_ROADMAP.md` v1.3が定める6.31スコープに対応し、6.30が生成する
+> FAILED/TIMEOUTcandidateを実際にRetry Eligibilityへ引き渡す実装、retryのlineage
+> （`root_run_id`単位でのattempt管理）、durable attempt lifecycle（`READY_ELIGIBLE`→
+> `CLAIMED`→`EXECUTION_STARTED`→`TERMINAL`の4-phase state machine）を確立した。
+>
+> Architecture DesignはClaude Code単独設計→Codex独立adversarial review
+> （実コードとの突き合わせあり）をRound 8〜11+Cleanupで実施して収束した。
+> Round 8はMajor 3件・Minor 4件で`NEEDS_REVISION`、Round 9はMajor 2件・Minor 1件、
+> Round 10はMajor 2件・Minor 3件・Suggestion 2件、Round 11で
+> `Blocking/Major指摘 0件`（Pass with minor corrections）に収束し、指摘された
+> Minor 2件・Suggestion 3件をRound 11 Cleanupで反映した。2026-08-31、
+> §26 Architecture Gate ChecklistのHuman Gate必須15項目をユーザーが明示的に承認
+> （`max_attempts` snapshot semantics・attempt 1初期scopeのdata flow・
+> `NOT_ACTIONED`のbudget消費・initial-only monitor-policy gate・single-host限定・
+> `RetryExecutionLock`直列化・手動stale-lock recovery・`RETRY_LINEAGE_ENABLED=false`時
+> の`reconcile_all()`継続・Execution Historyスキーマ拡張・legacy record再実行リスク等）。
+>
+> 実装完了後、独立Code Review（実コードレビュー、Architecture Designレビューとは別）で
+> Blocking 2件（post-admission hook未ack時のdisposition誤判定によるQueue誤完了／
+> `mark_terminal()`のack=False無視）・Major 2件（グローバルmembership一意性チェックの
+> 欠落／`next_attempt_ordinal`不変条件のfail-closed検証欠落）を検出。ユーザー独立照合で
+> 実コードにて確認のうえ、限定的な設計整合修正（4-phase state machine・locking契約・
+> attempt accounting・admission gate分離・6.31 scope境界はいずれも無変更）として反映し、
+> 追加のHuman Gate 4件を2026-08-31にユーザーが承認した。
+
+### Added
+
+- `src/retry_lineage/` 新規パッケージ（`RetryLineageManager` / `RetryLineageRecord` /
+  `RetryLineagePhase` / `RetryLineageDisposition` / `RetryExecutionLock` /
+  `RetryLineageStore` / `RetryLineageStoreLock` / `RetryLineageConfig` /
+  `RetryLineageGenuineAction` / `RetryLineageTargetResolution` /
+  `RetryLineageResults`）。lineage・attempt lifecycle・durable stateの中核実装。
+- `src/execution_history/step_skip_category.py` 新規作成（`StepSkipCategory` Enum：
+  `GATE_CLOSED` / `NOT_TARGETED` / `HOOK_NOT_ACKNOWLEDGED` / `HOOK_EXCEPTION` /
+  `HISTORY_WRITE_FAILED` / `UNKNOWN`等）。
+- `src/workflow_engine/workflow_engine_post_admission_hook.py` 新規作成
+  （post-admission hookの型定義）。
+- `docs/design/retry_lineage_eligibility_durable_attempt_state.md` 新規作成
+  （Architecture Design Round 8〜11+Cleanup、Codex独立review、Human Gate承認記録
+  §0・§26を含む全28章）。
+- `tests/test_e2e_v6_31_0_retry_lineage_eligibility_durable_attempt_state.py`
+  新規作成（design doc 24章のE2Eシナリオに対応、**151/151 PASS**）。
+
+### Changed
+
+- `src/execution_history/execution_history_manager.py` / `__init__.py` /
+  `step_execution_record.py` / `workflow_execution_record.py`：
+  `StepExecutionRecord.action_taken` / `skip_category`、
+  `WorkflowExecutionRecord`への`correlation_metadata`スキーマ追加。
+- `src/workflow_engine/workflow_engine_executor.py` / `__init__.py` /
+  `workflow_engine_context.py` / `workflow_engine_manager.py` /
+  `workflow_engine_result.py`：`context.post_admission_hook`（hook失敗/例外時は
+  全stepをNOT_REACHEDへ終端）・`context.target_step_filter`（gate-closed判定前の
+  対象step絞り込み、`skip_category=NOT_TARGETED`）・`context.correlation_metadata`
+  の`start_run()`への伝播・`WorkflowEngineResult.run_id`の追加を実装。
+- `src/retry_engine/retry_executor.py` / `retry_manager.py` /
+  `retry_queue_update_decider.py` / `retry_result.py`：`RetryLineageManager`との
+  統合（`claim()` → `EXECUTION_STARTED`確定 → `mark_terminal()`の一連の呼び出し、
+  `mark_terminal()`のack確認義務、hook未ack時の`RetryOutcome.SKIPPED`化）。
+- `src/retry_composition/retry_composition_root.py`：`RetryLineageManager`の配線。
+- `src/retry_enqueue_trigger/retry_enqueue_trigger.py`：lineage経由の判断への対応。
+- `src/retry_runtime_orchestrator/retry_runtime_cycle_result.py` /
+  `retry_runtime_orchestrator.py`：lineage結果の伝播。
+- `tests/zero_diff_guard_registry.py`：`RELEASE_ORDER`へ`"v6.31.0"`をappend-onlyで
+  追記。`_TEST_CHANGE_CONTRIBUTIONS`へ新規E2E自身・本レジストリ自身・
+  `[KI-31]`対象7ファイルの計9件を登録（詳細は`[KI-31]`参照）。`PROTECTED_PATHS` /
+  `BASELINE_COMMITS`・既存recordはいずれも無改修。
+
+### Test Review・Regressionの実績
+
+新規E2E（`tests/test_e2e_v6_31_0_retry_lineage_eligibility_durable_attempt_state.py`）
+は**151/151 PASS**。Final Release Review：**APPROVED**（Blocking 0／Major 0）。
+正式Formal Regression（正式Inventory34ファイル：v1.11.0＋v5.9.0＋v6.0.0〜v6.31.0）は
+**5644/5644 PASS、FAIL 0／SKIP 0、全ファイルexit code 0**で完了した。
+
+### Future Extension
+
+partial success・外部副作用発生済みrunのwrite-ahead fail-closed契約とdurable
+Human Review terminal disposition（6.32、Side-Effect Fail-Closed & Human Review
+Safety）。
+
+詳細は`docs/design/retry_lineage_eligibility_durable_attempt_state.md`
+（Architecture Design・Codex独立review Round 8〜11+Cleanup、Human Gate承認記録
+（§0・§26）を含む）を参照。
+
 ---
 
 ## [v6.30.0] - 2026-08-22 ★ Production Canonical Run & Outcome Contract Foundation
