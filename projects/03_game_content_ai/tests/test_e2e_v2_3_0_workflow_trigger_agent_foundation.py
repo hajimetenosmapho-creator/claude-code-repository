@@ -567,21 +567,22 @@ unchanged_paths = [
     # Release 6.30 Production Canonical Run & Outcome Contract Foundationの
     # 承認済み変更対象のため、本チェック対象から除外する
     # （docs/design/production_canonical_run_outcome_contract_foundation.md 24章）。
-    "src/ai/workflow_runner.py",
+    # Release 6.32（Side-Effect Fail-Closed & Human Review Safety）はExplicit
+    # Side-Effect Execution Mode専用channelの新設に伴い、workflow_runner.py /
+    # workflow_context.py / workflow_step_executor.py / agent_context.py /
+    # news_agent.pyへの意図的な変更を含む（22.1f節）。v6.30と同一パターンで
+    # これら5ファイルをunchanged_pathsから除外する。sub-milestone 6C
+    # （§28.-36節test#8、22.3.12節）：agent_executor.pyへのcarve-out追加に
+    # 伴い、同ファイルも除外する。
     "src/ai/workflow_config.py",
-    "src/ai/workflow_context.py",
     "src/ai/workflow_result.py",
     "src/ai/workflow_step.py",
-    "src/ai/workflow_step_executor.py",
     "src/ai/workflow_report_builder.py",
     "src/ai/base_agent.py",
-    "src/ai/agent_executor.py",
-    "src/ai/agent_context.py",
     "src/ai/agent_decision.py",
     "src/ai/agent_result.py",
     "src/ai/agent_task.py",
     "src/ai/agent_config.py",
-    "src/ai/news_agent.py",
     "src/ai/news_agent_config.py",
     "src/pipeline/pipeline_result.py",
 ]

@@ -22,9 +22,63 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 
 from .retry_lineage_disposition import RetryLineageDisposition
 from .retry_lineage_phase import RetryLineagePhase
+
+
+class HumanReviewResolution(Enum):
+    """Release 6.32、17.1節（不変）。"""
+
+    RETRY_ALLOWED = "retry_allowed"
+    ABANDONED = "abandoned"
+
+
+@dataclass
+class HumanReviewResolutionRecord:
+    """Release 6.32、17.2節。`opened_attempt_no`はcrash-resumable dispatch
+    marker（17.3節）——`resolve_human_review()`記録時点ではNone、
+    `open_next_attempt()`のHRR authorized経路が次attempt番号を設定し、
+    `mark_execution_started()`が実際にそのattemptの実行開始を確認した時点で
+    レコード全体がクリアされる。"""
+
+    resolution: HumanReviewResolution
+    actor: str
+    note: str | None
+    resolved_at: datetime
+    opened_attempt_no: int | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "resolution": self.resolution.value,
+            "actor": self.actor,
+            "note": self.note,
+            "resolved_at": self.resolved_at.isoformat(),
+            "opened_attempt_no": self.opened_attempt_no,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "HumanReviewResolutionRecord":
+        opened_attempt_no = data.get("opened_attempt_no")
+        if opened_attempt_no is not None and (
+            not isinstance(opened_attempt_no, int)
+            or isinstance(opened_attempt_no, bool)
+            or opened_attempt_no <= 0
+        ):
+            # 破損データ：Noneでも有効なpositive intでもない値は、値の推測を行わず
+            # ValueErrorとする（22.1c節、既存のfail-closed規律と同型）。
+            raise ValueError(
+                f"human_review_resolution.opened_attempt_no is neither None nor a "
+                f"positive int: {opened_attempt_no!r}"
+            )
+        return cls(
+            resolution=HumanReviewResolution(data["resolution"]),
+            actor=data["actor"],
+            note=data.get("note"),
+            resolved_at=datetime.fromisoformat(data["resolved_at"]),
+            opened_attempt_no=opened_attempt_no,
+        )
 
 
 @dataclass
@@ -129,6 +183,9 @@ class RetryLineageRecord:
     attempt_scopes: list[RetryAttemptExecutionScope] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
+    side_effect_contract_version: int | None = None  # Release 6.32、18章。create_new_lineage()
+    # のみがスタンプし、open_next_attempt()は上書きしない。既存（pre-6.32）lineageはNoneのまま。
+    human_review_resolution: "HumanReviewResolutionRecord | None" = None  # Release 6.32、17.2節
 
     def to_dict(self) -> dict:
         return {
@@ -148,6 +205,10 @@ class RetryLineageRecord:
             "attempt_scopes": [s.to_dict() for s in self.attempt_scopes],
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
+            "side_effect_contract_version": self.side_effect_contract_version,
+            "human_review_resolution": (
+                self.human_review_resolution.to_dict() if self.human_review_resolution else None
+            ),
         }
 
     def to_json(self) -> str:
@@ -185,4 +246,10 @@ class RetryLineageRecord:
             ],
             created_at=datetime.fromisoformat(data["created_at"]),
             updated_at=datetime.fromisoformat(data["updated_at"]),
+            side_effect_contract_version=data.get("side_effect_contract_version"),
+            human_review_resolution=(
+                HumanReviewResolutionRecord.from_dict(data["human_review_resolution"])
+                if data.get("human_review_resolution")
+                else None
+            ),
         )

@@ -398,12 +398,23 @@ check_true(
     "src/__other_path__" not in _merged_from_v623,
 )
 
+# Release 6.32：trip-wireが発火（Release 6.30がsrc/pipeline・scriptsへ寄与済みの
+# ところへ、Release 6.32が同じ2 pathへ追加で寄与したため）。_merge_source_
+# contributions()のfrozenset union方針（同一pathへの複数寄与は上書きせず和集合と
+# なる、本ファイル上部のMERGE-*系テストで直接検証済み）に従い意図的な重複である
+# ことを確認済み。以後は「既知の重複path集合」を明示的に固定する形へ改める
+# （将来、未知のpathが重複した場合にのみ再びFAILする）。
+_duplicated_paths = {
+    _p for _p in {_p for _p, _, _ in registry._SOURCE_CHANGE_CONTRIBUTIONS}
+    if [_q for _q, _, _ in registry._SOURCE_CHANGE_CONTRIBUTIONS].count(_p) > 1
+}
 check(
-    "MERGE-REAL-DATA-NO-DUPLICATE-KEYS. 実際の_SOURCE_CHANGE_CONTRIBUTIONSには現時点で"
-    "protected pathの重複が存在しない（将来重複が追加された場合、この件数比較が変化し"
+    "MERGE-REAL-DATA-NO-DUPLICATE-KEYS. 実際の_SOURCE_CHANGE_CONTRIBUTIONSの"
+    "protected path重複は、Release 6.30/6.32が意図的に重ねて寄与したsrc/pipeline・"
+    "scriptsの2件のみである（未知の重複が追加された場合、この集合比較が変化し"
     "union方針の意図的な確認を促すtrip-wireとなる）",
-    len([_p for _p, _, _ in registry._SOURCE_CHANGE_CONTRIBUTIONS]),
-    len({_p for _p, _, _ in registry._SOURCE_CHANGE_CONTRIBUTIONS}),
+    _duplicated_paths,
+    {"src/pipeline", "scripts"},
 )
 print()
 
@@ -490,7 +501,11 @@ print("[RUNTIME] 4guardの子プロセス実行によるPASS件数の実測回�
 # guardであり、refactor前の実測値との完全一致を維持する（future contributionが
 # あってもPASS件数は変化しない安定した不変条件）。
 _EXPECTED_TOTALS_EXACT = {
-    "v6.21.0": 170,
+    # v6.32.0 sub-milestone 4（TEST MIGRATION HUMAN GATE承認済み）：
+    # _apply_featured_media_step()のside_effect_binding方式への変更に伴い、
+    # v6.21.0自身へPROP系・LOOP系の新規assertion（FeaturedMediaPropagatedFailure
+    # 契約の直接検証）を追加した。170→182は正当なcoverage追加でありregressionではない。
+    "v6.21.0": 182,
     "v6.22.0": 324,
 }
 # v6.23.0／v6.24.0は`for _rel, _allowed in _allowed_source_changes.items():`という

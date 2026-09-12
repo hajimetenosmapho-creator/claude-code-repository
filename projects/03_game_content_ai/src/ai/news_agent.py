@@ -80,7 +80,15 @@ class NewsAgent(BaseAgent):
         """NewsPipelineRunner.run() のみを呼び出し、PipelineResult を AgentResult へ変換する。"""
         assert not context.dry_run
 
-        result = self._runner.run(params=context.task.params)
+        # Release 6.32：side_effect_execution_contextがNone（既存の全呼び出し元の
+        # 既定値）の場合、run()へこのキーワード引数自体を渡さない。runnerに
+        # duck-typingで渡される、この引数を持たない旧形式のFake実装
+        # （本Release以前から存在するテスト等）とのZero-Diffを、呼び出し引数の
+        # 形の面でも厳密に保証するため（既存の_call_start_run()と同じ理由）。
+        kwargs = {}
+        if context.side_effect_execution_context is not None:
+            kwargs["side_effect_execution_context"] = context.side_effect_execution_context
+        result = self._runner.run(params=context.task.params, **kwargs)
 
         warnings = list(context.warnings)
         if result.stdout_log_path:

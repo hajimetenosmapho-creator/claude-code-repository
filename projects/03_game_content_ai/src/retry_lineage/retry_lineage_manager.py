@@ -48,12 +48,19 @@ from typing import TYPE_CHECKING, Callable
 
 from workflow_monitor import WorkflowMonitorStatus
 
+from protected_operation_manifest.errors import ProtectedOperationManifestReadError
+from side_effect_safety.side_effect_safety_category import ProtectedOperationContext
+
 from .retry_execution_lock import RetryExecutionLock, RetryExecutionLockBusyError
 from .retry_lineage_config import RetryLineageConfig
 from .retry_lineage_disposition import RetryLineageDisposition
 from .retry_lineage_genuine_action import classify_execution_history_step
 from .retry_lineage_phase import RetryLineagePhase
+from dataclasses import replace
+
 from .retry_lineage_record import (
+    HumanReviewResolution,
+    HumanReviewResolutionRecord,
     RetryAttemptExecutionScope,
     RetryLineageMembershipEntry,
     RetryLineageRecord,
@@ -65,21 +72,40 @@ from .retry_lineage_results import (
     MarkTerminalResult,
     OpenNextAttemptResult,
     ReconcileSummary,
+    ResolveHumanReviewResult,
 )
 from .retry_lineage_store import RetryLineageStore
 from .retry_lineage_store_lock import RetryLineageStoreLock
 from .retry_lineage_target_resolution import (
+    SIDE_EFFECT_CONTRACT_VERSION,
     _canonicalize_step_order,
     compute_initial_confirmed_steps,
     compute_steps_to_execute,
     disposition_from_categories,
+    resolve_final_disposition,
 )
 
 if TYPE_CHECKING:
+    from protected_operation_manifest import ProtectedOperationManifestStore
     from retry_engine.retry_policy_protocol import ExplainableRetryPolicy
+    from side_effect_safety_classifier import SideEffectSafetyClassifier
     from workflow_monitor import WorkflowMonitorRecord
 
 ResolveStatusFn = Callable[[str], "WorkflowMonitorRecord | None"]
+
+
+def _verify_owner_authority(record: "RetryLineageRecord", owner_token: str) -> bool:
+    """4段階のauthority check（Architecture Amendment §9.5.1）。いずれか1つでも
+    失敗すればFalse（fail-closed）。None同士の比較で通過することを禁止する。"""
+    if not owner_token or not isinstance(owner_token, str):
+        return False  # (1) caller owner_tokenがnon-empty strであること
+    if not record.owner_token or not isinstance(record.owner_token, str):
+        return False  # (2) durable record.owner_tokenがnon-empty strであること
+    if record.phase != RetryLineagePhase.CLAIMED:
+        return False  # (3) phase == CLAIMED
+    if record.owner_token != owner_token:
+        return False  # (4) caller token == durable token（exact match）
+    return True
 
 
 class RetryLineageManager:
@@ -90,10 +116,31 @@ class RetryLineageManager:
         store: RetryLineageStore,
         config: RetryLineageConfig,
         policy: "ExplainableRetryPolicy",
+        manifest: "ProtectedOperationManifestStore | None" = None,
+        side_effect_classifier: "SideEffectSafetyClassifier | None" = None,
     ):
+        """
+        manifest / side_effect_classifier（Architecture Amendment、Protected
+        Operation Manifest、§4.1・§9・§10・§11）：構造上は省略可能（デフォルト
+        None、既存の直接構築互換性のため引数自体はoptionalのまま残す）。
+
+        Codex Final Review Blocking#1対応：ただし、legacy lineage
+        （`record.side_effect_contract_version is None`）でのみ、既存6.31
+        以前のstep-only disposition判定（decide_disposition() /
+        disposition_from_categories()）へのフォールバックを許容する。
+        protected lineage（`side_effect_contract_version is not None`）で
+        manifest/side_effect_classifierのいずれかが省略されている場合は、
+        決してstep-only fallbackへ降格せず、`_reconcile_all_locked()`内で
+        fail-closedにHUMAN_REVIEW_REQUIREDへ確定する（「composition rootが
+        必ず両方構築・注入するはず」という前提のみをsafety guaranteeにしない）。
+        production composition root（RetryCompositionRoot）は両方を必ず構築・
+        注入し、Approved Architecture §22.1cが要求するSideEffectSafety
+        Classifier接続を閉じる。"""
         self._store = store
         self._config = config
         self._policy = policy
+        self._manifest = manifest
+        self._side_effect_classifier = side_effect_classifier
 
     def _store_lock(self) -> RetryLineageStoreLock:
         return RetryLineageStoreLock(self._config.store_lock_path)
@@ -279,6 +326,7 @@ class RetryLineageManager:
                 attempt_scopes=[initial_scope],
                 created_at=now,
                 updated_at=now,
+                side_effect_contract_version=SIDE_EFFECT_CONTRACT_VERSION,  # Release 6.32、18.1節
             )
             ok = self._store.save(record)
             if not ok:
@@ -376,13 +424,19 @@ class RetryLineageManager:
             return ClaimResult(
                 acknowledged=True, attempt_no=stored_scope.attempt_no,
                 correlation_id=correlation_id, steps_to_execute=steps_to_execute,
+                owner_token=record.owner_token,
             )
 
-    def release_claim(self, root_run_id: str) -> bool:
-        """CLAIMEDをREADY_ELIGIBLEへ戻す（実行せずclaimを手放す場合用）。"""
+    def release_claim(self, root_run_id: str, expected_owner_token: str) -> bool:
+        """OWNER-AUTHORIZED RELEASE（Architecture Amendment §9.5.2）。live
+        claimant（RetryExecutor等）が自分自身のclaimを手放す場合専用。
+        _verify_owner_authority()の4段階checkに失敗したら（mismatch・stale・
+        missingのいずれであっても）絶対にreleaseしない——stale caller（既に
+        reconciliationのCLAIMED orphan回収で回収され、別のclaimが確立済みの
+        旧claim）が新しいclaimを誤って解除することを構造的に防ぐ。"""
         with self._store_lock():
             record = self._store.get(root_run_id)
-            if record is None or record.phase != RetryLineagePhase.CLAIMED:
+            if record is None or not _verify_owner_authority(record, expected_owner_token):
                 return False
             now = datetime.now()
             attempt_no = record.attempt_scopes[-1].attempt_no if record.attempt_scopes else 0
@@ -401,15 +455,37 @@ class RetryLineageManager:
     # ------------------------------------------------------------------
     # 9.5・10.2章：mark_execution_started()
     # ------------------------------------------------------------------
-    def mark_execution_started(self, root_run_id: str, run_id: str) -> bool:
+    def mark_execution_started(self, root_run_id: str, run_id: str, owner_token: str) -> bool:
         """post-admission hookから呼ばれる。attempt消費点（9.5章）：durable ack成功
-        時点でattempt_countを+1する。"""
+        時点でattempt_countを+1する。
+
+        Architecture Amendment（Protected Operation Manifest、§4.1・§9.5.1）：
+        owner_tokenの4段階authority check（_verify_owner_authority()）に成功した
+        場合のみ処理を続行する。self._manifestが構築済みでside_effect_contract_
+        versionが設定されたlineageの場合、manifest作成をlineage phase遷移より
+        先に行う（manifest作成失敗時、durable lineage phaseはCLAIMEDのまま
+        変化しない——呼び出し元のrelease_claim(root_run_id, owner_token)が
+        正しく機能する）。"""
         with self._store_lock():
             record = self._store.get(root_run_id)
-            if record is None or record.phase != RetryLineagePhase.CLAIMED:
+            if record is None or not _verify_owner_authority(record, owner_token):
                 return False
-            now = datetime.now()
             attempt_no = record.attempt_scopes[-1].attempt_no if record.attempt_scopes else record.next_attempt_ordinal
+            if record.side_effect_contract_version is not None and self._manifest is not None:
+                # Round 9：create_for_attempt()はowner_tokenを受け取らない
+                # （manifest自体はauthorityを保持・検証しない）。run_id
+                # （=member_run_id）はWorkflowEngineManagerが生成した一意な
+                # uuid4であり、この呼び出し自体が上のauthority check成功済みの
+                # 文脈からのみ行われる。同一キーへの既存レコード発見（正常経路
+                # では構造的に起こり得ない）はcatchせずProtectedOperation
+                # ManifestContractViolationErrorとして伝播させ、既存の
+                # fail-fast契約（WorkflowEngineExecutor/RetryExecutor.execute()の
+                # 既存except節）へ委ねる——rebindフォールバックは存在しない。
+                manifest_ok = self._manifest.create_for_attempt(root_run_id, attempt_no, run_id)
+                if not manifest_ok:
+                    return False  # レコードは一切変更していない。durable lineage
+                                  # phaseはCLAIMEDのまま。
+            now = datetime.now()
             record.phase = RetryLineagePhase.EXECUTION_STARTED
             record.latest_run_id = run_id
             record.attempt_count += 1
@@ -426,6 +502,15 @@ class RetryLineageManager:
                     to_phase=RetryLineagePhase.EXECUTION_STARTED, run_id=run_id, at=now,
                 )
             )
+            # Release 6.32、17.2節：crash-resumable HRR markerの解放。このattemptが
+            # HRR authorized経路で開かれたもの（opened_attempt_noが一致）である場合
+            # のみクリアする。通常のFAILED/NOT_ACTIONED経路（human_review_resolutionが
+            # 元々None）では本分岐はno-opのまま。
+            if (
+                record.human_review_resolution is not None
+                and record.human_review_resolution.opened_attempt_no == attempt_no
+            ):
+                record.human_review_resolution = None
             record.updated_at = now
             return self._store.save(record)
 
@@ -468,8 +553,23 @@ class RetryLineageManager:
             if record is None or record.phase != RetryLineagePhase.TERMINAL:
                 return OpenNextAttemptResult(acknowledged=False, reason="phase mismatch: not TERMINAL")
 
-            if record.terminal_disposition not in (RetryLineageDisposition.FAILED, RetryLineageDisposition.NOT_ACTIONED):
-                return OpenNextAttemptResult(acknowledged=False, reason="terminal_disposition is not retryable")
+            resolution = record.human_review_resolution
+            hrr_authorized = (
+                record.terminal_disposition == RetryLineageDisposition.HUMAN_REVIEW_REQUIRED
+                and resolution is not None
+                and resolution.resolution == HumanReviewResolution.RETRY_ALLOWED
+            )
+            if (
+                record.terminal_disposition not in (RetryLineageDisposition.FAILED, RetryLineageDisposition.NOT_ACTIONED)
+                and not hrr_authorized
+            ):
+                return OpenNextAttemptResult(
+                    acknowledged=False,
+                    reason=(
+                        "terminal_disposition is not retryable (HUMAN_REVIEW_REQUIRED requires an "
+                        "explicit RETRY_ALLOWED resolution via resolve_human_review(), Release 6.32 17章)."
+                    ),
+                )
 
             if record.attempt_count >= record.max_attempts:
                 # durable stateのみに基づく判定（record.attempt_count・record.max_attempts）。
@@ -517,13 +617,23 @@ class RetryLineageManager:
             record.attempt_scopes.append(next_scope)
             record.phase = RetryLineagePhase.READY_ELIGIBLE
             record.terminal_disposition = None
+            if hrr_authorized:
+                # Release 6.32、17.2節：human_review_resolutionはここではクリアしない
+                # ——opened_attempt_noへ新attempt番号を記録し、crash-resumable dispatch
+                # markerとして保持する。クリアはmark_execution_started()まで遅延させる。
+                record.human_review_resolution = replace(resolution, opened_attempt_no=next_attempt_no)
+            else:
+                record.human_review_resolution = None
             record.next_eligible_at = None
             record.next_attempt_ordinal = next_attempt_no
             record.transition_history.append(
                 RetryLineageTransitionEvent(
                     attempt_no=next_attempt_no, from_phase=RetryLineagePhase.TERMINAL,
                     to_phase=RetryLineagePhase.READY_ELIGIBLE, run_id=None, at=now,
-                    detail="next attempt opened",
+                    detail=(
+                        "next attempt opened via RETRY_ALLOWED human review resolution"
+                        if hrr_authorized else "next attempt opened"
+                    ),
                 )
             )
             record.updated_at = now
@@ -531,6 +641,74 @@ class RetryLineageManager:
             if not ok:
                 return OpenNextAttemptResult(acknowledged=False, reason="lineage store save failed")
             return OpenNextAttemptResult(acknowledged=True, attempt_no=next_attempt_no)
+
+    def open_next_attempt_after_human_review(self, root_run_id: str) -> OpenNextAttemptResult:
+        """operator-invoked専用のself-locking wrapper（`reconcile_all()`と同型、
+        Release 6.32、16章）。`open_next_attempt()`自身はRetryExecutionLockを
+        取得しない——呼び出し元が既に取得済みであることを前提とする既存契約
+        （9.3章）。自動reconciliation sweep（`_reconcile_all_locked()`）以外から
+        `open_next_attempt()`を呼ぶ経路は、本wrapperのみを経由する。"""
+        try:
+            with RetryExecutionLock(self.execution_lock_path):
+                return self.open_next_attempt(root_run_id)
+        except RetryExecutionLockBusyError:
+            return OpenNextAttemptResult(acknowledged=False, reason="execution lock busy")
+
+    # ------------------------------------------------------------------
+    # 17章：Human Resolution Lifecycle
+    # ------------------------------------------------------------------
+    def resolve_human_review(
+        self, root_run_id: str, resolution: HumanReviewResolution, actor: str, note: str | None = None,
+    ) -> ResolveHumanReviewResult:
+        """durable one-shot resolution（Release 6.32、17.2節）。`reconcile_all()`と
+        同型のself-locking method——`RetryExecutionLock`を自ら取得してから
+        `_store_lock()`でread-modify-writeを行う（9.3章Lock Ordering）。"""
+        try:
+            with RetryExecutionLock(self.execution_lock_path):
+                return self._resolve_human_review_locked(root_run_id, resolution, actor, note)
+        except RetryExecutionLockBusyError:
+            return ResolveHumanReviewResult(acknowledged=False, reason="execution lock busy")
+
+    def _resolve_human_review_locked(
+        self, root_run_id: str, resolution: HumanReviewResolution, actor: str, note: str | None,
+    ) -> ResolveHumanReviewResult:
+        with self._store_lock():
+            record = self._store.get(root_run_id)
+            if (
+                record is None
+                or record.phase != RetryLineagePhase.TERMINAL
+                or record.terminal_disposition != RetryLineageDisposition.HUMAN_REVIEW_REQUIRED
+            ):
+                return ResolveHumanReviewResult(acknowledged=False, reason="not in HUMAN_REVIEW_REQUIRED")
+
+            existing = record.human_review_resolution
+            if existing is not None:
+                if existing.resolution == resolution:
+                    # 同一decisionの再送：idempotent success。actor/note/resolved_atは
+                    # 既存recordのまま上書きしない。追加のdurable writeも行わない。
+                    return ResolveHumanReviewResult(acknowledged=True)
+                return ResolveHumanReviewResult(
+                    acknowledged=False,
+                    reason=f"conflicting resolution already recorded: {existing.resolution.value}",
+                )
+
+            now = datetime.now()
+            record.human_review_resolution = HumanReviewResolutionRecord(
+                resolution=resolution, actor=actor, note=note, resolved_at=now,
+            )
+            attempt_no = record.attempt_scopes[-1].attempt_no if record.attempt_scopes else record.next_attempt_ordinal
+            record.transition_history.append(
+                RetryLineageTransitionEvent(
+                    attempt_no=attempt_no, from_phase=RetryLineagePhase.TERMINAL,
+                    to_phase=RetryLineagePhase.TERMINAL, run_id=None, at=now,
+                    detail=f"human_review_resolution={resolution.value}",
+                )
+            )
+            record.updated_at = now
+            ok = self._store.save(record)
+            if not ok:
+                return ResolveHumanReviewResult(acknowledged=False, reason="lineage store save failed")
+            return ResolveHumanReviewResult(acknowledged=True)
 
     # ------------------------------------------------------------------
     # 9.3・16章：reconcile_all() / _reconcile_all_locked()
@@ -562,7 +740,43 @@ class RetryLineageManager:
             # "success"（SUCCESS）／"failure"（FAILED・TIMEOUT）いずれも同一ロジックへ。
             newly_confirmed = compute_initial_confirmed_steps(monitor_record.steps)
             categories = [classify_execution_history_step(s) for s in monitor_record.steps]
-            disposition = disposition_from_categories(categories)
+
+            # Architecture Amendment（Protected Operation Manifest、§11、production
+            # closure）：self._manifest / self._side_effect_classifierが構築済みで
+            # side_effect_contract_versionが設定されたlineageの場合のみ、
+            # SideEffectSafetyClassifier.classify() → resolve_final_disposition()
+            # の実チェーンへ接続する。
+            #
+            # Codex Final Review Blocking#1対応：legacy lineage
+            # （side_effect_contract_version is None）の場合のみ既存6.31以前の
+            # disposition_from_categories()へフォールバックしてよい（§21の
+            # 実装ノート参照、Zero-Diff維持のための意図的な後方互換設計）。
+            # protected lineage（side_effect_contract_version is not None）で
+            # manifest/classifierのいずれかが欠落している場合は、決して
+            # step-only fallbackへ降格せず、fail-closedでHUMAN_REVIEW_REQUIRED
+            # へ確定する（primary blocking findingの再導入を防ぐ）。
+            if record.side_effect_contract_version is None:
+                disposition = disposition_from_categories(categories)
+            elif self._manifest is None or self._side_effect_classifier is None:
+                disposition = RetryLineageDisposition.HUMAN_REVIEW_REQUIRED
+            else:
+                attempt_no = record.attempt_scopes[-1].attempt_no if record.attempt_scopes else record.next_attempt_ordinal
+                try:
+                    manifest_entries = self._manifest.list_for_attempt(
+                        record.root_run_id, attempt_no, record.latest_run_id,
+                    )
+                except ProtectedOperationManifestReadError:
+                    disposition = RetryLineageDisposition.HUMAN_REVIEW_REQUIRED
+                else:
+                    operations = [
+                        ProtectedOperationContext(e.operation_kind, e.effect_site, e.operation_instance_key)
+                        for e in manifest_entries
+                    ]
+                    safety_report = self._side_effect_classifier.classify(
+                        record.root_run_id, attempt_no, record.latest_run_id, operations,
+                    )
+                    disposition = resolve_final_disposition(categories, safety_report)
+
             result = self.mark_terminal(
                 record.root_run_id, disposition, record.latest_run_id, newly_confirmed,
             )
@@ -590,12 +804,36 @@ class RetryLineageManager:
         # クラッシュ由来のorphanである。mark_execution_started()が一度も成功して
         # いないためattempt_countは未消費であり、release_claim()によるbudgetへの
         # 影響は一切ない。
+        # Architecture Amendment（Protected Operation Manifest、§9.5.2a、Round 9
+        # SIMPLIFICATION PIVOT）：readable lease機構は撤回し、既存6.31の信頼
+        # モデル（RetryExecutionLock保有＝reconciliation実行権）へ回帰する。
+        # owner_tokenは検証しない（回収対象は定義上誰もowner_tokenを保持して
+        # いないorphanであるため）。単独で呼び出し可能な別メソッド（owner-less
+        # general release API）へ切り出さず、このループ本体へ直接インライン
+        # する——reconcile_all()がRetryExecutionLockを保持している間だけ
+        # 実行される、という構造そのものをauthorityの根拠とする。
         released_count = 0
         for record in self._store.list_all():
             if record.phase != RetryLineagePhase.CLAIMED:
                 continue
-            if self.release_claim(record.root_run_id):
-                released_count += 1
+            with self._store_lock():
+                fresh = self._store.get(record.root_run_id)
+                if fresh is None or fresh.phase != RetryLineagePhase.CLAIMED:
+                    continue
+                now = datetime.now()
+                attempt_no = fresh.attempt_scopes[-1].attempt_no if fresh.attempt_scopes else 0
+                fresh.phase = RetryLineagePhase.READY_ELIGIBLE
+                fresh.owner_token = None
+                fresh.transition_history.append(
+                    RetryLineageTransitionEvent(
+                        attempt_no=attempt_no, from_phase=RetryLineagePhase.CLAIMED,
+                        to_phase=RetryLineagePhase.READY_ELIGIBLE, run_id=None, at=now,
+                        detail="claim released (reconciliation orphan recovery)",
+                    )
+                )
+                fresh.updated_at = now
+                if self._store.save(fresh):
+                    released_count += 1
 
         return ReconcileSummary(
             skipped=False, resolved_count=resolved_count, opened_count=opened_count,

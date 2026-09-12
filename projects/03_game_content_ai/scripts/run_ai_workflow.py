@@ -41,6 +41,12 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 from ai import WorkflowConfig, WorkflowRunner, NullWorkflowRunner, WorkflowStep
+from side_effect_safety import (
+    LegacyEntrypoint,
+    LegacyExecutionOrigin,
+    build_legacy_direct_provenance,
+    complete_legacy_execution_context,
+)
 
 
 def parse_steps(steps_str: str) -> list[WorkflowStep]:
@@ -118,7 +124,14 @@ def main():
         print("  AI_WORKFLOW_ENABLED=true を .env に設定してください。")
         sys.exit(1)
 
-    result = runner.run(article_id=args.article_id, dry_run=args.dry_run)
+    side_effect_execution_context = complete_legacy_execution_context(
+        build_legacy_direct_provenance(LegacyEntrypoint.RUN_AI_WORKFLOW),
+        LegacyExecutionOrigin.AI_WORKFLOW_DIRECT,
+    )
+    result = runner.run(
+        article_id=args.article_id, dry_run=args.dry_run,
+        side_effect_execution_context=side_effect_execution_context,
+    )
 
     print()
     print("=" * 50)

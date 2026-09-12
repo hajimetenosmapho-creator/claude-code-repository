@@ -26,6 +26,8 @@ from .agent_decision import AgentDecision
 from .agent_result import AgentResult
 from .base_agent import BaseAgent
 
+from side_effect_safety import SideEffectExecutionModeContractError
+
 
 class AgentExecutor:
     """BaseAgent.decide() / act() を実行する Execution Pipeline。"""
@@ -77,6 +79,8 @@ class AgentExecutor:
                 )
             else:
                 result = self._agent.act(decision, context)
+        except SideEffectExecutionModeContractError:
+            raise  # 6.32新設（22.3.12・28.-36節）：contract violationはAgentResultへ変換せず素通しする
         except Exception as e:
             context.errors.append(str(e))
             if decision is None:

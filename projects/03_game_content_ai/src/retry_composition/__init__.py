@@ -10,8 +10,10 @@ RetryEnqueueTrigger（Enqueue側）と RetryManager（Execute側）の両方へ
 同一インスタンスとして注入する。実行順序の決定・ループ・デーモン化は
 本パッケージの責務としない（docs/design/retry_composition_root_foundation.md参照）。
 """
+from .retry_after_human_review import retry_after_human_review
 from .retry_composition_root import RetryCompositionRoot
 
 __all__ = [
     "RetryCompositionRoot",
+    "retry_after_human_review",
 ]

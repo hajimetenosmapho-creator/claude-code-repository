@@ -5,6 +5,8 @@
 from .base import BaseOutput, ArticleData
 from .save_result import SaveResult
 
+from side_effect_safety import SideEffectExecutionModeContractError
+
 
 class OutputManager:
     """
@@ -22,6 +24,12 @@ class OutputManager:
         v1.11.0: 戻り値を list[str] から list[SaveResult] に変更。
                  失敗した場合も SaveResult(success=False) として結果に含める。
 
+        Release 6.32（呼び出し箇所A、22.3.13節(2)）: output.save() が
+        SideEffectExecutionModeContractError を送出した場合、他出力先への
+        continue（SaveResult(success=False)への変換）とせず、そのまま
+        呼び出し元へ伝播させる。OutputManagerはWordPress固有の知識を持たない
+        汎用dispatcherのまま維持し、シグネチャ変更は行わない。
+
         Args:
             article: 保存対象の記事データ
 
@@ -36,6 +44,8 @@ class OutputManager:
             try:
                 result = output.save(article)
                 results.append(result)
+            except SideEffectExecutionModeContractError:
+                raise  # 6.32新設：contract violationは他出力先へのcontinueへ変換せず素通しする
             except Exception as e:
                 print(f"  [警告] {output.__class__.__name__} 保存失敗: {e}")
                 results.append(SaveResult(

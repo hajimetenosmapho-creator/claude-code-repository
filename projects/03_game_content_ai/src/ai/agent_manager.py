@@ -35,6 +35,9 @@ NullAgentManager: AI_AGENT_ENABLED=false 時のダミー実装
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
+
+from side_effect_safety import LegacyExecutionOrigin, complete_legacy_execution_context
 
 from .agent_config import AgentConfig
 from .agent_context import AgentContext
@@ -56,6 +59,19 @@ from pipeline import (
     ReviewPipelineRunner,
     WorkflowPipelineRunner,
 )
+
+if TYPE_CHECKING:
+    from side_effect_safety import LegacyDirectProvenance
+
+# Release 6.32、2.3節：AgentManager.from_config()が構築するAgent型からのみ決定される
+# closed mapping（Agent型が確定した時点の情報のみに依存、AgentExecutor.execute()実行時の
+# self._agent.name()文字列照合には依存しない）。
+_AGENT_TYPE_TO_LEGACY_ORIGIN = {
+    NewsAgent: LegacyExecutionOrigin.NEWS_AGENT,
+    WorkflowTriggerAgent: LegacyExecutionOrigin.WORKFLOW_TRIGGER_AGENT,
+    PublishTriggerAgent: LegacyExecutionOrigin.PUBLISH_TRIGGER_AGENT,
+    ReviewTriggerAgent: LegacyExecutionOrigin.REVIEW_TRIGGER_AGENT,
+}
 
 
 class AgentManager:
@@ -147,15 +163,36 @@ class AgentManager:
         """AgentManagerが実行可能な状態か返す。"""
         return self._config.is_ready()
 
-    def run(self, task: AgentTask, dry_run: bool = False) -> list[AgentResult]:
-        """登録されている各 AgentExecutor にタスクを実行させ、結果をまとめて返す。"""
+    def run(
+        self,
+        task: AgentTask,
+        dry_run: bool = False,
+        legacy_provenance: "LegacyDirectProvenance | None" = None,
+    ) -> list[AgentResult]:
+        """登録されている各 AgentExecutor にタスクを実行させ、結果をまとめて返す。
+
+        legacy_provenanceはRelease 6.32（2.3・2.6節）で追加した引数。fan-out境界で
+        実際にdispatchされるexecutorが確定した時点で、そのAgent型から
+        LegacyExecutionOriginを決定し、個別に完成させたLegacyDirectExecutionContextを
+        各AgentContextへ設定する。対応表に存在しないAgent型の場合は
+        side_effect_execution_context=Noneのまま構築し、推測しない。省略時（None）は
+        既存の全呼び出し元に対して完全にZero-Diff。
+        """
         results: list[AgentResult] = []
         for executor in self._executors:
+            side_effect_execution_context = None
+            if legacy_provenance is not None:
+                origin = _AGENT_TYPE_TO_LEGACY_ORIGIN.get(type(executor._agent))
+                if origin is not None:
+                    side_effect_execution_context = complete_legacy_execution_context(
+                        legacy_provenance, origin,
+                    )
             context = AgentContext(
                 task=task,
                 dry_run=dry_run,
                 run_id=self._generate_run_id(),
                 agent_name="",
+                side_effect_execution_context=side_effect_execution_context,
             )
             results.append(executor.execute(context))
         return results
@@ -174,6 +211,11 @@ class NullAgentManager:
     def is_available(self) -> bool:
         return False
 
-    def run(self, task: AgentTask, dry_run: bool = False) -> list[AgentResult]:
+    def run(
+        self,
+        task: AgentTask,
+        dry_run: bool = False,
+        legacy_provenance: "LegacyDirectProvenance | None" = None,
+    ) -> list[AgentResult]:
         print("  [AGENT] AI Agent基盤が無効です（AI_AGENT_ENABLED=false）。")
         return []

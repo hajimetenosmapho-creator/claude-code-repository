@@ -35,6 +35,11 @@ class ClaimResult:
     attempt_no: int | None = None
     correlation_id: str | None = None
     steps_to_execute: list[str] | None = None
+    # Architecture Amendment（Protected Operation Manifest、§9.5）：claim()が
+    # acknowledged=Trueを返す場合、常にnon-empty strである（claim()が
+    # uuid.uuid4().hex を生成するため）。mark_execution_started() /
+    # release_claim() のowner_token authority検証へそのまま渡す。
+    owner_token: str | None = None
 
 
 @dataclass
@@ -48,6 +53,14 @@ class OpenNextAttemptResult:
     acknowledged: bool
     reason: str | None = None
     attempt_no: int | None = None
+
+
+@dataclass
+class ResolveHumanReviewResult:
+    """`resolve_human_review()`の戻り値（Release 6.32、17章）。"""
+
+    acknowledged: bool
+    reason: str | None = None
 
 
 @dataclass

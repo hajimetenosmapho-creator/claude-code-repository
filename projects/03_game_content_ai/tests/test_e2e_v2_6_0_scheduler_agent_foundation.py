@@ -430,9 +430,7 @@ print()
 
 print("[テスト43] 既存ファイルの無変更確認（git diff）")
 
-unchanged_paths = [
-    "src/ai",
-]
+unchanged_paths = []
 
 git_available = True
 try:
@@ -451,23 +449,55 @@ if git_available:
         check_true(f"43. {rel_path} に変更がない（git diff）", completed.returncode == 0)
 
     # src/pipeline はRelease 6.30 Production Canonical Run & Outcome Contract
-    # Foundationにより news_pipeline_runner.py のみ承認済み変更対象となった
-    # （bytes正規化・NEWS Outcome Token）。ディレクトリ全体のno-diff要求を
-    # 撤廃せず、承認済み変更ファイルだけを除いた残り全体は引き続き無変更で
-    # あることを要求する（docs/design/
-    # production_canonical_run_outcome_contract_foundation.md 24章）。
+    # Foundationにより news_pipeline_runner.py が承認済み変更対象となり
+    # （bytes正規化・NEWS Outcome Token）、Release 6.32（Side-Effect Fail-Closed
+    # & Human Review Safety）によりpublish_pipeline_runner.py /
+    # workflow_pipeline_runner.pyが追加で承認済み変更対象となった（22.1f節）。
+    # ディレクトリ全体のno-diff要求を撤廃せず、承認済み変更ファイルだけを
+    # 除いた残り全体は引き続き無変更であることを要求する。
     _pipeline_diff = subprocess.run(
         ["git", "diff", "--name-only", "--relative", "--", "src/pipeline"],
         cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=10,
     )
     _pipeline_changed = {line.strip() for line in _pipeline_diff.stdout.splitlines() if line.strip()}
+    _pipeline_allowed = {
+        "src/pipeline/news_pipeline_runner.py",
+        "src/pipeline/publish_pipeline_runner.py",
+        "src/pipeline/workflow_pipeline_runner.py",
+    }
     # Release 6.30 Code Review Minor対応: git diffがコマンド自体の失敗（非0終了）で
     # 空stdoutを返した場合、fail-open（誤ってPASS）してはならない。returncode==0を
     # 明示的に要求する。
     check(
-        "43. src/pipelineの差分はRelease 6.30承認済み変更"
-        "（src/pipeline/news_pipeline_runner.py）のみに限定される",
-        _pipeline_diff.returncode == 0 and _pipeline_changed <= {"src/pipeline/news_pipeline_runner.py"},
+        "43. src/pipelineの差分はRelease 6.30・6.32承認済み変更ファイルのみに限定される",
+        _pipeline_diff.returncode == 0 and _pipeline_changed <= _pipeline_allowed,
+        True,
+    )
+
+    # src/ai はRelease 6.32（Side-Effect Fail-Closed & Human Review Safety）により
+    # Explicit Side-Effect Execution Mode専用channelの新設・伝播に伴う承認済み
+    # 変更対象となった（22.1f節）。src/pipelineと同一パターンで、承認済み変更
+    # ファイルだけを除いた残り全体は引き続き無変更であることを要求する。
+    _ai_diff = subprocess.run(
+        ["git", "diff", "--name-only", "--relative", "--", "src/ai"],
+        cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=10,
+    )
+    _ai_changed = {line.strip() for line in _ai_diff.stdout.splitlines() if line.strip()}
+    _ai_allowed = {
+        "src/ai/agent_context.py",
+        "src/ai/agent_manager.py",
+        "src/ai/agent_executor.py",  # sub-milestone 6C（§28.-36節test#8、22.3.12節）：carve-out追加
+        "src/ai/news_agent.py",
+        "src/ai/publish_trigger_agent.py",
+        "src/ai/workflow_trigger_agent.py",
+        "src/ai/workflow_runner.py",
+        "src/ai/workflow_context.py",
+        "src/ai/workflow_step_executor.py",
+        "src/ai/ai_publish_service.py",
+    }
+    check(
+        "43. src/aiの差分はRelease 6.32承認済み変更ファイルのみに限定される",
+        _ai_diff.returncode == 0 and _ai_changed <= _ai_allowed,
         True,
     )
 else:

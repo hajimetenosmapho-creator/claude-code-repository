@@ -54,11 +54,54 @@ from article_featured_media_runtime import (
     ArticleFeaturedMediaRuntimeStatus,
     FeaturedMediaFailureObservation,
 )
+from side_effect_safety import (
+    SIDE_EFFECT_CONTRACT_VIOLATION_EXIT_CODE,
+    LegacyDirectExecutionContext,
+    ProtectedSideEffectKind,
+    RetryLineageProtectedExecutionContext,
+    SideEffectExecutionModeContractError,
+    SideEffectOperationIdentity,
+    SideEffectSite,
+    build_media_upload_safety_coordinator,
+)
+from side_effect_safety.side_effect_execution_mode import (
+    ExecutionModeFailureReasonCode,
+    _parse_execution_context_from_env,
+)
+from side_effect_safety.media_upload_applicability_store import JsonMediaUploadApplicabilityStore
+from side_effect_safety.media_upload_attempt_context_store import JsonMediaUploadAttemptContextStore
+from side_effect_safety.media_upload_write_ahead_wiring import (
+    FeaturedMediaPropagatedFailure,
+    LegacyFeaturedMediaSideEffectBinding,
+    MediaUploadWriteAheadAdapters,
+    ProtectedFeaturedMediaSideEffectBinding,
+    build_legacy_featured_media_side_effect_binding,
+    build_protected_featured_media_runtime,
+    build_protected_featured_media_side_effect_binding,
+)
+from article_media_upload_state import ArticleMediaUploadStateManager, JsonArticleMediaUploadStateStore
+from protected_operation_manifest import (
+    JsonProtectedOperationManifestStore,
+    ManifestRegistrarFacade,
+    build_manifest_entry,
+    raise_if_not_registered,
+)
+from wordpress_draft_state import JsonWordPressDraftStateStore, WordPressDraftStateManager
 
 # .env ファイルを読み込む
 load_dotenv()
 
 OUTPUT_DIR = Path(__file__).parent / "output"
+# Release 6.32（9.3節）：WORDPRESS_DRAFT_CREATIONのdurable write-ahead state保存先
+WORDPRESS_DRAFT_STATE_DIR = Path(__file__).parent / "state" / "wordpress_draft_state"
+# Release 6.32（9.9節）：MEDIA_UPLOADのdurable write-ahead state保存先（呼び出し箇所B）
+MEDIA_UPLOAD_STATE_DIR = Path(__file__).parent / "state" / "article_media_upload_state"
+MEDIA_UPLOAD_APPLICABILITY_DIR = Path(__file__).parent / "state" / "media_upload_applicability"
+MEDIA_UPLOAD_ATTEMPT_CONTEXT_DIR = Path(__file__).parent / "state" / "media_upload_attempt_context"
+MEDIA_UPLOAD_LOCKS_DIR = Path(__file__).parent / "state" / "media_upload_locks"
+# Architecture Amendment（Protected Operation Manifest）：RetryCompositionRootが
+# 構築するmanifest storeと同一のディレクトリ（呼び出し箇所A/B共通）。
+PROTECTED_OPERATION_MANIFEST_DIR = Path(__file__).parent / "state" / "protected_operation_manifest"
 
 # A評価ニュースの記事化上限（超過分は候補ファイルへ保存）
 A_ARTICLE_LIMIT = 5
@@ -184,23 +227,122 @@ total_count: {len(candidates)}
     return output_path
 
 
+def _extract_confirmed_media_id(applied_article: object) -> int | None:
+    """1〜4のいずれかを満たさない場合はNoneを返す。呼び出し元はNoneの場合、
+    record_confirmed()を呼んではならない（fail-closed、15.5.1節）。"""
+    if not isinstance(applied_article, ArticleData):
+        return None
+    media_id = getattr(applied_article, "featured_media_id", None)
+    if type(media_id) is not int:  # bool除外
+        return None
+    if media_id <= 0:
+        return None
+    return media_id
+
+
 def _apply_featured_media_step(
-    runtime: ArticleFeaturedMediaRuntime, article: ArticleData
+    article: ArticleData,
+    *,
+    side_effect_binding: "LegacyFeaturedMediaSideEffectBinding | ProtectedFeaturedMediaSideEffectBinding",
 ) -> ArticleFeaturedMediaRuntimeResult:
     """
     v6.21.0: アイキャッチ画像のfeatured media適用ステップ。
-    承認済みFacade ArticleFeaturedMediaRuntime を呼び出す唯一の箇所。
 
-    PROPAGATE対象の例外はruntime.apply()内部でbare raiseされ、無変換のまま
-    この関数の呼び出し元（main()の記事ループ）へ伝播する。
+    Release 6.32（15.4.1・22.3.2節）: 呼び出し箇所B。record_confirmed()の
+    唯一のowner。side_effect_binding をexhaustiveにdispatchし（legacy/protected
+    以外の経路は持たない）、legacy/protectedいずれの分岐でも runtime.apply(article)
+    を単一のtry/exceptで包む。PROPAGATE対象の例外はここで分類済みの
+    FeaturedMediaFailureObservation として FeaturedMediaPropagatedFailure へ包み、
+    main.py記事ループへ運ぶ（Foundation自体のPROPAGATE分類ロジックは無変更）。
 
     v6.25.0（DI-5）: 戻り値を ArticleFeaturedMediaRuntimeResult そのものへ変更し、
     呼び出し元が result.article／result.observation を個別に取り出す。
     """
-    result = runtime.apply(article)
-    if result.status is ArticleFeaturedMediaRuntimeStatus.CONTINUED_WITHOUT_FEATURED_MEDIA:
-        print(f"    アイキャッチ画像なしで継続します（分類: {result.category.value}）")
-    return result
+    media_upload_coordinator = None
+    identity = None
+    member_run_id = None
+
+    if isinstance(side_effect_binding, LegacyFeaturedMediaSideEffectBinding):
+        runtime = side_effect_binding.runtime
+        # legacy modeでは4 safety methods（record_not_applicable/record_prepared/
+        # record_attempted/record_confirmed）のいずれも呼ばない（15.4.1節）。
+    elif isinstance(side_effect_binding, ProtectedFeaturedMediaSideEffectBinding):
+        context = side_effect_binding.context
+        media_upload_coordinator = side_effect_binding.media_upload_coordinator
+        adapters = side_effect_binding.adapters
+        manifest_registrar = side_effect_binding.manifest_registrar
+        member_run_id = context.member_run_id
+        # Codex Final Review Blocking#2対応：protected bindingでは
+        # manifest_registrarの省略によるregistration bypassを許可しない
+        # （legacy bindingのみ既存どおり省略を許容する）。「composition rootが
+        # 必ず注入するはず」という前提のみをsafety guaranteeにせず、この
+        # production関数自身がfail-closedする（Gate ON/OFFいずれも本チェックの
+        # 対象、既存write-ahead・uploadのいずれへも進む前に停止する）。
+        if manifest_registrar is None:
+            raise SideEffectExecutionModeContractError(
+                ExecutionModeFailureReasonCode.PROTECTED_MANIFEST_REGISTRAR_REQUIRED,
+            )
+        identity = SideEffectOperationIdentity(
+            root_run_id=context.root_run_id,
+            attempt_ordinal=context.attempt_ordinal,
+            operation_kind=ProtectedSideEffectKind.MEDIA_UPLOAD,
+            effect_site=SideEffectSite.NEWS_STEP,
+            operation_instance_key=article.slug,
+        )
+        # Architecture Amendment（Protected Operation Manifest、§4.2・§5・
+        # §15）：既存write-ahead呼び出し（record_not_applicable()/
+        # record_prepared()）より先にmanifestへ自分自身のentryを登録する。
+        # Gate ON/OFFいずれの場合も必ず登録する（Gate OFFであっても
+        # MEDIA_UPLOAD operationの判定対象であることの記録を残すため）。
+        # durable ACKを必ず確認し、未ack時は既存write-ahead・外部I/Oの
+        # いずれへも進まずfail-closedする。
+        raise_if_not_registered(
+            manifest_registrar.register(
+                context.root_run_id, context.attempt_ordinal, context.member_run_id,
+                build_manifest_entry(
+                    ProtectedSideEffectKind.MEDIA_UPLOAD, SideEffectSite.NEWS_STEP, article.slug,
+                ),
+            )
+        )
+        if not adapters.enabled:
+            media_upload_coordinator.record_not_applicable(identity, member_run_id)
+        else:
+            media_upload_coordinator.record_prepared(identity, member_run_id)
+        # Gate ON/OFFいずれの場合も同一の関数で記事専用runtimeを構築する
+        # （build_protected_featured_media_runtime()自体がadapters.enabledに
+        # 応じてdecorator付き/なしのruntimeを内部で適切に返す）。
+        runtime = build_protected_featured_media_runtime(
+            adapters, media_upload_coordinator, identity, member_run_id,
+        )
+    else:
+        raise SideEffectExecutionModeContractError(ExecutionModeFailureReasonCode.UNKNOWN_EXECUTION_MODE)
+
+    observation = None
+    try:
+        runtime_result = runtime.apply(article)
+    except SideEffectExecutionModeContractError:
+        raise  # runtime.apply()自体はこの例外を送出しない既存ロジックだが、
+               # 他のcarve-outと同型の防御として明示する
+    except Exception as exc:
+        observation = runtime.classify_propagated_failure(exc)
+
+    if observation is not None:
+        raise FeaturedMediaPropagatedFailure(observation)
+
+    if runtime_result.status is ArticleFeaturedMediaRuntimeStatus.CONTINUED_WITHOUT_FEATURED_MEDIA:
+        print(f"    アイキャッチ画像なしで継続します（分類: {runtime_result.category.value}）")
+
+    if media_upload_coordinator is not None and (
+        runtime_result.status is ArticleFeaturedMediaRuntimeStatus.APPLIED
+    ):
+        media_id = _extract_confirmed_media_id(runtime_result.article)
+        if media_id is not None:
+            media_upload_coordinator.record_confirmed(identity, member_run_id, media_id)
+            # POST（record_confirmed()）成功前にクラッシュした場合、durable stateは
+            # 「IO_ARMED+ATTEMPTED」のまま残り、9.9.7節Cross-Store Combination Table
+            # を経てHUMAN_REVIEW_REQUIREDへ導く（15.5.2節）。
+
+    return runtime_result
 
 
 def _handle_featured_media_failure(
@@ -274,6 +416,12 @@ def main() -> int:
         print("エラー: --max-articles には 0 以上の整数を指定してください。")
         return 1
 
+    # Release 6.32（14.3節）：起動直後に1回だけExplicit Side-Effect Execution Mode
+    # を解決する。値の再構築・再推測はしない（6章）。missing/unknown/矛盾した
+    # envelopeはSideEffectExecutionModeContractErrorでfail-closedし、
+    # if __name__ == "__main__": 側（14.6節）でexit code 3へ変換される。
+    side_effect_execution_context = _parse_execution_context_from_env()
+
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         print("エラー: ANTHROPIC_API_KEY が設定されていません。")
@@ -289,8 +437,38 @@ def main() -> int:
 
     # v6.21.0: アイキャッチ画像生成Runtime（Gate OFF時は無効状態のまま構築される。
     # Gate ON かつ credential 不足の場合はここで ValueError を受けて起動時に停止する）
+    # Release 6.32（22.3.2節）：呼び出し箇所B。isinstance(context,
+    # LegacyDirectExecutionContext)の場合のみArticleFeaturedMediaRuntime.from_env()
+    # を呼ぶ（既存6.31以前の起動時1回構築をそのまま維持する）。
+    # RetryLineageProtectedExecutionContextの場合はfrom_env()を一切呼ばず
+    # （legacy credential/config解決を含むため）、MediaUploadWriteAheadAdapters.
+    # from_env()のみを1回構築する。記事専用runtimeは_apply_featured_media_step()
+    # 内部で記事ごとに構築する。
     try:
-        featured_media_runtime = ArticleFeaturedMediaRuntime.from_env()
+        if isinstance(side_effect_execution_context, LegacyDirectExecutionContext):
+            featured_media_runtime = ArticleFeaturedMediaRuntime.from_env()
+            featured_media_binding = build_legacy_featured_media_side_effect_binding(
+                side_effect_execution_context, featured_media_runtime,
+            )
+        elif isinstance(side_effect_execution_context, RetryLineageProtectedExecutionContext):
+            media_upload_adapters = MediaUploadWriteAheadAdapters.from_env()
+            media_upload_coordinator = build_media_upload_safety_coordinator(
+                media_upload_manager=ArticleMediaUploadStateManager(
+                    JsonArticleMediaUploadStateStore(MEDIA_UPLOAD_STATE_DIR)
+                ),
+                applicability_store=JsonMediaUploadApplicabilityStore(MEDIA_UPLOAD_APPLICABILITY_DIR),
+                attempt_context_store=JsonMediaUploadAttemptContextStore(MEDIA_UPLOAD_ATTEMPT_CONTEXT_DIR),
+                locks_dir=MEDIA_UPLOAD_LOCKS_DIR,
+            )
+            manifest_registrar = ManifestRegistrarFacade(
+                JsonProtectedOperationManifestStore(PROTECTED_OPERATION_MANIFEST_DIR)
+            )
+            featured_media_binding = build_protected_featured_media_side_effect_binding(
+                side_effect_execution_context, media_upload_coordinator, media_upload_adapters,
+                manifest_registrar,
+            )
+        else:
+            raise SideEffectExecutionModeContractError(ExecutionModeFailureReasonCode.UNKNOWN_EXECUTION_MODE)
     except ValueError as e:
         print(f"エラー: アイキャッチ画像生成の設定が不正です: {e}")
         return 1
@@ -380,9 +558,30 @@ def main() -> int:
     # Step 5: 記事生成・保存
     # v6.21.0: PROPAGATE時にMarkdownのみ直接保存するためインスタンスを保持する
     markdown_output = MarkdownOutput(output_dir=OUTPUT_DIR)
+    # Release 6.32（15.7節）：呼び出し箇所A。RETRY_LINEAGE_PROTECTED時のみ
+    # draft_state_managerを構築する（write-ahead ACKの実体）。LEGACY_DIRECT時は
+    # Noneのまま渡し、WordPressOutput.save()は既存（6.31以前）のロジックのまま進む。
+    draft_state_manager = None
+    wp_manifest_registrar = None
+    if isinstance(side_effect_execution_context, RetryLineageProtectedExecutionContext):
+        draft_state_manager = WordPressDraftStateManager(
+            JsonWordPressDraftStateStore(base_dir=WORDPRESS_DRAFT_STATE_DIR)
+        )
+        # Architecture Amendment（Protected Operation Manifest、呼び出し箇所A）。
+        wp_manifest_registrar = ManifestRegistrarFacade(
+            JsonProtectedOperationManifestStore(PROTECTED_OPERATION_MANIFEST_DIR)
+        )
+    # Architecture Amendment：既存Fake/exact-kwargsテストとのzero-diffのため
+    # （既存の_call_start_run()等と同一理由）、manifest_registrarはNoneの場合
+    # 呼び出し引数自体に含めない。
+    wp_output_kwargs = {}
+    if wp_manifest_registrar is not None:
+        wp_output_kwargs["manifest_registrar"] = wp_manifest_registrar
     output_manager = OutputManager(outputs=[
         markdown_output,
-        WordPressOutput.from_env(),
+        WordPressOutput.from_env_with_context(
+            side_effect_execution_context, draft_state_manager, **wp_output_kwargs,
+        ),
     ])
 
     print(f"記事を生成しています（{len(to_process)}件）...")
@@ -443,11 +642,16 @@ def main() -> int:
         # v6.21.0: featured media適用（Gate OFF時は素通し。PROPAGATE対象の失敗は
         # ここで例外として捕捉し、WordPressへは投稿せずMarkdownのみ保存して次の記事へ進む）
         try:
-            featured_media_result = _apply_featured_media_step(featured_media_runtime, article)
+            featured_media_result = _apply_featured_media_step(
+                article, side_effect_binding=featured_media_binding,
+            )
             article = featured_media_result.article
             featured_media_observation = featured_media_result.observation
-        except Exception as exc:
-            featured_media_observation = featured_media_runtime.classify_propagated_failure(exc)
+        except SideEffectExecutionModeContractError:
+            raise  # 6.32新設：contract violationはFeaturedMediaPropagatedFailureの
+                   # PROPAGATE分類へ合流させず、記事ループの外まで未変換のまま伝播させる
+        except FeaturedMediaPropagatedFailure as propagated:
+            featured_media_observation = propagated.observation  # 22.3.2節、runtime内部で分類済み
             _handle_featured_media_failure(
                 markdown_output,
                 log_manager,
@@ -568,4 +772,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except SideEffectExecutionModeContractError:
+        # Release 6.32（14.6節）：NEWS Subprocess境界のContract-Error Exit Protocol。
+        # メッセージ本文・reason_codeはexit codeという単一の整数へ縮退させ、
+        # stdout/stderrへは出力しない（2.5節のsecret-safe規律）。
+        sys.exit(SIDE_EFFECT_CONTRACT_VIOLATION_EXIT_CODE)

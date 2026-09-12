@@ -20,3 +20,4 @@ class RetryLineageDisposition(Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     NOT_ACTIONED = "not_actioned"
+    HUMAN_REVIEW_REQUIRED = "human_review_required"  # Release 6.32、13章

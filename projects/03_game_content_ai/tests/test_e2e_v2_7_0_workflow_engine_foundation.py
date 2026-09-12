@@ -576,30 +576,27 @@ print("[テスト27] 既存ファイルの無変更確認（git diff）")
 
 unchanged_paths_we = [
     # main.py はRelease 6.30 Outcome Contractの対象として意図的に変更される（対象外）
+    # Release 6.32はExplicit Side-Effect Execution Mode専用channelの新設に伴い、
+    # agent_manager.py / agent_context.py / news_agent.py / publish_trigger_agent.py /
+    # workflow_trigger_agent.py / workflow_context.py / publish_pipeline_runner.py /
+    # workflow_pipeline_runner.pyへの意図的な変更を含む（22.1f節、本チェック対象
+    # から除外）。sub-milestone 6C（§28.-36節test#8、22.3.12節）：agent_executor.py
+    # へのcarve-out追加に伴い、同ファイルも除外する。
     "src/ai/base_agent.py",
-    "src/ai/agent_executor.py",
-    "src/ai/agent_manager.py",
-    "src/ai/agent_context.py",
     "src/ai/agent_decision.py",
     "src/ai/agent_result.py",
     "src/ai/agent_task.py",
     "src/ai/agent_config.py",
-    "src/ai/news_agent.py",
     "src/ai/news_agent_config.py",
     "src/ai/review_trigger_agent.py",
     "src/ai/review_trigger_agent_config.py",
-    "src/ai/publish_trigger_agent.py",
     "src/ai/publish_trigger_agent_config.py",
-    "src/ai/workflow_trigger_agent.py",
     "src/ai/workflow_trigger_agent_config.py",
     "src/ai/workflow_step.py",
-    "src/ai/workflow_context.py",
     "src/ai/workflow_result.py",
     # src/pipeline/news_pipeline_runner.py はRelease 6.30 subprocess出力正規化の対象として
     # 意図的に変更される（対象外）
     "src/pipeline/review_pipeline_runner.py",
-    "src/pipeline/publish_pipeline_runner.py",
-    "src/pipeline/workflow_pipeline_runner.py",
     "src/pipeline/pipeline_result.py",
     "src/scheduler/scheduler_engine.py",
     "src/scheduler/scheduler_job.py",

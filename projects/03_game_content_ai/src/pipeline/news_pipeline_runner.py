@@ -33,13 +33,23 @@ Release 6.30での変更（docs/design/production_canonical_run_outcome_contract
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+from side_effect_safety import SIDE_EFFECT_CONTRACT_VIOLATION_EXIT_CODE, SideEffectExecutionModeContractError
+from side_effect_safety.side_effect_execution_mode import (
+    ExecutionModeFailureReasonCode,
+    _serialize_execution_context,
+)
 
 from .pipeline_result import PipelineResult
+
+if TYPE_CHECKING:
+    from side_effect_safety import LegacyDirectExecutionContext, RetryLineageProtectedExecutionContext
 
 LOG_SUBDIR = "logs/news_agent"
 
@@ -88,13 +98,25 @@ class NewsPipelineRunner:
     def __init__(self, config: _RunnerConfig):
         self._config = config
 
-    def run(self, params: dict) -> PipelineResult:
+    def run(
+        self,
+        params: dict,
+        side_effect_execution_context: "RetryLineageProtectedExecutionContext | LegacyDirectExecutionContext | None" = None,
+    ) -> PipelineResult:
         """
         main.py を起動し、実行結果を PipelineResult として返す。
 
         Args:
             params: 呼び出し元（NewsAgent）から渡されるパラメータ。
                     "max_articles" キーがあれば main.py に --max-articles として渡す。
+            side_effect_execution_context: Release 6.32、2.6・14.2節。Explicit
+                Side-Effect Execution Mode。`_serialize_execution_context()`で
+                環境変数へ変換した上でsubprocessへ渡す。省略時（None、main.py側の
+                `_parse_execution_context_from_env()`実装＜call site A統合＞が
+                完了するまでの既存呼び出し元）は、環境変数を一切追加せず、既存の
+                挙動と完全にZero-Diffのままsubprocessを起動する——fail-closed
+                validationはcall site A（main.py）自身の責務であり、本レイヤーは
+                単なるsubprocess起動層である。
         """
         cmd = [
             str(self._config.python_executable),
@@ -103,6 +125,11 @@ class NewsPipelineRunner:
         max_articles = params.get("max_articles")
         if max_articles is not None:
             cmd += ["--max-articles", str(max_articles)]
+
+        if side_effect_execution_context is not None:
+            env = {**os.environ, **_serialize_execution_context(side_effect_execution_context)}
+        else:
+            env = None
 
         run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         start = time.time()
@@ -114,6 +141,7 @@ class NewsPipelineRunner:
                 capture_output=True,
                 text=True,
                 timeout=self._config.timeout_sec,
+                env=env,
             )
         except subprocess.TimeoutExpired as e:
             elapsed = time.time() - start
@@ -143,6 +171,18 @@ class NewsPipelineRunner:
         elapsed = time.time() - start
         stdout_text = _normalize_subprocess_output(completed.stdout)
         stderr_text = _normalize_subprocess_output(completed.stderr)
+
+        if completed.returncode == SIDE_EFFECT_CONTRACT_VIOLATION_EXIT_CODE:
+            # Release 6.32、14.6節：child（main.py）がSideEffectExecutionModeContractError
+            # により予約exit codeで終了したことを検出する。PipelineResultへ変換せず、
+            # 例外をそのまま素通しする——childの具体的なreason codeは境界を越えて
+            # 伝達されないため、親側は単一の集約reason codeで再構築する。
+            self._save_log(run_timestamp, "stdout", stdout_text)
+            self._save_log(run_timestamp, "stderr", stderr_text)
+            raise SideEffectExecutionModeContractError(
+                ExecutionModeFailureReasonCode.SUBPROCESS_CONTRACT_VIOLATION,
+            )
+
         stdout_path = self._save_log(run_timestamp, "stdout", stdout_text)
         stderr_path = self._save_log(run_timestamp, "stderr", stderr_text)
         success = completed.returncode == 0

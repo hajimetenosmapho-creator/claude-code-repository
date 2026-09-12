@@ -71,12 +71,25 @@ class WorkflowRunner:
         log_dir  = base_dir / "logs"
 
         from analytics import AnalyticsManager  # type: ignore[import]
+        from protected_operation_manifest import JsonProtectedOperationManifestStore, ManifestRegistrarFacade
+        from wordpress_draft_state import JsonWordPressDraftStateStore, WordPressDraftStateManager
         from .ai_improvement_service import AiImprovementService
         from .improvement_review_service import ImprovementReviewService
         from .rewrite_service import RewriteService
         from .rewrite_review_service import RewriteReviewService
         from .ai_publish_service import AiPublishService
         from .ai_publish_review_service import AiPublishReviewService
+
+        # Release 6.32（15.6節）：呼び出し箇所Aと同一Foundation・同一storeを
+        # 再利用する（state/wordpress_draft_state）。
+        draft_state_manager = WordPressDraftStateManager(
+            JsonWordPressDraftStateStore(base_dir=base_dir / "state" / "wordpress_draft_state")
+        )
+        # Architecture Amendment（Protected Operation Manifest）：
+        # RetryCompositionRootが構築するmanifest storeと同一のディレクトリを指す。
+        manifest_registrar = ManifestRegistrarFacade(
+            JsonProtectedOperationManifestStore(base_dir=base_dir / "state" / "protected_operation_manifest")
+        )
 
         executors: list[WorkflowStepExecutor] = [
             ImprovementStepExecutor(
@@ -95,7 +108,10 @@ class WorkflowRunner:
                 service=RewriteReviewService.from_paths(base_dir=base_dir),
             ),
             PublishStepExecutor(
-                service=AiPublishService.from_env(base_dir=base_dir),
+                service=AiPublishService.from_env(
+                    base_dir=base_dir, draft_state_manager=draft_state_manager,
+                    manifest_registrar=manifest_registrar,
+                ),
             ),
             PublishReviewStepExecutor(
                 service=AiPublishReviewService.from_paths(base_dir=base_dir),
@@ -107,6 +123,7 @@ class WorkflowRunner:
         self,
         article_id: str | None = None,
         dry_run: bool = False,
+        side_effect_execution_context: "object | None" = None,
     ) -> WorkflowResult:
         """
         ワークフローを実行し、WorkflowResult を返す。
@@ -114,11 +131,17 @@ class WorkflowRunner:
         Args:
             article_id: 絞り込む記事ID（None = 全件）
             dry_run:    True = 実際の処理をせず対象確認のみ
+            side_effect_execution_context: Release 6.32。PublishStepExecutorのみが
+                これを読み取りAiPublishService.run()へ伝播する。省略時（None）は
+                既存の全呼び出し元に対して完全にZero-Diff。
 
         Returns:
             WorkflowResult: ワークフロー全体の実行結果
         """
-        context    = WorkflowContext(article_id=article_id, dry_run=dry_run)
+        context    = WorkflowContext(
+            article_id=article_id, dry_run=dry_run,
+            side_effect_execution_context=side_effect_execution_context,
+        )
         skipped:   list[WorkflowStep] = []
         started_at = datetime.now()
 
@@ -190,6 +213,7 @@ class NullWorkflowRunner:
         self,
         article_id: str | None = None,
         dry_run: bool = False,
+        side_effect_execution_context: "object | None" = None,
     ) -> WorkflowResult:
         print("  [WORKFLOW] AI ワークフローが無効です（AI_WORKFLOW_ENABLED=false）。")
         now = datetime.now()

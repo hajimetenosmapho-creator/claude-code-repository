@@ -47,6 +47,13 @@ Architecture Amendment（Code Review Blocking#1・Blocking#2対応、10.2.4章�
     - `mark_terminal()`の戻り値（`MarkTerminalResult.acknowledged`）を必ず確認し、
       Falseの場合は`RetryOutcome.RETRIED`を返さず`RetryOutcome.SKIPPED`を返す
       （`reconcile_all()`側の16章(a)走査に解決を委ねる）。
+
+Release 6.32での変更（docs/design/side_effect_fail_closed_human_review_safety_foundation.md
+22.1f節）:
+    - `.run()`呼び出し箇所へ`side_effect_execution_provenance`
+      （`RetryLineageProtectedProvenance`、member_run_id未確定のpre-context）を
+      追加で構築・伝播する。`member_run_id`の補完・完成形contextへの完成は
+      `WorkflowEngineExecutor`のprotected factory呼び出しでのみ行われる。
 """
 from __future__ import annotations
 
@@ -60,21 +67,114 @@ from workflow_engine import (
     WorkflowEngineStep,
 )
 
-from retry_lineage import compute_newly_confirmed, decide_disposition
+from protected_operation_manifest.errors import ProtectedOperationManifestReadError
+from retry_lineage import (
+    RetryLineageDisposition,
+    classify_step_outcome,
+    compute_newly_confirmed,
+    decide_disposition,
+    resolve_final_disposition,
+)
+from side_effect_safety import ProtectedOperationContext, RetryLineageProtectedProvenance
+from side_effect_safety.side_effect_execution_mode import (
+    ExecutionModeFailureReasonCode,
+    SideEffectExecutionModeContractError,
+    _is_well_formed_attempt_ordinal,
+    _is_well_formed_contract_version,
+    _is_well_formed_root_run_id,
+)
 
 from .retry_request import RetryRequest
 from .retry_result import RetryOutcome, RetryResult
 
 if TYPE_CHECKING:
+    from protected_operation_manifest import ManifestReaderFacade
     from retry_lineage import ClaimResult, RetryLineageManager, RetryLineageRecord
+    from side_effect_safety_classifier import SideEffectSafetyClassifier
+
+
+def _validate_provenance_consistency(
+    provenance: "RetryLineageProtectedProvenance",
+    lineage: "RetryLineageRecord",
+    claim: "ClaimResult",
+) -> None:
+    """Release 6.32（2.2a節(1)）: Consistency Validation Boundary。
+
+    `RetryExecutor.execute()`が構築した`RetryLineageProtectedProvenance`の
+    3フィールドが、構築元の`lineage`/`claim`参照と一致することを照合する。
+    新しいidentity field・理由コードは追加せず、2.1b節の既存well-formedness
+    検証を先に適用してから（malformed値はconsistency照合に到達させない、
+    28.-37節#5）、個別にwell-formedな値同士の一致のみを照合する。
+
+    通常の実行では`provenance`は`lineage`/`claim`自身の値から直接構築される
+    ため一致は自明に成立する——本関数は将来の実装変更（別変数の誤参照等）に
+    対する構造的な防御（defense-in-depth）である。
+
+    `lineage.side_effect_contract_version is None`（pre-6.32 legacy lineage、
+    18章）の場合、6.32の判定機構自体が適用対象外であるため、本検証は行わない
+    （2.3節「既存6.31以前のlegacy behaviorのまま動作する」）。
+    """
+    if lineage.side_effect_contract_version is None:
+        return
+
+    if not _is_well_formed_root_run_id(provenance.root_run_id):
+        raise SideEffectExecutionModeContractError(
+            ExecutionModeFailureReasonCode.MISSING_LINEAGE_CONTEXT,
+        )
+    if not _is_well_formed_attempt_ordinal(provenance.attempt_ordinal):
+        raise SideEffectExecutionModeContractError(
+            ExecutionModeFailureReasonCode.CONTEXT_MISMATCH,
+        )
+    if not _is_well_formed_contract_version(provenance.side_effect_contract_version):
+        raise SideEffectExecutionModeContractError(
+            ExecutionModeFailureReasonCode.CONTRACT_VERSION_MISMATCH,
+        )
+
+    if provenance.root_run_id != lineage.root_run_id:
+        raise SideEffectExecutionModeContractError(
+            ExecutionModeFailureReasonCode.MISSING_LINEAGE_CONTEXT,
+        )
+    if provenance.attempt_ordinal != claim.attempt_no:
+        raise SideEffectExecutionModeContractError(
+            ExecutionModeFailureReasonCode.CONTEXT_MISMATCH,
+        )
+    if provenance.side_effect_contract_version != lineage.side_effect_contract_version:
+        raise SideEffectExecutionModeContractError(
+            ExecutionModeFailureReasonCode.CONTRACT_VERSION_MISMATCH,
+        )
 
 
 class RetryExecutor:
     """WorkflowEngineManagerの公開APIを呼び出すだけの薄いコンポーネント。"""
 
-    def __init__(self, workflow_engine_manager: WorkflowEngineManager, lineage: "RetryLineageManager"):
+    def __init__(
+        self,
+        workflow_engine_manager: WorkflowEngineManager,
+        lineage: "RetryLineageManager",
+        manifest: "ManifestReaderFacade | None" = None,
+        side_effect_classifier: "SideEffectSafetyClassifier | None" = None,
+    ):
+        """
+        manifest / side_effect_classifier（Architecture Amendment、Protected
+        Operation Manifest、§10）：構造上は省略可能（デフォルトNone、既存の
+        直接構築互換性のため引数自体はoptionalのまま残す）。
+
+        Codex Final Review Blocking#1対応：ただし、legacy lineage
+        （`lineage.side_effect_contract_version is None`）でのみ、既存6.31
+        以前のdecide_disposition()（step-only）へのフォールバックを許容する。
+        protected lineage（`side_effect_contract_version is not None`）で
+        manifest/side_effect_classifierのいずれかが省略されている場合は、
+        決してstep-only fallbackへ降格せず、fail-closedでHUMAN_REVIEW_REQUIRED
+        へ確定する（execute()内で強制する。「composition rootが必ず両方
+        構築・注入するはず」という前提のみをsafety guaranteeにしない）。
+        production composition root（RetryCompositionRoot）は両方を必ず構築・
+        注入する。manifestは読み取り専用のManifestReaderFacade（フルアクセスの
+        ProtectedOperationManifestStoreではない、§9.5.3）。
+        """
         self._engine = workflow_engine_manager
         self._lineage = lineage
+        self._manifest = manifest
+        self._side_effect_classifier = side_effect_classifier
 
     def execute(
         self, request: RetryRequest, lineage: "RetryLineageRecord", claim: "ClaimResult",
@@ -97,13 +197,27 @@ class RetryExecutor:
         }
         target_step_filter = [WorkflowEngineStep(s) for s in (claim.steps_to_execute or [])]
 
+        # Release 6.32（22.1f節）：この段階ではmember_run_idが未確定のため、
+        # 完成形のSideEffectExecutionContextではなく、root_run_id・attempt_no・
+        # side_effect_contract_versionの3フィールドのみを持つ
+        # RetryLineageProtectedProvenance（pre-context）を構築する。member_run_id
+        # の補完はWorkflowEngineExecutorのprotected factory呼び出しでのみ行う。
+        side_effect_execution_provenance = RetryLineageProtectedProvenance(
+            root_run_id=lineage.root_run_id,
+            attempt_ordinal=claim.attempt_no,
+            side_effect_contract_version=lineage.side_effect_contract_version,
+        )
+        # Release 6.32（2.2a節(1)）: consistency validation boundary。
+        # external I/O（self._engine.run()）より前にfail-closedする。
+        _validate_provenance_consistency(side_effect_execution_provenance, lineage, claim)
+
         # hookのdurable ack結果は、WorkflowEngineResult側からは（hook例外時は
         # 戻り値自体が得られないため）安定して取得できない。closureが捕捉した
         # 値（durable ackそのもの）を唯一の真実として使う（10.2.4.2章）。
         hook_ack_state: dict[str, bool | None] = {"acknowledged": None}
 
         def post_admission_hook(run_id: str) -> PostAdmissionHookResult:
-            ack = self._lineage.mark_execution_started(lineage.root_run_id, run_id)
+            ack = self._lineage.mark_execution_started(lineage.root_run_id, run_id, claim.owner_token)
             hook_ack_state["acknowledged"] = ack
             return PostAdmissionHookResult(acknowledged=ack)
 
@@ -123,6 +237,7 @@ class RetryExecutor:
                 target_step_filter=target_step_filter,
                 post_admission_hook=post_admission_hook,
                 correlation_metadata=correlation_metadata,
+                side_effect_execution_provenance=side_effect_execution_provenance,
             )
         except Exception:
             # hook例外経路（10.2.3・10.2.4.2章）：既存のfail-fast契約どおり例外は
@@ -130,11 +245,11 @@ class RetryExecutor:
             # 再raiseの前にclaimを解放し、CLAIMEDのまま取り残さない
             # （17章crash matrix行23、16章(c)のクラッシュ経路と対をなす同期回収）。
             if not request.dry_run and hook_ack_state["acknowledged"] is not True:
-                self._lineage.release_claim(lineage.root_run_id)
+                self._lineage.release_claim(lineage.root_run_id, claim.owner_token)
             raise
 
         if not request.dry_run and hook_ack_state["acknowledged"] is False:
-            self._lineage.release_claim(lineage.root_run_id)
+            self._lineage.release_claim(lineage.root_run_id, claim.owner_token)
             return RetryResult(
                 original_run_id=lineage.root_run_id,
                 outcome=RetryOutcome.SKIPPED,
@@ -157,7 +272,45 @@ class RetryExecutor:
 
         if not request.dry_run:
             newly_confirmed = compute_newly_confirmed(engine_result)
-            disposition = decide_disposition(engine_result)
+
+            # Architecture Amendment（Protected Operation Manifest、§10、primary
+            # production closure）：self._manifest / self._side_effect_classifierが
+            # 構築済みでside_effect_contract_versionが設定されたlineageの場合のみ、
+            # SideEffectSafetyClassifier.classify() → resolve_final_disposition()
+            # の実チェーンへ接続する（旧6.31 step-onlyなdecide_disposition()を
+            # protected final authorityとして使わない）。
+            #
+            # Codex Final Review Blocking#1対応：legacy lineage
+            # （side_effect_contract_version is None）の場合のみ既存6.31以前の
+            # decide_disposition()へフォールバックしてよい。protected lineage
+            # （side_effect_contract_version is not None）でmanifest/classifier
+            # のいずれかが欠落している場合は、決してstep-only fallbackへ
+            # 降格せず、fail-closedでHUMAN_REVIEW_REQUIREDへ確定する
+            # （primary blocking findingの再導入を防ぐ。「composition rootが
+            # 必ず依存を注入するはず」という前提のみをsafety guaranteeにしない
+            # ——production class自身がここでfail-closedを強制する）。
+            if lineage.side_effect_contract_version is None:
+                disposition = decide_disposition(engine_result)
+            elif self._manifest is None or self._side_effect_classifier is None:
+                disposition = RetryLineageDisposition.HUMAN_REVIEW_REQUIRED
+            else:
+                step_categories = [classify_step_outcome(s) for s in engine_result.steps]
+                try:
+                    manifest_entries = self._manifest.list_for_attempt(
+                        lineage.root_run_id, claim.attempt_no, engine_result.run_id,
+                    )
+                except ProtectedOperationManifestReadError:
+                    disposition = RetryLineageDisposition.HUMAN_REVIEW_REQUIRED
+                else:
+                    operations = [
+                        ProtectedOperationContext(e.operation_kind, e.effect_site, e.operation_instance_key)
+                        for e in manifest_entries
+                    ]
+                    safety_report = self._side_effect_classifier.classify(
+                        lineage.root_run_id, claim.attempt_no, engine_result.run_id, operations,
+                    )
+                    disposition = resolve_final_disposition(step_categories, safety_report)
+
             mark_result = self._lineage.mark_terminal(
                 lineage.root_run_id, disposition, engine_result.run_id, newly_confirmed,
             )

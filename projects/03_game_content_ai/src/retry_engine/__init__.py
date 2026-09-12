@@ -174,9 +174,15 @@ from .retry_event_dispatcher import RetryDispatchEvent, RetryEventDispatcher
 from .retry_execution_selector import RetryExecutionSelector
 from .retry_execution_coordinator import RetryExecutionCoordinator, RetryExecutionResult
 from .retry_queue_update_decider import (
+    LegacyQueueDecisionInput,
+    LineageAuthoritativeDispositionInput,
+    RetryQueueDecisionRequest,
+    RetryQueueUpdateContractError,
     RetryQueueUpdateDecider,
     RetryQueueUpdateDecision,
     RetryQueueUpdateOutcome,
+    build_queue_decision_input,
+    build_retry_queue_decision_requests,
 )
 from .retry_queue_removal_executor import RetryQueueRemovalExecutor, RetryQueueRemovalResult
 from .retry_queue_cleanup_decider import (
@@ -223,6 +229,12 @@ __all__ = [
     "RetryQueueUpdateOutcome",
     "RetryQueueUpdateDecision",
     "RetryQueueUpdateDecider",
+    "RetryQueueUpdateContractError",
+    "LineageAuthoritativeDispositionInput",
+    "LegacyQueueDecisionInput",
+    "RetryQueueDecisionRequest",
+    "build_queue_decision_input",
+    "build_retry_queue_decision_requests",
     "RetryQueueRemovalResult",
     "RetryQueueRemovalExecutor",
     "RetryQueueCleanupOutcome",

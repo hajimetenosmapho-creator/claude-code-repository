@@ -20,7 +20,11 @@ _canonicalize_step_order():     steps_to_executeをWorkflow canonical orderへ�
 """
 from __future__ import annotations
 
+from enum import Enum
+from typing import TYPE_CHECKING
+
 from execution_history import StepExecutionRecord
+from side_effect_safety.side_effect_safety_category import SideEffectSafetyCategory
 from workflow_engine import ALL_WORKFLOW_ENGINE_STEPS, WorkflowEngineResult
 
 from .retry_lineage_disposition import RetryLineageDisposition
@@ -29,6 +33,42 @@ from .retry_lineage_genuine_action import (
     classify_execution_history_step,
     classify_step_outcome,
 )
+
+if TYPE_CHECKING:
+    from side_effect_safety.side_effect_safety_category import SideEffectSafetyReport
+
+    from .retry_lineage_record import RetryLineageRecord
+
+# Release 6.32、18.1節。create_new_lineage()のみがこの値をスタンプする。
+SIDE_EFFECT_CONTRACT_VERSION = 1
+
+
+class ContractVersionEvidence(Enum):
+    """Release 6.32、18.1節。"""
+
+    LEGACY = "legacy"
+    PROTECTED = "protected"
+    INVALID = "invalid"
+
+
+class RetryLineageContractVersionError(Exception):
+    """`side_effect_contract_version`がLEGACY（None）でもPROTECTED（>=1の正int）でも
+    ない、malformedな値である場合に送出する（18.2節）。"""
+
+
+def classify_contract_version_evidence(record: "RetryLineageRecord") -> ContractVersionEvidence:
+    """side_effect_contract_versionの妥当性判定を行う唯一の関数（18章のauthority）。"""
+    version = record.side_effect_contract_version
+    if version is None:
+        return ContractVersionEvidence.LEGACY
+    if isinstance(version, int) and not isinstance(version, bool) and version >= 1:
+        return ContractVersionEvidence.PROTECTED
+    return ContractVersionEvidence.INVALID
+
+
+def is_6_32_contract_lineage(record: "RetryLineageRecord") -> bool:
+    """後方互換のための薄いwrapper（18.2節）。PROTECTED以外はFalseを返す。"""
+    return classify_contract_version_evidence(record) == ContractVersionEvidence.PROTECTED
 
 
 def decide_disposition(engine_result: WorkflowEngineResult) -> RetryLineageDisposition:
@@ -49,6 +89,29 @@ def disposition_from_categories(categories: list[StepOutcomeCategory]) -> RetryL
     if any(c == StepOutcomeCategory.SILENT_NO_ACTION for c in categories):
         return RetryLineageDisposition.NOT_ACTIONED
     return RetryLineageDisposition.SUCCEEDED
+
+
+def resolve_final_disposition(
+    step_categories: "list[StepOutcomeCategory]",
+    safety_report: "SideEffectSafetyReport",
+) -> RetryLineageDisposition:
+    """Release 6.32、13章。pureな最終Disposition Resolver。
+    `disposition_from_categories()`（6.31、step-onlyの3値判定）はこの関数の内部で
+    そのまま再利用し、変更しない。"""
+    worst = safety_report.worst_case()
+
+    if worst in (
+        SideEffectSafetyCategory.IN_PROGRESS_OR_UNKNOWN,
+        SideEffectSafetyCategory.CONTRACT_VIOLATION,
+    ):
+        return RetryLineageDisposition.HUMAN_REVIEW_REQUIRED
+
+    base_disposition = disposition_from_categories(step_categories)
+
+    if worst == SideEffectSafetyCategory.CONFIRMED_SUCCESS and base_disposition != RetryLineageDisposition.SUCCEEDED:
+        return RetryLineageDisposition.HUMAN_REVIEW_REQUIRED
+
+    return base_disposition
 
 
 def compute_newly_confirmed(engine_result: WorkflowEngineResult) -> list[str]:

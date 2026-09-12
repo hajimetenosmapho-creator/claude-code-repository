@@ -438,8 +438,9 @@ unchanged_paths_wm = [
     "src/execution_history/execution_history_event.py",
     "src/execution_history/step_execution_record.py",
     "src/execution_history/workflow_execution_record.py",
-    "src/workflow_engine/workflow_engine_manager.py",
-    "src/ai/agent_manager.py",
+    # src/workflow_engine/workflow_engine_manager.py・src/ai/agent_manager.pyは
+    # Release 6.32によりExplicit Side-Effect Execution Mode専用channelの新設に
+    # 伴う承認済み変更対象となった（22.1f節）。
     "src/scheduler/scheduler_engine.py",
 ]
 

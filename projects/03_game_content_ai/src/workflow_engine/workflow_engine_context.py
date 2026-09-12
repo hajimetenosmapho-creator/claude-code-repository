@@ -32,6 +32,8 @@ from .workflow_engine_result import WorkflowEngineStepResult
 from .workflow_engine_step import WorkflowEngineStep
 
 if TYPE_CHECKING:
+    from side_effect_safety import LegacyDirectExecutionContext, RetryLineageProtectedProvenance
+
     from .workflow_engine_post_admission_hook import PostAdmissionHook
 
 
@@ -47,3 +49,9 @@ class WorkflowEngineContext:
     target_step_filter: list[WorkflowEngineStep] | None = None
     post_admission_hook: "PostAdmissionHook | None" = None
     correlation_metadata: dict[str, dict[str, str]] | None = None
+    # Release 6.32、2.6節Propagation Contract：`correlation_metadata`とは独立した
+    # side-effect safety identity専用channel。RetryLineageProtectedProvenance
+    # （member_run_id未確定のpre-context）またはLegacyDirectExecutionContext
+    # （既に完成形）のいずれか。省略時（None）は既存の全非retry呼び出し元に対して
+    # 完全にZero-Diff。
+    side_effect_execution_provenance: "RetryLineageProtectedProvenance | LegacyDirectExecutionContext | None" = None

@@ -248,18 +248,33 @@ print()
 # テスト17-18: ディレクトリ構成・Backward Compatibility
 # ═══════════════════════════════════════════════════════════
 
-print("[テスト17] src/retry_composition/ のファイル構成が2ファイルのみである")
+print("[テスト17] src/retry_composition/ のファイル構成（Release 6.32でretry_after_human_review.py追加）")
 
+# Release 6.32（Side-Effect Fail-Closed & Human Review Safety、17.3節）：
+# retry_after_human_review()をこのcomposition層へ新設したため、
+# 「2ファイルのみ」という本Release時点の不変条件は3ファイルへ更新される
+# （既存2ファイルは無変更のまま維持、新規ファイル1件の追加のみ）。
 rc_dir = PROJECT_ROOT / "src" / "retry_composition"
 py_files_17 = sorted(p.name for p in rc_dir.glob("*.py"))
-check("17. __init__.py・retry_composition_root.pyの2ファイル", py_files_17, ["__init__.py", "retry_composition_root.py"])
+check(
+    "17. __init__.py・retry_composition_root.py・retry_after_human_review.pyの3ファイル"
+    "（Release 6.32でretry_after_human_review.pyを追加）",
+    py_files_17,
+    ["__init__.py", "retry_after_human_review.py", "retry_composition_root.py"],
+)
 print()
 
 
-print("[テスト18] retry_composition パッケージのexportが RetryCompositionRoot のみである")
+print("[テスト18] retry_composition パッケージのexport（Release 6.32でretry_after_human_reviewを追加）")
 
 check_true("18. RetryCompositionRootがretry_compositionパッケージからエクスポートされている", hasattr(rc_pkg, "RetryCompositionRoot"))
-check("18. __all__がRetryCompositionRootのみ", rc_pkg.__all__, ["RetryCompositionRoot"])
+check_true("18. retry_after_human_reviewがretry_compositionパッケージからエクスポートされている（Release 6.32）", hasattr(rc_pkg, "retry_after_human_review"))
+check(
+    "18. __all__がRetryCompositionRoot・retry_after_human_reviewの2件"
+    "（Release 6.32でretry_after_human_reviewを追加）",
+    sorted(rc_pkg.__all__),
+    ["RetryCompositionRoot", "retry_after_human_review"],
+)
 print()
 
 
@@ -276,7 +291,6 @@ unchanged_dirs_19 = [
     "src/retry_history",
     "src/retry_enqueue_trigger",
     "src/retry_engine",
-    "src/ai",
 ]
 
 # src/workflow_engine と src/execution_history は、Release 6.30 Production
@@ -290,6 +304,9 @@ _ALLOWED_WORKFLOW_ENGINE_CHANGES_19 = {
     "src/workflow_engine/workflow_engine_executor.py",
     "src/workflow_engine/workflow_engine_result.py",
     "src/workflow_engine/workflow_engine_exceptions.py",
+    # Release 6.32：side_effect_execution_provenance引数・フィールド（2.6節）。
+    "src/workflow_engine/workflow_engine_context.py",
+    "src/workflow_engine/workflow_engine_manager.py",
 }
 _ALLOWED_EXECUTION_HISTORY_CHANGES_19 = {
     "src/execution_history/__init__.py",
@@ -297,6 +314,19 @@ _ALLOWED_EXECUTION_HISTORY_CHANGES_19 = {
     "src/execution_history/execution_history_store.py",
     "src/execution_history/json_execution_history_store.py",
     "src/execution_history/start_run_write_result.py",
+}
+# Release 6.32（Side-Effect Fail-Closed & Human Review Safety）：src/aiも
+# 同じallow-list方式へ移行する（22.1f節）。
+_ALLOWED_AI_CHANGES_19 = {
+    "src/ai/agent_context.py",
+    "src/ai/agent_manager.py",
+    "src/ai/news_agent.py",
+    "src/ai/publish_trigger_agent.py",
+    "src/ai/workflow_trigger_agent.py",
+    "src/ai/workflow_runner.py",
+    "src/ai/workflow_context.py",
+    "src/ai/workflow_step_executor.py",
+    "src/ai/ai_publish_service.py",
 }
 
 git_available = True
@@ -321,6 +351,7 @@ if git_available:
     for _label, _dir, _allowed in (
         ("workflow_engine", "src/workflow_engine", _ALLOWED_WORKFLOW_ENGINE_CHANGES_19),
         ("execution_history", "src/execution_history", _ALLOWED_EXECUTION_HISTORY_CHANGES_19),
+        ("ai", "src/ai", _ALLOWED_AI_CHANGES_19),
     ):
         _dir_diff = subprocess.run(
             ["git", "status", "--porcelain", "--untracked-files=all", "--", _dir],

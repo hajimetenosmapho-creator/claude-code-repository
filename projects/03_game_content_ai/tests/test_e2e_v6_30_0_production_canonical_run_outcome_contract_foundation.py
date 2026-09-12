@@ -906,11 +906,14 @@ class _FakeFeaturedMediaResult:
         self.observation = None
 
 
-def _fake_apply_featured_media_step(runtime, article):
+def _fake_apply_featured_media_step(article, *, side_effect_binding=None):
     # Release 6.30 Code Review Major対応: 実ArticleFeaturedMediaRuntime.apply()を
     # 一切呼び出さない（承認済みFacadeの唯一の呼び出し箇所を丸ごと差し替える）。
     # dotenvが遮断済みでも、プロセスに既に画像生成関連の環境変数が存在する
     # 可能性をゼロにするため、runtimeそのものを使わない構造的な隔離とする。
+    # Release 6.32（22.3.2節）: 呼び出し規約がside_effect_binding方式へ変更された
+    # ことに追従（本fakeは呼び出し全体を丸ごと差し替えるため、bindingの中身は
+    # 使わない）。
     return _FakeFeaturedMediaResult(article=article)
 
 
@@ -947,7 +950,11 @@ def make_fake_wordpress_output_class(outcomes):
             return SaveResult(success=False, output_type="wordpress", error_message="fake wp failure")
 
         @classmethod
-        def from_env(cls):
+        def from_env_with_context(cls, side_effect_execution_context, draft_state_manager=None):
+            # Release 6.32（15.7節）：main.pyはfrom_env()ではなくfrom_env_with_context()
+            # を呼ぶよう変更された。本Fakeはcontextの型検証自体はテスト対象外のため、
+            # 受け取って無視する（本ファイルのシナリオはWordPress成功/失敗の分岐のみを
+            # 検証する）。
             return cls()
 
     return _FakeWordPressOutput
@@ -1196,7 +1203,7 @@ class _FakeLineageManagerFor39:
             steps_to_execute=["news", "review", "publish"],
         )
 
-    def release_claim(self, root_run_id):
+    def release_claim(self, root_run_id, expected_owner_token):
         return True
 
 
@@ -1207,7 +1214,7 @@ class _AdmissionFailingWorkflowEngineManager:
         return True
 
     def run(self, event, dry_run=False, target_step_filter=None, post_admission_hook=None,
-            correlation_metadata=None):
+            correlation_metadata=None, side_effect_execution_provenance=None):
         raise CanonicalAdmissionFailure(run_id="retry-r1", reason="EXECUTION_HISTORY_DISABLED")
 
 

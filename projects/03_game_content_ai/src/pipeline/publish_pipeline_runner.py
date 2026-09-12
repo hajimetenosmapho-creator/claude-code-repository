@@ -52,13 +52,20 @@ class PublishPipelineRunner:
     def __init__(self, config: _RunnerConfig):
         self._config = config
 
-    def run(self, params: dict[str, object] | None = None) -> PipelineResult:
+    def run(
+        self,
+        params: dict[str, object] | None = None,
+        side_effect_execution_context: "object | None" = None,
+    ) -> PipelineResult:
         """
         AiPublishService を構築・実行し、結果を PipelineResult として返す。
 
         Args:
             params: 呼び出し元（PublishTriggerAgent）から渡されるパラメータ。
                     "article_id"（絞り込む記事ID）を受け取る。
+            side_effect_execution_context: Release 6.32、呼び出し箇所Cへ伝播する
+                Explicit Side-Effect Execution Mode。省略時（None）は
+                既存の全呼び出し元に対して完全にZero-Diff。
         """
         params = params or {}
         article_id = params.get("article_id")
@@ -66,10 +73,39 @@ class PublishPipelineRunner:
         start = time.time()
         try:
             from ai import AiPublishService
+            from protected_operation_manifest import JsonProtectedOperationManifestStore, ManifestRegistrarFacade
+            from side_effect_safety import SideEffectExecutionModeContractError
+            from wordpress_draft_state import JsonWordPressDraftStateStore, WordPressDraftStateManager
 
-            service = AiPublishService.from_env(base_dir=self._config.project_root)
-            report_path = service.run(article_id=article_id)
+            # Release 6.32（15.6節）：呼び出し箇所Aと同一Foundation・同一storeを
+            # 再利用する（state/wordpress_draft_state、8章Identityがeffect_siteで
+            # NEWS_STEP/PUBLISH_STEPを区別するため衝突しない）。
+            draft_state_manager = WordPressDraftStateManager(
+                JsonWordPressDraftStateStore(
+                    base_dir=self._config.project_root / "state" / "wordpress_draft_state"
+                )
+            )
+            # Architecture Amendment（Protected Operation Manifest）：
+            # RetryCompositionRootが構築するmanifest storeと同一の
+            # state/protected_operation_manifest ディレクトリを指す。
+            manifest_registrar = ManifestRegistrarFacade(
+                JsonProtectedOperationManifestStore(
+                    base_dir=self._config.project_root / "state" / "protected_operation_manifest"
+                )
+            )
+            service = AiPublishService.from_env(
+                base_dir=self._config.project_root, draft_state_manager=draft_state_manager,
+                manifest_registrar=manifest_registrar,
+            )
+            # Release 6.32：既存Fake/exact-kwargsテストとのzero-diff（news_agent.pyと
+            # 同一理由）。
+            run_kwargs = {"article_id": article_id}
+            if side_effect_execution_context is not None:
+                run_kwargs["side_effect_execution_context"] = side_effect_execution_context
+            report_path = service.run(**run_kwargs)
             service.get_results(article_id=article_id)
+        except SideEffectExecutionModeContractError:
+            raise  # 6.32新設：contract violationはPipelineResultへ変換せず素通しする
         except Exception as e:
             return PipelineResult(
                 success=False,

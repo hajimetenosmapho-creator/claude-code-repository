@@ -741,7 +741,9 @@ unchanged_paths_v430 = [
     "src/retry_engine/retry_config.py",
     "src/retry_engine/retry_request.py",
     "src/retry_engine/retry_result.py",
-    "src/retry_engine/retry_executor.py",
+    # src/retry_engine/retry_executor.py はRelease 6.32（22.1f節）の承認済み変更
+    # （RetryExecutor.execute()→WorkflowEngineManager.run()のprotected context
+    # 実配線）のため、本チェック対象から除外する。
 ]
 
 git_available = True

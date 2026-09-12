@@ -633,6 +633,21 @@ print()
 
 print("[テスト33-41] AiPublishService / NullAiPublishService")
 from ai import AiPublishService, NullAiPublishService
+from side_effect_safety import (
+    LegacyEntrypoint,
+    LegacyExecutionOrigin,
+    build_legacy_direct_provenance,
+    complete_legacy_execution_context,
+)
+
+# Release 6.32（15.6節）：run()はside_effect_execution_contextを必須引数として
+# 受け取るようになった。本ファイルはside-effect safety自体を検証対象としない
+# （AiPublishServiceのbusiness logicのみを検証する）ため、固定のlegacy contextを
+# 供給するのみとする（TEST MIGRATION HUMAN GATE承認済み）。
+_LEGACY_CONTEXT = complete_legacy_execution_context(
+    build_legacy_direct_provenance(LegacyEntrypoint.RUN_AI_PUBLISH),
+    LegacyExecutionOrigin.AI_PUBLISH_DIRECT,
+)
 
 # テスト33: run() が ADOPTED レビューを処理する
 with tempfile.TemporaryDirectory() as tmpdir:
@@ -659,7 +674,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         client=_SuccessWordPressDraftClient(post_id=42),
         report_dir=report_dir,
     )
-    service.run()
+    service.run(side_effect_execution_context=_LEGACY_CONTEXT)
 
     pub_results = repo.load_publish_results()
     check("33. run() が採用済みレビューを処理する", len(pub_results), 1)
@@ -694,7 +709,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         client=_SuccessWordPressDraftClient(),
         report_dir=report_dir,
     )
-    service.run()
+    service.run(side_effect_execution_context=_LEGACY_CONTEXT)
 
     pub_results = repo.load_publish_results()
     check("34. 既投稿は再投稿されない（件数=1のまま）", len(pub_results), 1)
@@ -714,7 +729,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         client=NullWordPressDraftClient(),
         report_dir=report_dir,
     )
-    report_path = service.run()
+    report_path = service.run(side_effect_execution_context=_LEGACY_CONTEXT)
 
     check_not_none("35. run() がパスを返す", report_path)
     check_true("35. レポートファイルが存在する",
@@ -746,7 +761,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         client=NullWordPressDraftClient(reason="AI_PUBLISH_ENABLED=false"),
         report_dir=report_dir,
     )
-    service.run()
+    service.run(side_effect_execution_context=_LEGACY_CONTEXT)
 
     pub_results = repo.load_publish_results()
     check("36. skipped 応答が AiPublishResult に反映される", len(pub_results), 1)
@@ -780,7 +795,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         client=_ErrorWordPressDraftClient(),
         report_dir=report_dir,
     )
-    service.run()
+    service.run(side_effect_execution_context=_LEGACY_CONTEXT)
 
     pub_results = repo.load_publish_results()
     check("37. RuntimeError でも2件すべて処理される", len(pub_results), 2)
@@ -813,7 +828,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         client=_SuccessWordPressDraftClient(),
         report_dir=report_dir,
     )
-    service.run(article_id="target")
+    service.run(article_id="target", side_effect_execution_context=_LEGACY_CONTEXT)
 
     pub_results = repo.load_publish_results()
     check("38. run(article_id=...) が1件のみ処理する", len(pub_results), 1)
@@ -855,14 +870,14 @@ with tempfile.TemporaryDirectory() as tmpdir:
         client=_SuccessWordPressDraftClient(),
         report_dir=report_dir,
     )
-    service.run()
+    service.run(side_effect_execution_context=_LEGACY_CONTEXT)
 
     pub_results = repo.load_publish_results()
     check("39. 同一 article_id は1回しか投稿されない", len(pub_results), 1)
 
 # テスト40〜41: NullAiPublishService
 null_service = NullAiPublishService()
-null_result  = null_service.run()
+null_result  = null_service.run(side_effect_execution_context=_LEGACY_CONTEXT)
 check_none("40. NullAiPublishService.run() が None を返す", null_result)
 null_results = null_service.get_results()
 check("41. NullAiPublishService.get_results() が空リスト", null_results, [])

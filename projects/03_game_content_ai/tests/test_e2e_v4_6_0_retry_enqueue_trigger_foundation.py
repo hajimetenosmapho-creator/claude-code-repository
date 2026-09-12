@@ -438,7 +438,9 @@ unchanged_paths_19 = [
     "src/retry_queue/retry_queue_status.py",
     "src/retry_queue/__init__.py",
     "src/retry_engine/retry_config.py",
-    "src/retry_engine/retry_executor.py",
+    # src/retry_engine/retry_executor.py はRelease 6.32（22.1f節）の承認済み変更
+    # （RetryExecutor.execute()→WorkflowEngineManager.run()のprotected context
+    # 実配線）のため、本チェック対象から除外する。
     "src/retry_engine/retry_manager.py",
     "src/retry_engine/retry_policy.py",
     "src/retry_engine/retry_policy_protocol.py",

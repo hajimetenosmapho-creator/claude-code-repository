@@ -60,7 +60,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from ai import AgentConfig
+from article_media_upload_state import ArticleMediaUploadStateManager, JsonArticleMediaUploadStateStore
 from execution_history import ExecutionHistoryConfig, JsonExecutionHistoryStore
+from protected_operation_manifest import JsonProtectedOperationManifestStore, ManifestReaderFacade
 from retry_engine import NullRetryManager, RetryConfig, RetryManager, RetryPolicy
 from retry_enqueue_trigger import RetryEnqueueGuard, RetryEnqueueTrigger
 from retry_history import RetryHistoryManager
@@ -69,8 +71,15 @@ from retry_queue import NullRetryQueueManager, RetryQueueConfig, RetryQueueManag
 from retry_scheduler_decision import RetrySchedulerDecision
 from retry_scheduler_source import NullRetrySchedulerSource, RetrySchedulerSource
 from scheduler import SchedulerEngine
+from side_effect_safety import (
+    JsonMediaUploadApplicabilityStore,
+    JsonMediaUploadAttemptContextStore,
+    build_media_upload_safety_coordinator,
+)
+from side_effect_safety_classifier import SideEffectSafetyClassifier
 from workflow_engine import NullWorkflowEngineManager, WorkflowEngineConfig, WorkflowEngineManager
 from workflow_monitor import NullWorkflowMonitorManager, WorkflowMonitorConfig, WorkflowMonitorManager
+from wordpress_draft_state import JsonWordPressDraftStateStore
 
 # src/retry_composition/retry_composition_root.py から見たプロジェクトルート
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -130,10 +139,34 @@ class RetryCompositionRoot:
 
         policy = RetryPolicy.from_env()
         lineage_config = RetryLineageConfig.from_env(project_root=project_root)
+
+        # Architecture Amendment（Protected Operation Manifest、primary production
+        # closure）：main.py / ai_publish_service.py（呼び出し箇所A/B/C）が使用する
+        # のと同一の state/* ディレクトリを指す、独立したstoreインスタンスを
+        # ここで構築する（同一ディスク上のrecordを参照する、既存
+        # WordPressDraftStateStore/MediaUploadSafetyCoordinatorと同じ配線パターン）。
+        state_dir = project_root / "state"
+        draft_state_store = JsonWordPressDraftStateStore(base_dir=state_dir / "wordpress_draft_state")
+        media_upload_coordinator = build_media_upload_safety_coordinator(
+            media_upload_manager=ArticleMediaUploadStateManager(
+                JsonArticleMediaUploadStateStore(state_dir / "article_media_upload_state")
+            ),
+            applicability_store=JsonMediaUploadApplicabilityStore(state_dir / "media_upload_applicability"),
+            attempt_context_store=JsonMediaUploadAttemptContextStore(state_dir / "media_upload_attempt_context"),
+            locks_dir=state_dir / "media_upload_locks",
+        )
+        side_effect_classifier = SideEffectSafetyClassifier(
+            media_coordinator=media_upload_coordinator, draft_state=draft_state_store,
+        )
+        manifest_store = JsonProtectedOperationManifestStore(base_dir=state_dir / "protected_operation_manifest")
+        manifest_reader_facade = ManifestReaderFacade(manifest_store)
+
         lineage = RetryLineageManager(
             store=JsonRetryLineageStore(lineage_config.store_dir),
             config=lineage_config,
             policy=policy,
+            manifest=manifest_store,
+            side_effect_classifier=side_effect_classifier,
         )
 
         # correlation-fallback（10.3.3章）用のread-only参照。workflow_monitorが
@@ -164,6 +197,8 @@ class RetryCompositionRoot:
             lineage=lineage,
             retry_queue_manager=queue,
             retry_history_manager=history,
+            manifest=manifest_reader_facade,
+            side_effect_classifier=side_effect_classifier,
         )
 
         return cls(

@@ -79,7 +79,11 @@ class WorkflowTriggerAgent(BaseAgent):
         """WorkflowPipelineRunner.run() のみを呼び出し、PipelineResult を AgentResult へ変換する。"""
         assert not context.dry_run
 
-        result = self._runner.run(params=context.task.params)
+        # Release 6.32：既存Fakeとのzero-diff（news_agent.pyと同一理由）。
+        kwargs = {}
+        if context.side_effect_execution_context is not None:
+            kwargs["side_effect_execution_context"] = context.side_effect_execution_context
+        result = self._runner.run(params=context.task.params, **kwargs)
 
         warnings = list(context.warnings)
         if result.success:

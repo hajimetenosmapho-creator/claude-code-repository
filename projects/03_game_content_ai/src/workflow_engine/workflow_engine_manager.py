@@ -157,6 +157,7 @@ class WorkflowEngineManager:
         target_step_filter: list[WorkflowEngineStep] | None = None,
         post_admission_hook: "PostAdmissionHook | None" = None,
         correlation_metadata: dict[str, dict[str, str]] | None = None,
+        side_effect_execution_provenance: "object | None" = None,
     ) -> WorkflowEngineResult:
         """WorkflowEngineEventを起点にWorkflowEngineContextを組み立て、Executorへ委譲する。
 
@@ -164,6 +165,11 @@ class WorkflowEngineManager:
         （Retry Lineage）で追加した呼び出しごとの引数。いずれも省略時（None）は
         既存の全非retry呼び出し元に対して完全にZero-Diff
         （docs/design/retry_lineage_eligibility_durable_attempt_state.md 11.4・21章）。
+
+        side_effect_execution_provenanceはRelease 6.32（2.6節Propagation Contract）で
+        追加した引数。RetryLineageProtectedProvenance（member_run_id未確定のpre-context）
+        またはLegacyDirectExecutionContext（既に完成形）のいずれか。省略時（None）は
+        既存の全呼び出し元に対して完全にZero-Diff。
         """
         context = WorkflowEngineContext(
             event=event,
@@ -172,6 +178,7 @@ class WorkflowEngineManager:
             target_step_filter=target_step_filter,
             post_admission_hook=post_admission_hook,
             correlation_metadata=correlation_metadata,
+            side_effect_execution_provenance=side_effect_execution_provenance,
         )
         return self._executor.run(context)
 
@@ -196,6 +203,7 @@ class NullWorkflowEngineManager:
         target_step_filter: list[WorkflowEngineStep] | None = None,
         post_admission_hook: "PostAdmissionHook | None" = None,
         correlation_metadata: dict[str, dict[str, str]] | None = None,
+        side_effect_execution_provenance: "object | None" = None,
     ) -> None:
         print(
             "  [WORKFLOW ENGINE] Workflow Engineが無効です"

@@ -414,7 +414,9 @@ unchanged_paths_rq = [
     # 承認済み変更対象のため、本チェック対象から除外する
     # （docs/design/production_canonical_run_outcome_contract_foundation.md 24章）。
     "src/retry_engine/retry_config.py",
-    "src/retry_engine/retry_executor.py",
+    # src/retry_engine/retry_executor.py はRelease 6.32（22.1f節）の承認済み変更
+    # （RetryExecutor.execute()→WorkflowEngineManager.run()のprotected context
+    # 実配線）のため、本チェック対象から除外する。
     "src/retry_engine/retry_manager.py",
     "src/retry_engine/retry_policy.py",
     "src/retry_engine/retry_request.py",
@@ -424,11 +426,13 @@ unchanged_paths_rq = [
     # Outcome Contract Foundationの承認済み変更対象（run_idベースAPI移行・
     # atomic save化）のため、本チェック対象から除外する
     # （docs/design/production_canonical_run_outcome_contract_foundation.md 24章）。
-    "src/workflow_engine/workflow_engine_manager.py",
+    # src/workflow_engine/workflow_engine_manager.pyはRelease 6.32により
+    # side_effect_execution_provenance引数（2.6節）の追加対象となった。
     "src/workflow_monitor/workflow_monitor.py",
     "src/workflow_monitor/workflow_monitor_manager.py",
     "src/workflow_monitor/workflow_monitor_status.py",
-    "src/ai/agent_manager.py",
+    # src/ai/agent_manager.pyはRelease 6.32によりExplicit Side-Effect Execution
+    # Mode専用channelの新設に伴う承認済み変更対象となった（22.1f節）。
     "src/scheduler/scheduler_engine.py",
 ]
 

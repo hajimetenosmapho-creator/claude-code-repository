@@ -89,6 +89,12 @@ from workflow_engine import (
     WorkflowEngineEvent,
     WorkflowEngineManager,
 )
+from side_effect_safety import (
+    LegacyEntrypoint,
+    LegacyExecutionOrigin,
+    build_legacy_direct_provenance,
+    complete_legacy_execution_context,
+)
 
 DEMO_JOB_ID = "workflow_engine_demo_daily"
 DEMO_JOB_SCHEDULE = "09:00"
@@ -225,8 +231,15 @@ def main() -> int:
         return 1
 
     # 4. Executor側 Invariant（CanonicalAdmissionFailure）が権威。3.は早期診断にすぎない。
+    side_effect_execution_provenance = complete_legacy_execution_context(
+        build_legacy_direct_provenance(LegacyEntrypoint.RUN_WORKFLOW_ENGINE_DIRECT),
+        LegacyExecutionOrigin.WORKFLOW_ENGINE_DIRECT,
+    )
     try:
-        result = manager.run(event, dry_run=args.dry_run)
+        result = manager.run(
+            event, dry_run=args.dry_run,
+            side_effect_execution_provenance=side_effect_execution_provenance,
+        )
     except CanonicalAdmissionFailure as e:
         print(f"[エラー] Canonical Admission Failure: run_id={e.run_id}, reason={e.reason}")
         print("  NEWS/Agentは開始されていません。")

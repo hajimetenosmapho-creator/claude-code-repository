@@ -24,6 +24,8 @@ from pathlib import Path
 from .workflow_context import WorkflowContext
 from .workflow_step import WorkflowStep, WorkflowStepResult
 
+from side_effect_safety import validate_side_effect_execution_context
+
 
 class WorkflowStepExecutor(ABC):
     """ワークフローの各ステップを実行する抽象基底クラス。"""
@@ -267,8 +269,20 @@ class PublishStepExecutor(WorkflowStepExecutor):
         if context.dry_run:
             return _dry_run_result(self.step(), started_at)
 
+        # Release 6.32（22.3.12節）：AiPublishServiceを呼ぶ既存try/exceptブロックの
+        # 外側（手前）でvalidationを行う——ここで送出されるSideEffectExecutionMode
+        # ContractErrorは下記except Exceptionに捕捉されず、呼び出し元
+        # （WorkflowRunner.run()）へそのまま伝播する（normal step failureへ
+        # 変換しない）。
+        validated_context = validate_side_effect_execution_context(
+            context.side_effect_execution_context,
+        )
+
         try:
-            report_path   = self._service.run(article_id=context.article_id)
+            report_path   = self._service.run(
+                article_id=context.article_id,
+                side_effect_execution_context=validated_context,
+            )
             results       = self._service.get_results(article_id=context.article_id)
             success_count = sum(1 for r in results if r.success)
             return WorkflowStepResult(

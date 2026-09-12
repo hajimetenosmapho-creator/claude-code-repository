@@ -742,7 +742,14 @@ if _article_loop is not None:
             _article_loop.body.index(_loop_body_assigns[0]) < _article_loop.body.index(_loop_try),
         )
 
-        _except_handler = _loop_try.handlers[0] if _loop_try.handlers else None
+        # Release 6.32（22.3.2節）: _apply_featured_media_step()呼び出しを囲むtryは
+        # handlerが2件（SideEffectExecutionModeContractErrorのcarve-out＋
+        # FeaturedMediaPropagatedFailure本体）になったため、_handle_featured_media_failure()
+        # を呼ぶ後者を型で明示的に選択する（migration計画承認済み、機械的修正）。
+        _except_handler = next(
+            (h for h in _loop_try.handlers if isinstance(h.type, ast.Name) and h.type.id == "FeaturedMediaPropagatedFailure"),
+            None,
+        )
         check_true("RUNTIMEPATH-EXCEPT-EXISTS. tryにexcept節が存在する", _except_handler is not None)
         if _except_handler is not None:
             _handle_failure_calls = [
@@ -861,7 +868,10 @@ class _FakeMainWordPressOutput:
         self.calls = []
 
     @classmethod
-    def from_env(cls):
+    def from_env_with_context(cls, side_effect_execution_context, draft_state_manager=None):
+        # Release 6.32（15.7節）：main.pyはfrom_env()ではなくfrom_env_with_context()
+        # を呼ぶよう変更された。本Fakeはcontextの型検証自体はテスト対象外のため、
+        # 受け取って無視する。
         return cls._singleton
 
     def is_available(self):

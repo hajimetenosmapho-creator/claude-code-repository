@@ -69,6 +69,21 @@ RetryRuntimeOrchestrator: Retry Runtimeの実行順序を管理する場所。
       する（claim()のみがこのゲートのfail-closedスイッチの対象）。monitor
       （WorkflowMonitorManager）を新たにConstructor Injectionで保持する
       （resolve_status_fnとして渡すため）。
+
+    - （Release 6.32）run_once()のQueue Update判定経路を、`RetryQueueUpdateDecider()`
+      の直接構築・呼び出しから`self.manager.decide_retry_queue_updates(execution_results)`
+      経由へ改めた（22.4a節「No bypass」：production entry pointは
+      `RetryManager.decide_retry_queue_updates()`のみとする）。これにより、
+      6.32 contract対象lineageのQueue項目は、`RetryLineageManager.mark_terminal()`
+      が確定させた権威あるterminal_disposition（`SUCCEEDED`/`FAILED`/
+      `NOT_ACTIONED`/`HUMAN_REVIEW_REQUIRED`）をそのまま使って判定される
+      （Lineage-Authoritative Disposition Input Contract、22.4節）。
+      `HUMAN_REVIEW_REQUIRED`を含め、新しいRetryQueueUpdateOutcome/RetryQueueStatus
+      は追加せず、既存の`FAIL`/`FAILED`へ合流する——HRRのretry
+      eligibility・authorization・dispatchは本経路のauthorityではなく、
+      composition層の`retry_after_human_review()`（17.3節）がqueue/scheduler
+      非経由で直接行う（本変更とは独立、矛盾しない）。実行順序（1〜4の並び・
+      execute_dispatchable_retries()を1回だけ呼ぶ規律）自体は無変更。
 """
 from __future__ import annotations
 
@@ -83,7 +98,6 @@ from retry_engine import (
     RetryQueueRemovalExecutor,
     RetryQueueTerminalCleanupDecider,
     RetryQueueTerminalCleanupExecutor,
-    RetryQueueUpdateDecider,
 )
 from retry_enqueue_trigger import RetryEnqueueTrigger
 from retry_history import RetryHistoryManager
@@ -160,7 +174,9 @@ class RetryRuntimeOrchestrator:
                Queue除去・履歴記録を行わない（v5.6.0）
             4. execution_resultsを、retry_engineが公開する既存のStateless・無引数
                コンストラクタのDecider/Executor群へ配布する：
-                 - RetryQueueUpdateDecider().decide_all(execution_results)
+                 - self.manager.decide_retry_queue_updates(execution_results)（Release 6.32、
+                   22.4a節。RetryManager経由の一本化——RetryQueueUpdateDecider().decide_all()
+                   をrun_once()から直接構築・呼び出す経路は持たない、22.4a節「No bypass」）
                  - RetryQueueRemovalExecutor().apply_all(decisions, remove_fn=self.queue.remove)
                  - RetryQueueCleanupDecider().decide_all(decisions)
                    → RetryQueueCleanupExecutor().apply_all(..., remove_fn=self.queue.remove)
@@ -191,7 +207,7 @@ class RetryRuntimeOrchestrator:
 
         execution_results = self.manager.execute_dispatchable_retries(events, dry_run=dry_run)
 
-        decisions = RetryQueueUpdateDecider().decide_all(execution_results)
+        decisions = self.manager.decide_retry_queue_updates(execution_results)
         removal_results = RetryQueueRemovalExecutor().apply_all(decisions, remove_fn=self.queue.remove)
         cleanup_results = RetryQueueCleanupExecutor().apply_all(
             RetryQueueCleanupDecider().decide_all(decisions), remove_fn=self.queue.remove

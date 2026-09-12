@@ -490,6 +490,135 @@ Safety）。
 
 ---
 
+## [v6.32.0] - 2026-09-12 ★ Side-Effect Fail-Closed & Human Review Safety
+
+> `docs/MVP_COMPLETION_ROADMAP.md`が定める6.32スコープに対応し、partial success・
+> 既に外部副作用（WordPress下書き作成・media upload等）が発生済みのrunを、
+> write-aheadのfail-closed契約とdurableなHuman Review terminal dispositionにより
+> 安全に扱う契約を確立した。
+>
+> Architecture Design（`docs/design/side_effect_fail_closed_human_review_safety_foundation.md`）
+> 確定後、Final Release Review中にCodexが指摘した「`RetryExecutor.execute()`・
+> `RetryLineageManager._reconcile_all_locked()`のいずれも
+> `SideEffectSafetyClassifier.classify()` / `resolve_final_disposition()`を呼んでおらず、
+> 6.31時代のstep-onlyな判定のみでdispositionを確定している」というBlocking findingを受け、
+> Architecture Amendment（`docs/design/side_effect_fail_closed_human_review_safety_amendment_protected_operation_manifest.md`、Protected Operation Manifest）を新設した。
+> Codex独立adversarial review Round 1〜10を実施し、Round 9でSIMPLIFICATION PIVOT
+> （rebind機構・lease機構を撤廃し、`member_run_id`をmanifest永続化キーへ組み込む
+> IMMUTABLE EXECUTION/MEMBER GENERATION設計へ移行）を経て、Round 10で
+> **APPROVED**（Blocking 0／Major 0／Minor 1／Suggestions 2）に収束した。
+
+### Added
+
+- `src/protected_operation_manifest/` 新規パッケージ：`ProtectedOperationManifestStore`
+  （`root_run_id` + `attempt_ordinal` + `member_run_id`のimmutable複合キーによる
+  durable manifest。create専用`create_for_attempt()`＋追記専用`register()`＋
+  read-only`list_for_attempt()`のみを公開）・`ManifestReaderFacade` /
+  `ManifestRegistrarFacade`（role-scoped concrete runtime facade）・
+  `ProtectedOperationManifestStoreLock`。
+- `src/side_effect_safety/` 新規パッケージ：`SideEffectExecutionMode`
+  （`RetryLineageProtectedExecutionContext` / `LegacyDirectExecutionContext`の
+  discriminated union、Trusted Composition Boundary Invariant）・
+  `MediaUploadSafetyCoordinator`（owner_token不要のdurable state machine）・
+  `CommitAwareLock`。
+- `src/wordpress_draft_state/` 新規パッケージ：`WordPressDraftStateManager` /
+  `WordPressDraftStateStore`（WORDPRESS_DRAFT_CREATIONのIO_ARMEDフェーズを持たない
+  単一フェーズdurable state）。
+- `src/side_effect_safety_classifier.py`：`SideEffectSafetyClassifier`
+  （`MediaUploadSafetyCoordinator` / `WordPressDraftStateStore`双方を読み取り、
+  `SideEffectSafetyCategory`へ写像する統合層）。
+- `src/retry_composition/retry_after_human_review.py`：HRR authorized retryの
+  queue/scheduler非経由directディスパッチ。
+- `owner_token` durable claim authority（`ClaimResult.owner_token`・
+  `mark_execution_started()` / `release_claim()`の4段階authority check、
+  stale caller保護）。
+- v6.32系列E2E（`tests/test_e2e_v6_32_0_*.py`〜`test_e2e_v6_32_37_*.py`、計39ファイル）。
+
+### Changed
+
+- `src/retry_engine/retry_executor.py` / `src/retry_lineage/retry_lineage_manager.py`：
+  `SideEffectSafetyClassifier.classify()` → `resolve_final_disposition()`の実チェーンを
+  sync（`execute()`）・restart（`_reconcile_all_locked()`）双方へ接続。manifest entryから
+  `member_run_id`を厳密解決（sync=`engine_result.run_id`、restart=`record.latest_run_id`）。
+  Final Independent Codex Review Blocking#1対応：protected lineage
+  （`side_effect_contract_version is not None`）でmanifest/classifierが欠落している
+  場合、決してstep-only fallback（`decide_disposition()` / `disposition_from_categories()`）
+  へ降格せず、fail-closedで`HUMAN_REVIEW_REQUIRED`へ確定するよう修正（legacy lineageの
+  fallbackは維持）。
+- `src/outputs/wordpress_output.py`（呼び出し箇所A）・`main.py`
+  `_apply_featured_media_step()`（呼び出し箇所B）・`src/ai/ai_publish_service.py`
+  （呼び出し箇所C）：`side_effect_execution_context`必須化・manifest registration
+  （既存write-ahead呼び出しより先に実行、durable ACK確認）を追加。Final Independent
+  Codex Review Blocking#2対応：protected contextでの`manifest_registrar`省略による
+  registration bypassを禁止し、`SideEffectExecutionModeContractError`
+  （`ExecutionModeFailureReasonCode.PROTECTED_MANIFEST_REGISTRAR_REQUIRED`、既存例外
+  クラスへの理由コード追加のみ）で即座に拒否するよう修正（legacy contextの省略は
+  引き続き許容）。
+- `src/side_effect_safety/side_effect_execution_mode.py`：
+  `ExecutionModeFailureReasonCode`へ`PROTECTED_MANIFEST_REGISTRAR_REQUIRED`を追加。
+- `src/retry_composition/retry_composition_root.py`：`ProtectedOperationManifestStore`・
+  `SideEffectSafetyClassifier`のインスタンス化、`RetryLineageManager`へフルアクセス
+  store、`RetryExecutor`へ`ManifestReaderFacade`、呼び出し箇所A/B/Cへ
+  `ManifestRegistrarFacade`のみを配線。
+- MEDIA Invariant #15：`RetryCompositionRoot`が`main.py`とは独立した第2の
+  `MediaUploadSafetyCoordinator`インスタンスをcross-process read-only classification
+  専用に構築することを、既存static oracleの実装齟齬として明確化（Invariant #15
+  自体のsemantics・mutation authorityの閉包性は無変更、詳細はAmendment §33）。
+- `src/ai/agent_context.py` / `agent_executor.py` / `agent_manager.py` /
+  `news_agent.py` / `publish_trigger_agent.py` / `workflow_context.py` /
+  `workflow_runner.py` / `workflow_step_executor.py` / `workflow_trigger_agent.py`、
+  `src/pipeline/news_pipeline_runner.py` / `publish_pipeline_runner.py` /
+  `workflow_pipeline_runner.py`、`scripts/run_news_agent.py` 等7スクリプト：
+  Explicit Side-Effect Execution Mode専用channelの新設・伝播。
+- `tests/zero_diff_guard_registry.py`：`RELEASE_ORDER`へ`"v6.32.0"`をappend-onlyで
+  追記。`_TEST_CHANGE_CONTRIBUTIONS` / `_SOURCE_CHANGE_CONTRIBUTIONS`へ本Release分の
+  寄与を登録（v6.32系列39ファイル自身・上記sourceの変更対象path・GR-7準拠のtest
+  追加登録を含む）。既存recordはいずれも無改修。
+
+### Architecture Reviewの経緯（Codex独立review、Amendment Round 1〜10 + Final Independent Codex Review）
+
+Architecture Amendment（Protected Operation Manifest）はCodex Round 1〜9で
+`NEEDS_REVISION`を繰り返し（Round 9でSIMPLIFICATION PIVOT）、Round 10で
+**APPROVED**（Blocking 0／Major 0／Minor 1／Suggestions 2）に収束した。実装完了後の
+**Final Independent Codex Review**は1回目`CHANGES REQUIRED`（**Blocking 2**：
+protected lineageのstep-only fallback降格リスク／呼び出し箇所A/B/Cのmanifest
+registration bypassリスク）を検出し、HUMAN GATE承認のもと限定修正（新しい
+architecture判断ではなく既存fail-closed semanticsのproduction反映）を実施、
+2回目**APPROVED WITH SUGGESTIONS**（Blocking 0／Major 0／Minor 0／
+**Suggestion 1 non-blocking**）に収束した。
+
+Suggestion（Release safety blockerではない、future improvementとして記録・本
+Releaseでは未対応）：`RetryExecutor.execute()`の`release_claim()`戻り値未確認による
+diagnostic reason（"claim released back to READY_ELIGIBLE"）が実durable stateと
+ずれうる既存（6.31由来）のgap。durable stateはfail-closedのまま維持され、既存
+`reconcile_all()`のCLAIMED orphan回収で安全に収束することを確認済み。
+
+### §18 Implementation Matrix・Test Review・Regressionの実績
+
+Amendment §18が定めるPLANNED IMPLEMENTATION TEST MATRIX（全25項目）は、production
+wiring（`RetryExecutor.execute()`実チェーン・`RetryLineageManager.reconcile_all()`
+実チェーン）を通した直接証拠に基づき**25/25 PASS（PARTIAL 0・MISSING 0）**を確認した
+（test#22・test#25はhard-crash方式：別プロセス＋`os._exit()`で実証）。
+
+v6.32系列Full Suite（`tests/test_e2e_v6_32_*.py`、実ファイル39件）は
+**1270/1270 PASS、FAIL 0、SKIP 0、全ファイルexit code 0**（Blocking remediation後の
+再実行分を含む）。正式Formal Regression（正式Inventory34ファイル：v1.11.0＋v5.9.0＋
+v6.0.0〜v6.31.0）は**5671/5671 PASS、FAIL 0、SKIP 0、全ファイルexit code 0**で完了した。
+
+詳細は`docs/design/side_effect_fail_closed_human_review_safety_foundation.md`
+（Architecture Design）・`docs/design/side_effect_fail_closed_human_review_safety_amendment_protected_operation_manifest.md`
+（Architecture Amendment、Codex Round 1〜10・§18 Implementation Verification Record
+（§34）・Final Independent Codex Review & Blocking Remediation（§35）を含む全35章）を
+参照。
+
+### Future Extension
+
+`RetryObservabilityPipeline`（v6.29.0）のRetry Runtime実配線（6.33、Retry
+Observability Runtime Integration）。generic non-HRR automatic retry redispatch等、
+本Amendmentが明示的にOut of Scopeとした事項は本Releaseで解決済みではない。
+
+---
+
 ## [v6.30.0] - 2026-08-22 ★ Production Canonical Run & Outcome Contract Foundation
 
 > Architecture Reconciliation（Roadmap v1.3）により、Monitor→Trigger→Queue→

@@ -52,6 +52,7 @@ RELEASE_ORDER: tuple[str, ...] = (
     "v6.29.0",
     "v6.30.0",
     "v6.31.0",
+    "v6.32.0",
 )
 
 
@@ -149,6 +150,49 @@ _SOURCE_CHANGE_CONTRIBUTIONS: tuple[tuple[str, str, frozenset], ...] = (
     })),
     ("scripts", "v6.30.0", frozenset({
         "scripts/run_workflow_engine.py",
+    })),
+    # v6.32.0（Side-Effect Fail-Closed & Human Review Safety）：Explicit
+    # Side-Effect Execution Mode専用channelの新設・伝播に伴う承認済み変更
+    # （docs/design/side_effect_fail_closed_human_review_safety_foundation.md
+    # 22.1f節）。
+    ("src/ai", "v6.32.0", frozenset({
+        "src/ai/agent_context.py",
+        "src/ai/agent_manager.py",
+        # sub-milestone 6C（§28.-36節test#8、22.3.12節）：agent_executor.pyへの
+        # SideEffectExecutionModeContractError carve-out追加。
+        "src/ai/agent_executor.py",
+        "src/ai/news_agent.py",
+        "src/ai/publish_trigger_agent.py",
+        "src/ai/workflow_trigger_agent.py",
+        "src/ai/workflow_runner.py",
+        "src/ai/workflow_context.py",
+        "src/ai/workflow_step_executor.py",
+        "src/ai/ai_publish_service.py",
+    })),
+    ("src/pipeline", "v6.32.0", frozenset({
+        "src/pipeline/news_pipeline_runner.py",
+        "src/pipeline/publish_pipeline_runner.py",
+        "src/pipeline/workflow_pipeline_runner.py",
+    })),
+    ("scripts", "v6.32.0", frozenset({
+        "scripts/run_news_agent.py",
+        "scripts/run_workflow_trigger_agent.py",
+        "scripts/run_publish_trigger_agent.py",
+        "scripts/run_review_trigger_agent.py",
+        "scripts/run_ai_publish.py",
+        "scripts/run_ai_workflow.py",
+        "scripts/run_workflow_engine.py",
+    })),
+    # v6.32.0 sub-milestone 3（呼び出し箇所A：NEWS / WordPressOutput.save()）：
+    # __init__()へside_effect_execution_context（必須）・draft_state_manager
+    # （Optional）引数を追加し、save()をExplicit Execution Mode対応へ改修した
+    # （15.7・22.3.1節）。
+    # v6.32.0 sub-milestone 3・completion gap（22.3.13節(2)）：wordpress_output.py
+    # （呼び出し箇所A本体）＋manager.py（OutputManager.save_all()の
+    # SideEffectExecutionModeContractError carve-out）の承認済み変更。
+    ("src/outputs", "v6.32.0", frozenset({
+        "src/outputs/wordpress_output.py",
+        "src/outputs/manager.py",
     })),
 )
 
@@ -304,6 +348,187 @@ _TEST_CHANGE_CONTRIBUTIONS: tuple[tuple[str, str], ...] = (
         "test_e2e_v6_30_0_production_canonical_run_outcome_contract_foundation.py",
         "v6.31.0",
     ),
+    # v6.32.0（Side-Effect Fail-Closed & Human Review Safety）自身。新規独立
+    # パッケージ（src/side_effect_safety・src/wordpress_draft_state）と
+    # src/retry_lineage・src/retry_engine・src/retry_composition配下の変更は
+    # いずれもPROTECTED_PATHS対象外のためsource contributionは不要。
+    # tests/への新規E2E追加（sub-milestone 0・1）と、その追加・上記
+    # src/ai・src/pipeline・scriptsのsource contributionを許容するための
+    # 本レジストリ自身の編集（RELEASE_ORDERへの"v6.32.0"追記本体）を登録する。
+    ("test_e2e_v6_32_0_side_effect_fail_closed_foundation.py", "v6.32.0"),
+    ("test_e2e_v6_32_1_hrr_lifecycle.py", "v6.32.0"),
+    ("test_e2e_v6_32_2_provenance_propagation.py", "v6.32.0"),
+    ("zero_diff_guard_registry.py", "v6.32.0"),
+    # v6.32.0：Explicit Side-Effect Execution Mode専用channelの新設・伝播に伴い、
+    # これらpathへの「無変更」を独自にhardcodeしていた既存E2E（registry導入
+    # 以前の各Releaseが個別に持つ、本registryを参照しないstandalone guard）が
+    # 副作用として壊れるため、v6.30.0のHistorical Zero-Diff Guard Migrationと
+    # 同一パターンで、該当pathの検査を狭く除外する改訂を行った既存E2E一式を
+    # 登録する（個々の除外方法・対象pathは各ファイル内のコメントを参照）。
+    ("test_e2e_v2_2_0_news_agent_foundation.py", "v6.32.0"),
+    ("test_e2e_v2_3_0_workflow_trigger_agent_foundation.py", "v6.32.0"),
+    ("test_e2e_v2_4_0_publish_trigger_agent_foundation.py", "v6.32.0"),
+    ("test_e2e_v2_5_0_review_trigger_agent_foundation.py", "v6.32.0"),
+    ("test_e2e_v2_6_0_scheduler_agent_foundation.py", "v6.32.0"),
+    ("test_e2e_v2_7_0_workflow_engine_foundation.py", "v6.32.0"),
+    ("test_e2e_v2_8_0_execution_history_foundation.py", "v6.32.0"),
+    ("test_e2e_v2_9_0_workflow_monitor_foundation.py", "v6.32.0"),
+    ("test_e2e_v3_0_0_retry_engine_foundation.py", "v6.32.0"),
+    ("test_e2e_v3_1_0_retry_queue_foundation.py", "v6.32.0"),
+    ("test_e2e_v3_2_0_retry_queue_integration.py", "v6.32.0"),
+    ("test_e2e_v6_26_0_zero_diff_guard_registry_foundation.py", "v6.32.0"),
+    ("test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py", "v6.32.0"),
+    ("test_e2e_v5_9_0_retry_runtime_loop_wiring_foundation.py", "v6.32.0"),
+    ("test_e2e_v5_1_0_retry_composition_root_foundation.py", "v6.32.0"),
+    ("test_e2e_v5_2_0_retry_runtime_orchestrator_foundation.py", "v6.32.0"),
+    ("test_e2e_v5_4_0_retry_runtime_script_entry_point_foundation.py", "v6.32.0"),
+    ("test_e2e_v5_5_0_retry_runtime_loop_foundation.py", "v6.32.0"),
+    ("test_e2e_v5_7_0_retry_runtime_safe_dry_run_wiring_foundation.py", "v6.32.0"),
+    # v6.32.0 sub-milestone 3（呼び出し箇所A：NEWS / WordPressOutput.save()）自身。
+    # 新規E2E追加（test_e2e_v6_32_3_*）と、WordPressOutput.__init__()への必須引数
+    # 追加に伴うtest_e2e_v1_11_0自身の構築箇所の改訂（side_effect_execution_context
+    # を明示供給するよう変更）、RetryExecutor.execute()→WorkflowEngineManager.run()
+    # のprotected context実配線に伴うFakeWorkflowEngineManager群のrun()署名改訂
+    # （test_e2e_v6_30_0・test_e2e_v6_31_0）を登録する。
+    ("test_e2e_v6_32_3_call_site_a_news_wordpress.py", "v6.32.0"),
+    ("test_e2e_v1_11_0_save_result.py", "v6.32.0"),
+    (
+        "test_e2e_v6_30_0_production_canonical_run_outcome_contract_foundation.py",
+        "v6.32.0",
+    ),
+    ("test_e2e_v6_31_0_retry_lineage_eligibility_durable_attempt_state.py", "v6.32.0"),
+    # v6.32.0：src/outputs/wordpress_output.py（呼び出し箇所A、15.7節）の変更に伴い、
+    # main.pyのWordPressOutputをFakeへ差し替えて実行する既存E2E（v6.25.0・v6.28.0）
+    # のFake側もfrom_env()→from_env_with_context()追従・src/outputsの
+    # unchanged_paths除外を行った。
+    ("test_e2e_v6_25_0_image_generation_fallback_observability_foundation.py", "v6.32.0"),
+    ("test_e2e_v6_28_0_article_media_upload_state_foundation.py", "v6.32.0"),
+    # v6.32.0：src/retry_engine/retry_executor.py（RetryExecutor.execute()→
+    # WorkflowEngineManager.run()のprotected context実配線、22.1f節）の承認済み
+    # 変更に伴い、"src/retry_engine/retry_executor.py"を独自のunchanged_paths型
+    # ハードコードlistへ含めていた既存E2E一式（Release 3.x〜5.x、registry導入
+    # 以前のstandalone guard）から当該1行を除外する改訂を行った。
+    ("test_e2e_v3_3_0_retry_scheduler_integration.py", "v6.32.0"),
+    ("test_e2e_v3_4_0_retry_scheduler_wiring.py", "v6.32.0"),
+    ("test_e2e_v3_5_0_retry_scheduler_decision.py", "v6.32.0"),
+    ("test_e2e_v3_6_0_retry_scheduler_decision_wiring.py", "v6.32.0"),
+    ("test_e2e_v3_7_0_retry_scheduler_event_integration.py", "v6.32.0"),
+    ("test_e2e_v3_8_0_retry_engine_event_consumption.py", "v6.32.0"),
+    ("test_e2e_v3_9_0_retry_engine_event_dispatch.py", "v6.32.0"),
+    ("test_e2e_v4_0_0_retry_execution_foundation.py", "v6.32.0"),
+    ("test_e2e_v4_1_0_retry_queue_update_foundation.py", "v6.32.0"),
+    ("test_e2e_v4_2_0_retry_queue_removal_foundation.py", "v6.32.0"),
+    ("test_e2e_v4_3_0_retry_queue_cleanup_foundation.py", "v6.32.0"),
+    ("test_e2e_v4_4_0_retry_queue_notfound_disabled_cleanup_foundation.py", "v6.32.0"),
+    ("test_e2e_v4_5_0_retry_policy_foundation.py", "v6.32.0"),
+    ("test_e2e_v4_6_0_retry_enqueue_trigger_foundation.py", "v6.32.0"),
+    ("test_e2e_v4_7_0_retry_history_foundation.py", "v6.32.0"),
+    ("test_e2e_v4_8_0_retry_enqueue_guard.py", "v6.32.0"),
+    ("test_e2e_v4_9_0_retry_attempt_synchronization_foundation.py", "v6.32.0"),
+    ("test_e2e_v5_0_0_retry_enqueue_guard_refinement_foundation.py", "v6.32.0"),
+    # v6.32.0 sub-milestone 4（呼び出し箇所B：NEWS / ArticleFeaturedMediaRuntime
+    # 経由のmedia upload）自身。新規E2E追加（test_e2e_v6_32_4_*）と、
+    # _apply_featured_media_step()のside_effect_binding方式への変更に伴う
+    # test_e2e_v6_21_0自身の改訂（TEST MIGRATION HUMAN GATE承認済み。PROP系
+    # シナリオ・LOOP系構造アサーションをFeaturedMediaPropagatedFailure契約へ
+    # 追従）を登録する。test_e2e_v6_25_0の1行修正は既存v6.32.0登録で充足する
+    # ため重複追加しない。
+    ("test_e2e_v6_32_4_call_site_b_media_upload.py", "v6.32.0"),
+    ("test_e2e_v6_21_0_article_featured_media_runtime_wiring.py", "v6.32.0"),
+    # v6.32.0 sub-milestone 5（呼び出し箇所C：PUBLISH / AiPublishService._post()）
+    # 自身。新規E2E追加（test_e2e_v6_32_5_*）と、AiPublishService.run()/_process()/
+    # _post()がside_effect_execution_contextを必須引数化したことに伴う
+    # test_e2e_v1_18_0・test_e2e_v1_20_0自身の改訂（TEST MIGRATION HUMAN GATE
+    # 承認済み。固定legacy contextの追加のみ、security semanticsは無変更）を
+    # 登録する。test_e2e_v2_4_0はPublishPipelineRunnerの条件付きkwargs転送を
+    # 維持したため無変更・未登録（承認済み方針）。
+    ("test_e2e_v6_32_5_call_site_c_publish_wordpress.py", "v6.32.0"),
+    ("test_e2e_v1_18_0_ai_publish_foundation.py", "v6.32.0"),
+    ("test_e2e_v1_20_0_ai_workflow_foundation.py", "v6.32.0"),
+    # sub-milestone 3 completion gap（22.3.13節(2)）自身。新規E2E追加のみ。
+    ("test_e2e_v6_32_3b_output_manager_carveout.py", "v6.32.0"),
+    # sub-milestone 6B（§28.-34節 Invariant #35 test#4 sink-oriented static
+    # oracle）自身。新規E2E追加のみ、srcへの変更なし。
+    ("test_e2e_v6_32_6_invariant_35_static_oracle.py", "v6.32.0"),
+    # sub-milestone 6B（§28.-34節 Invariant #35 test#3 closure oracle）自身。
+    # 新規E2E追加のみ、srcへの変更なし。
+    ("test_e2e_v6_32_7_invariant_35_closure_oracle.py", "v6.32.0"),
+    # sub-milestone 6C（§28.-37節 Invariant #37 Authoritative Completion
+    # Boundary）自身。src/retry_engine/retry_executor.py（PROTECTED_PATHS対象外）
+    # へのconsistency validation boundary新設に伴う新規E2E追加。
+    ("test_e2e_v6_32_8_invariant_37_boundary_tests.py", "v6.32.0"),
+    # v6.32.0：test_e2e_v6_30_0のFake（_fake_apply_featured_media_step）を
+    # side_effect_binding方式（22.3.2節）へ追従させた改訂（sub-milestone 4の
+    # 見落としを本sub-milestoneのregression sweepで発見・修正）。
+    (
+        "test_e2e_v6_30_0_production_canonical_run_outcome_contract_foundation.py",
+        "v6.32.0",
+    ),
+    # sub-milestone 6C（§28.-36節 WorkflowRunner Chain Invariant #37 direct
+    # closure）自身。新規E2E追加のみ。src/pipeline/workflow_pipeline_runner.py
+    # へのcarve-out追加は既存"src/pipeline" v6.32.0 contributionで既に許容済み。
+    ("test_e2e_v6_32_9_invariant_37_workflowrunner_chain.py", "v6.32.0"),
+    # sub-milestone 6D（Canonical Gap Inventory解消クラスタ群）自身。以下17件は
+    # いずれも新規E2E追加のみであり、対応するsrc/配下の変更はすべて既存の
+    # PROTECTED_PATHS対象外パッケージ（src/retry_lineage・src/retry_engine・
+    # src/side_effect_safety・src/wordpress_draft_state等）またはFormal
+    # Regression remediationターン時点で別途登録済みのcontributionの範囲内で
+    # あるため、追加のsource contributionは不要（v6.29.0・v6.31.0と同型の扱い）。
+    ("test_e2e_v6_32_10_retry_queue_lineage_authoritative_disposition.py", "v6.32.0"),
+    ("test_e2e_v6_32_11_recovery_policy_static_contract.py", "v6.32.0"),
+    ("test_e2e_v6_32_12_hrr_reconcile_exclusion.py", "v6.32.0"),
+    ("test_e2e_v6_32_13_media_upload_store_composition_root_closure.py", "v6.32.0"),
+    ("test_e2e_v6_32_14_design_doc_pseudocode_syntax.py", "v6.32.0"),
+    ("test_e2e_v6_32_15_coordinator_lock_race_prevention.py", "v6.32.0"),
+    ("test_e2e_v6_32_16_commit_aware_lock_helper_primitives.py", "v6.32.0"),
+    ("test_e2e_v6_32_17_ack_determinism_post_commit_cleanup.py", "v6.32.0"),
+    ("test_e2e_v6_32_18_record_prepared_recovery_policy_fault_matrix.py", "v6.32.0"),
+    ("test_e2e_v6_32_19_wordpress_draft_state_store_contract.py", "v6.32.0"),
+    ("test_e2e_v6_32_20_agent_manager_fanout_trusted_composition.py", "v6.32.0"),
+    ("test_e2e_v6_32_21_execution_mode_propagation_call_site_ac.py", "v6.32.0"),
+    ("test_e2e_v6_32_22_hrr_guard_batch_media_runtime_residual.py", "v6.32.0"),
+    ("test_e2e_v6_32_23_news_subprocess_contract_error_residual.py", "v6.32.0"),
+    ("test_e2e_v6_32_24_media_safety_residual_cluster.py", "v6.32.0"),
+    ("test_e2e_v6_32_25_retry_disposition_reconciliation_residual.py", "v6.32.0"),
+    ("test_e2e_v6_32_26_invariant_21_shared_coordination_residual.py", "v6.32.0"),
+    # v6.32.0 Phase 2（Protected Operation Manifest Architecture Amendment、
+    # production remediation）：primary blocking finding closure・owner_token
+    # authority・immutable manifest generation・facade API surface・
+    # reconciliation administrative recoveryを検証する新規E2Eと、
+    # create_for_attempt()呼び出し箇所を検証するstatic oracleを追加した。
+    ("test_e2e_v6_32_27_protected_operation_manifest_production_closure.py", "v6.32.0"),
+    ("test_e2e_v6_32_28_protected_operation_manifest_static_oracle.py", "v6.32.0"),
+    # Phase 2継続：呼び出し箇所A/C direct evidence（実production class駆動）と、
+    # manifest store自体のdirect evidence（冪等性・IOError 3種・vacuous manifest）
+    # を追加。
+    ("test_e2e_v6_32_29_protected_operation_manifest_call_site_evidence.py", "v6.32.0"),
+    # Phase 2継続：呼び出し箇所B（main.py、MEDIA_UPLOAD）のGate ON/OFF manifest
+    # registration direct evidence。
+    ("test_e2e_v6_32_30_protected_operation_manifest_call_site_b_evidence.py", "v6.32.0"),
+    # v6.32.0 §18 CLAIMED Orphan Lock-State Matrix & Hard-Crash Durability
+    # Closure（test#22 + test#25）。新規E2E追加と、実際にhard crashする
+    # child process用のtest-owned helper（test_ prefixを持たずpytest収集対象外、
+    # subprocess経由でのみ起動される）を追加した。srcへの変更なし。
+    ("hard_crash_worker_v6_32_31.py", "v6.32.0"),
+    ("test_e2e_v6_32_31_claimed_orphan_lock_state_hard_crash.py", "v6.32.0"),
+    # §18 test#7 + test#8（Confirmed-Mismatch & Manifest-Corruption Path
+    # Closure）自身。新規E2E追加のみ、srcへの変更なし。
+    ("test_e2e_v6_32_32_confirmed_mismatch_manifest_corruption_closure.py", "v6.32.0"),
+    # §18 test#14（Manifest Read Error Taxonomy Closure）自身。新規E2E追加のみ、
+    # srcへの変更なし。
+    ("test_e2e_v6_32_33_manifest_read_error_taxonomy_closure.py", "v6.32.0"),
+    # §18 test#16（Admission Precheck Regression）自身。新規E2E追加のみ、srcへの
+    # 変更なし。
+    ("test_e2e_v6_32_34_admission_precheck_regression.py", "v6.32.0"),
+    # §18 test#13 + test#17（Admission Failure / Durable Save Failure
+    # Closure）自身。新規E2E追加のみ、srcへの変更なし。
+    ("test_e2e_v6_32_35_admission_failure_durable_save_failure_closure.py", "v6.32.0"),
+    # §18 test#6 + test#9（Terminalization Completeness Closure）自身。
+    # 新規E2E追加のみ、srcへの変更なし。
+    ("test_e2e_v6_32_36_media_upload_terminalization_and_vacuous_manifest_closure.py", "v6.32.0"),
+    # §18 test#23（_reconcile_all_locked() static oracle）自身。新規E2E追加のみ、
+    # srcへの変更なし。
+    ("test_e2e_v6_32_37_reconcile_all_locked_static_oracle.py", "v6.32.0"),
 )
 
 

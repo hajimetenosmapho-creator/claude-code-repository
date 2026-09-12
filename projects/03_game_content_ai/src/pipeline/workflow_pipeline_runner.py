@@ -48,7 +48,11 @@ class WorkflowPipelineRunner:
     def __init__(self, config: _RunnerConfig):
         self._config = config
 
-    def run(self, params: dict[str, object] | None = None) -> PipelineResult:
+    def run(
+        self,
+        params: dict[str, object] | None = None,
+        side_effect_execution_context: "object | None" = None,
+    ) -> PipelineResult:
         """
         WorkflowRunner を構築・実行し、結果を PipelineResult として返す。
 
@@ -56,6 +60,9 @@ class WorkflowPipelineRunner:
             params: 呼び出し元（WorkflowTriggerAgent）から渡されるパラメータ。
                     "article_id"（絞り込む記事ID）、"dry_run"（WorkflowRunner.run()
                     自体に渡すdry_run。Agent経由のdry_runとは別概念）を受け取る。
+            side_effect_execution_context: Release 6.32、PublishStepExecutor経由で
+                呼び出し箇所Cへ伝播するExplicit Side-Effect Execution Mode。
+                省略時（None）は既存の全呼び出し元に対して完全にZero-Diff。
         """
         params = params or {}
         article_id = params.get("article_id")
@@ -64,10 +71,18 @@ class WorkflowPipelineRunner:
         start = time.time()
         try:
             from ai import WorkflowConfig, WorkflowRunner
+            from side_effect_safety import SideEffectExecutionModeContractError
 
             workflow_config = WorkflowConfig.from_env(base_dir=self._config.project_root)
             runner = WorkflowRunner.from_config(workflow_config)
-            workflow_result = runner.run(article_id=article_id, dry_run=dry_run)
+            # Release 6.32：既存Fake/exact-kwargsテストとのzero-diff（news_agent.pyと
+            # 同一理由）。
+            run_kwargs = {"article_id": article_id, "dry_run": dry_run}
+            if side_effect_execution_context is not None:
+                run_kwargs["side_effect_execution_context"] = side_effect_execution_context
+            workflow_result = runner.run(**run_kwargs)
+        except SideEffectExecutionModeContractError:
+            raise  # 6.32新設（22.3.12・28.-36節）：contract violationはPipelineResultへ変換せず素通しする
         except Exception as e:
             return PipelineResult(
                 success=False,

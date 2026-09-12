@@ -13,9 +13,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from .agent_decision import AgentDecision
 from .agent_task import AgentTask
+
+if TYPE_CHECKING:
+    from side_effect_safety import LegacyDirectExecutionContext, RetryLineageProtectedExecutionContext
 
 
 @dataclass
@@ -29,6 +33,13 @@ class AgentContext:
     agent_name: str
     started_at: datetime | None = None
     finished_at: datetime | None = None
+
+    # Release 6.32、2.6節Propagation Contract：Explicit Side-Effect Execution Mode
+    # 専用channel。task.params/event.metadataとは独立に、side-effect safety
+    # identityのみを運ぶ。RetryLineageProtectedExecutionContext（protected）または
+    # LegacyDirectExecutionContext（legacy）のいずれか。未設定（None）は
+    # missing contextとしてfail-closedされる（呼び出し箇所A/B/C側の責務）。
+    side_effect_execution_context: "RetryLineageProtectedExecutionContext | LegacyDirectExecutionContext | None" = None
 
     # ランタイム状態（AgentExecutor / BaseAgent が更新する）
     decisions: list[AgentDecision] = field(default_factory=list)

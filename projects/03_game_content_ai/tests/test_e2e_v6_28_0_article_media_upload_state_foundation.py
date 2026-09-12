@@ -481,12 +481,15 @@ unchanged_paths = [
     "src/article_featured_media_orchestration",
     "src/article_featured_media_runtime",
     "src/logger",
-    "src/outputs",
     "src/wordpress_media",
     "src/retry_runtime_lock",
 ]
 # tests/zero_diff_guard_registry.py は本Releaseでappend-only編集する
 # （REGISTRY-セクション参照）ため、無変更確認の対象から除外する。
+# src/outputs はRelease 6.32（Side-Effect Fail-Closed & Human Review Safety、
+# 呼び出し箇所A、15.7・22.3.1節）で意図的に変更される
+# （zero_diff_guard_registry.pyの_SOURCE_CHANGE_CONTRIBUTIONSにv6.32.0として
+# 登録済み）ため、test_e2e_v6_27_0のZERODIFF-4と同一パターンで対象から除外する。
 
 git_available = True
 try:

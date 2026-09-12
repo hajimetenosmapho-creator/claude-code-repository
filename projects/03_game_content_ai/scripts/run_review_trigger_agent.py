@@ -44,6 +44,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 from ai import AgentConfig, AgentManager, NullAgentManager, AgentTask
+from side_effect_safety import LegacyEntrypoint, build_legacy_direct_provenance
 
 
 def main():
@@ -89,7 +90,8 @@ def main():
         params["article_id"] = args.article_id
 
     task = AgentTask(task_id="run_review", params=params)
-    results = manager.run(task, dry_run=args.dry_run)
+    legacy_provenance = build_legacy_direct_provenance(LegacyEntrypoint.RUN_REVIEW_TRIGGER_AGENT)
+    results = manager.run(task, dry_run=args.dry_run, legacy_provenance=legacy_provenance)
 
     print()
     print("=" * 50)

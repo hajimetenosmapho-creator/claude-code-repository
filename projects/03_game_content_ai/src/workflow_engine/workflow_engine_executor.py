@@ -55,6 +55,12 @@ from __future__ import annotations
 from datetime import datetime
 
 from ai import AgentContext, AgentExecutor, AgentTask
+from side_effect_safety import (
+    LegacyDirectExecutionContext,
+    RetryLineageProtectedExecutionContext,
+    RetryLineageProtectedProvenance,
+    build_protected_execution_context,
+)
 from execution_history import (
     ExecutionHistoryManager,
     NullExecutionHistoryManager,
@@ -79,6 +85,26 @@ REASON_POST_ADMISSION_HOOK_NOT_ACKNOWLEDGED = "Not executed: post-admission hook
 REASON_POST_ADMISSION_HOOK_EXCEPTION = "Not executed: post-admission hook raised an exception."
 
 WORKFLOW_NAME = "workflow_engine"
+
+
+def _complete_side_effect_execution_context(provenance, run_id: str):
+    """Release 6.32、2.2a節(2) Member Completion Boundary。`provenance`が
+    `RetryLineageProtectedProvenance`（member_run_id未確定のpre-context）の場合、
+    このexecutor自身が発行する`run_id`（既存のAgentContext.run_idと同一値）を
+    member_run_idとして補完し、protected factoryを呼んで完成させる——3値の
+    再照合は行わない（lineage/claimへの参照を持たないため）。`provenance`が
+    既に完成形の`LegacyDirectExecutionContext`の場合はそのまま返す。`None`
+    （既存の全非retry呼び出し元）は`None`のまま返す。"""
+    if isinstance(provenance, RetryLineageProtectedProvenance):
+        return build_protected_execution_context(
+            root_run_id=provenance.root_run_id,
+            attempt_ordinal=provenance.attempt_ordinal,
+            member_run_id=run_id,
+            side_effect_contract_version=provenance.side_effect_contract_version,
+        )
+    if isinstance(provenance, (RetryLineageProtectedExecutionContext, LegacyDirectExecutionContext)):
+        return provenance
+    return None
 
 
 def _call_start_run(history_manager, run_id, workflow_name, source, job_id, correlation_metadata):
@@ -328,6 +354,9 @@ class WorkflowEngineExecutor:
                     dry_run=context.dry_run,
                     run_id=run_id,
                     agent_name="",
+                    side_effect_execution_context=_complete_side_effect_execution_context(
+                        context.side_effect_execution_provenance, run_id,
+                    ),
                 )
                 agent_result = executor.execute(agent_context)
                 context.warnings.extend(agent_context.warnings)

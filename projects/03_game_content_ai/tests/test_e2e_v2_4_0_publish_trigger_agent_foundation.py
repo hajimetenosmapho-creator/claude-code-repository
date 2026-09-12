@@ -608,26 +608,25 @@ unchanged_paths = [
     # Release 6.30 Production Canonical Run & Outcome Contract Foundationの
     # 承認済み変更対象のため、本チェック対象から除外する
     # （docs/design/production_canonical_run_outcome_contract_foundation.md 24章）。
-    "src/ai/ai_publish_service.py",
+    # Release 6.32はExplicit Side-Effect Execution Mode専用channelの新設に伴い、
+    # ai_publish_service.py / workflow_runner.py / agent_context.py /
+    # news_agent.py / workflow_trigger_agent.py / workflow_pipeline_runner.pyへの
+    # 意図的な変更を含む（22.1f節）。v6.30と同一パターンでこれら6ファイルを
+    # unchanged_pathsから除外する。sub-milestone 6C（§28.-36節test#8、
+    # 22.3.12節）：agent_executor.pyへのcarve-out追加に伴い、同ファイルも除外する。
     "src/ai/ai_publish_config.py",
     "src/ai/ai_publish_result.py",
     "src/ai/ai_publish_repository.py",
     "src/ai/ai_publish_report_builder.py",
     "src/ai/wordpress_draft_client.py",
-    "src/ai/workflow_runner.py",
     "src/ai/workflow_config.py",
     "src/ai/base_agent.py",
-    "src/ai/agent_executor.py",
-    "src/ai/agent_context.py",
     "src/ai/agent_decision.py",
     "src/ai/agent_result.py",
     "src/ai/agent_task.py",
     "src/ai/agent_config.py",
-    "src/ai/news_agent.py",
     "src/ai/news_agent_config.py",
-    "src/ai/workflow_trigger_agent.py",
     "src/ai/workflow_trigger_agent_config.py",
-    "src/pipeline/workflow_pipeline_runner.py",
     "src/pipeline/pipeline_result.py",
 ]
 

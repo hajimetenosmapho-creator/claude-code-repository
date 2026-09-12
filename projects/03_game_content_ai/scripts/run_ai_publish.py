@@ -47,6 +47,13 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 from ai import AiPublishService
+from side_effect_safety import (
+    LegacyEntrypoint,
+    LegacyExecutionOrigin,
+    build_legacy_direct_provenance,
+    complete_legacy_execution_context,
+)
+from wordpress_draft_state import JsonWordPressDraftStateStore, WordPressDraftStateManager
 
 
 def main():
@@ -83,8 +90,19 @@ def main():
         print(f"  絞り込み: article_id={args.article_id}")
     print()
 
-    service = AiPublishService.from_env(base_dir=base_dir)
-    report_path = service.run(article_id=args.article_id)
+    # Release 6.32（15.6節）：呼び出し箇所Aと同一Foundation・同一storeを再利用する
+    # （state/wordpress_draft_state）。
+    draft_state_manager = WordPressDraftStateManager(
+        JsonWordPressDraftStateStore(base_dir=base_dir / "state" / "wordpress_draft_state")
+    )
+    service = AiPublishService.from_env(base_dir=base_dir, draft_state_manager=draft_state_manager)
+    side_effect_execution_context = complete_legacy_execution_context(
+        build_legacy_direct_provenance(LegacyEntrypoint.RUN_AI_PUBLISH),
+        LegacyExecutionOrigin.AI_PUBLISH_DIRECT,
+    )
+    report_path = service.run(
+        article_id=args.article_id, side_effect_execution_context=side_effect_execution_context,
+    )
 
     publish_results = service.get_results(article_id=args.article_id)
     print()

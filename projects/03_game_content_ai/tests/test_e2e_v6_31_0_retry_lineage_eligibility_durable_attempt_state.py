@@ -200,6 +200,7 @@ from retry_lineage import (
 from retry_lineage import MarkTerminalResult
 from retry_lineage.retry_lineage_target_resolution import _canonicalize_step_order
 from retry_engine import (
+    LegacyQueueDecisionInput,
     RetryExecutionResult,
     RetryManager,
     RetryOutcome,
@@ -489,7 +490,7 @@ check("15. 分岐(1): max_attemptsが保持される", found_direct.max_attempts
 
 # claim → mark_execution_startedで攻撃対象のattempt run_idをmembershipへ登録する
 claim_15 = lineage_15.claim("root-15")
-lineage_15.mark_execution_started("root-15", "member-run-16")
+lineage_15.mark_execution_started("root-15", "member-run-16", claim_15.owner_token)
 found_member = lineage_15.find_existing_lineage("member-run-16")
 check_true("16. 分岐(2): membership（single-hop）でヒットする", found_member is not None)
 check("16. 分岐(2): root_run_idが正しい", found_member.root_run_id if found_member else None, "root-15")
@@ -498,7 +499,7 @@ check("16. 分岐(2): root_run_idが正しい", found_member.root_run_id if foun
 lineage_15.mark_terminal("root-15", RetryLineageDisposition.FAILED, "member-run-16", [])
 opened = lineage_15.open_next_attempt("root-15")
 claim_17 = lineage_15.claim("root-15")
-lineage_15.mark_execution_started("root-15", "grandchild-run-17")
+lineage_15.mark_execution_started("root-15", "grandchild-run-17", claim_17.owner_token)
 found_multi_hop = lineage_15.find_existing_lineage("grandchild-run-17")
 check_true("17. 分岐(2): multi-hop（A→B→C）でもヒットする", found_multi_hop is not None)
 check("17. multi-hop: root_run_idが正しい", found_multi_hop.root_run_id if found_multi_hop else None, "root-15")
@@ -587,7 +588,7 @@ claim_26 = lineage_26.claim("run-26")
 check_false("26. stored/recomputed scope不一致はack=False", claim_26.acknowledged)
 check_true("26. reasonにinvariant_violationが含まれる", "invariant_violation" in (claim_26.reason or ""))
 
-check_true("27. release_claim()成功", lineage_24.release_claim("run-24"))
+check_true("27. release_claim()成功", lineage_24.release_claim("run-24", claim_24.owner_token))
 after_release = lineage_24.peek("run-24")
 check("27. phaseがREADY_ELIGIBLEへ戻る", after_release.phase, RetryLineagePhase.READY_ELIGIBLE)
 print()
@@ -602,8 +603,8 @@ print("[テスト28-30] mark_execution_started() / mark_terminal()")
 policy_28 = FakePolicy(max_attempts=3)
 lineage_28, _ = make_lineage_manager(policy_28)
 lineage_28.create_new_lineage("run-28", make_monitor_record("run-28", WorkflowMonitorStatus.FAILED))
-lineage_28.claim("run-28")
-check_true("28. mark_execution_started()成功", lineage_28.mark_execution_started("run-28", "run-28"))
+claim_28 = lineage_28.claim("run-28")
+check_true("28. mark_execution_started()成功", lineage_28.mark_execution_started("run-28", "run-28", claim_28.owner_token))
 rec_28 = lineage_28.peek("run-28")
 check("28. attempt_countが1へ", rec_28.attempt_count, 1)
 check("28. phaseがEXECUTION_STARTEDへ", rec_28.phase, RetryLineagePhase.EXECUTION_STARTED)
@@ -633,8 +634,8 @@ check("31. phaseがREADY_ELIGIBLEへ", rec_31.phase, RetryLineagePhase.READY_ELI
 policy_32 = FakePolicy(max_attempts=1)
 lineage_32, _ = make_lineage_manager(policy_32)
 lineage_32.create_new_lineage("run-32", make_monitor_record("run-32", WorkflowMonitorStatus.FAILED))
-lineage_32.claim("run-32")
-lineage_32.mark_execution_started("run-32", "run-32")
+claim_32 = lineage_32.claim("run-32")
+lineage_32.mark_execution_started("run-32", "run-32", claim_32.owner_token)
 lineage_32.mark_terminal("run-32", RetryLineageDisposition.FAILED, "run-32", [])
 opened_32 = lineage_32.open_next_attempt("run-32")
 check_false("32. attempt_count(1)>=max_attempts(1): ack=False", opened_32.acknowledged)
@@ -643,8 +644,8 @@ check_true("32. reasonにmax_attempts exhaustedが含まれる", "max_attempts e
 policy_33 = FakePolicy(max_attempts=3)
 lineage_33, _ = make_lineage_manager(policy_33)
 lineage_33.create_new_lineage("run-33", make_monitor_record("run-33", WorkflowMonitorStatus.FAILED))
-lineage_33.claim("run-33")
-lineage_33.mark_execution_started("run-33", "run-33")
+claim_33 = lineage_33.claim("run-33")
+lineage_33.mark_execution_started("run-33", "run-33", claim_33.owner_token)
 lineage_33.mark_terminal("run-33", RetryLineageDisposition.SUCCEEDED, "run-33", ["news", "review", "publish"])
 opened_33 = lineage_33.open_next_attempt("run-33")
 check_false("33. terminal_disposition=SUCCEEDEDはack=False", opened_33.acknowledged)
@@ -652,8 +653,8 @@ check_false("33. terminal_disposition=SUCCEEDEDはack=False", opened_33.acknowle
 policy_34 = FakePolicy(max_attempts=5)
 lineage_34, _ = make_lineage_manager(policy_34)
 lineage_34.create_new_lineage("run-34", make_monitor_record("run-34", WorkflowMonitorStatus.FAILED))
-lineage_34.claim("run-34")
-lineage_34.mark_execution_started("run-34", "run-34")
+claim_34 = lineage_34.claim("run-34")
+lineage_34.mark_execution_started("run-34", "run-34", claim_34.owner_token)
 lineage_34.mark_terminal("run-34", RetryLineageDisposition.FAILED, "run-34", ["news", "review", "publish"])
 opened_34 = lineage_34.open_next_attempt("run-34")
 check_false("34. steps_confirmed_doneが全stepを覆う: invariant violationでack=False", opened_34.acknowledged)
@@ -689,7 +690,7 @@ class FakeWorkflowEngineManagerForRetry:
         self._publish_calls = 0
 
     def run(self, event, dry_run=False, target_step_filter=None, post_admission_hook=None,
-            correlation_metadata=None):
+            correlation_metadata=None, side_effect_execution_provenance=None):
         self.calls.append({
             "target_step_filter": target_step_filter, "correlation_metadata": correlation_metadata,
             "dry_run": dry_run,
@@ -715,8 +716,41 @@ class FakeWorkflowEngineManagerForRetry:
         )
 
 
+# Codex Final Review Blocking#1対応（Release 6.32）：create_new_lineage()は
+# side_effect_contract_versionを無条件にスタンプするため、本テストのlineageは
+# 構造上protectedとなる。manifest/side_effect_classifierを配線しない場合、
+# production側の新しいfail-closed契約により終端dispositionは無条件で
+# HUMAN_REVIEW_REQUIREDへ確定する（attempt reopenが発生しなくなる）。本テストの
+# 目的はattempt lifecycle（NOT_ACTIONED→reopen→SUCCEEDED）の検証であり、
+# 保護対象operationは1件も発生しない（genuinely vacuous）ため、実際の
+# manifest/classifierを配線し、vacuous-safe passthrough（§9.1、entries=()→
+# NOT_APPLICABLE→base dispositionそのまま）経由で元のassertionを維持する。
+from protected_operation_manifest import JsonProtectedOperationManifestStore, ManifestReaderFacade
+from side_effect_safety.media_upload_applicability_store import JsonMediaUploadApplicabilityStore
+from side_effect_safety.media_upload_attempt_context_store import JsonMediaUploadAttemptContextStore
+from side_effect_safety.media_upload_safety_coordinator import build_media_upload_safety_coordinator
+from side_effect_safety_classifier import SideEffectSafetyClassifier
+from article_media_upload_state import ArticleMediaUploadStateManager, JsonArticleMediaUploadStateStore
+from wordpress_draft_state import JsonWordPressDraftStateStore
+
+_tmp_36 = Path(tempfile.mkdtemp())
+tmp_dirs.append(_tmp_36)
+_manifest_store_36 = JsonProtectedOperationManifestStore(base_dir=_tmp_36 / "manifest")
+_draft_state_36 = JsonWordPressDraftStateStore(base_dir=_tmp_36 / "wordpress_draft_state")
+_media_coordinator_36 = build_media_upload_safety_coordinator(
+    media_upload_manager=ArticleMediaUploadStateManager(
+        JsonArticleMediaUploadStateStore(_tmp_36 / "article_media_upload_state")
+    ),
+    applicability_store=JsonMediaUploadApplicabilityStore(_tmp_36 / "media_upload_applicability"),
+    attempt_context_store=JsonMediaUploadAttemptContextStore(_tmp_36 / "media_upload_attempt_context"),
+    locks_dir=_tmp_36 / "media_upload_locks",
+)
+_classifier_36 = SideEffectSafetyClassifier(media_coordinator=_media_coordinator_36, draft_state=_draft_state_36)
+
 policy_36 = FakePolicy(max_attempts=3)
 lineage_36, _ = make_lineage_manager(policy_36)
+lineage_36._manifest = _manifest_store_36
+lineage_36._side_effect_classifier = _classifier_36
 monitor_36 = SpyWorkflowMonitorManager({
     "run-36": make_monitor_record("run-36", WorkflowMonitorStatus.FAILED, steps=[
         make_step("news", StepExecutionStatus.SUCCESS, action_taken=True),
@@ -725,7 +759,10 @@ monitor_36 = SpyWorkflowMonitorManager({
     ]),
 })
 engine_36 = FakeWorkflowEngineManagerForRetry()
-executor_36 = RetryExecutor(workflow_engine_manager=engine_36, lineage=lineage_36)
+executor_36 = RetryExecutor(
+    workflow_engine_manager=engine_36, lineage=lineage_36,
+    manifest=ManifestReaderFacade(_manifest_store_36), side_effect_classifier=_classifier_36,
+)
 manager_36 = RetryManager(policy=policy_36, executor=executor_36, monitor=monitor_36, lineage=lineage_36)
 
 result_attempt1 = manager_36.retry("run-36", attempt=1)
@@ -938,8 +975,8 @@ def make_exec_record(run_id, correlation_metadata=None):
 policy_48 = FakePolicy(max_attempts=3)
 lineage_48, _ = make_lineage_manager(policy_48)
 lineage_48.create_new_lineage("root-48", make_monitor_record("root-48", WorkflowMonitorStatus.FAILED))
-lineage_48.claim("root-48")
-lineage_48.mark_execution_started("root-48", "member-run-48")  # membershipへ登録
+claim_48 = lineage_48.claim("root-48")
+lineage_48.mark_execution_started("root-48", "member-run-48", claim_48.owner_token)  # membershipへ登録
 
 get_calls_48 = []
 history_store_48 = FakeHistoryStoreForTrigger({})
@@ -1047,7 +1084,7 @@ class FakeWorkflowEngineManagerHookNotAck:
         self.calls = 0
 
     def run(self, event, dry_run=False, target_step_filter=None, post_admission_hook=None,
-            correlation_metadata=None):
+            correlation_metadata=None, side_effect_execution_provenance=None):
         self.calls += 1
         run_id = f"exec-hooknotack-{self.calls}"
         hook_result = post_admission_hook(run_id) if post_admission_hook is not None else None
@@ -1077,7 +1114,7 @@ lineage_59, _ = make_lineage_manager(policy_59)
 lineage_59.create_new_lineage("run-59", make_monitor_record("run-59", WorkflowMonitorStatus.FAILED))
 claim_59 = lineage_59.claim("run-59")
 check_true("59前提: claim()成功", claim_59.acknowledged)
-lineage_59.release_claim("run-59")  # hookが「未ack」を経験するよう、意図的にCLAIMEDから外す
+lineage_59.release_claim("run-59", claim_59.owner_token)  # hookが「未ack」を経験するよう、意図的にCLAIMEDから外す
 
 mark_terminal_calls_59 = []
 _orig_mark_terminal_59 = lineage_59.mark_terminal
@@ -1096,7 +1133,10 @@ check("59. hook未ack: mark_terminal()は一切呼ばれない", len(mark_termin
 check("59. hook未ack: lineageはREADY_ELIGIBLEのまま（解放済み）", lineage_59.peek("run-59").phase, RetryLineagePhase.READY_ELIGIBLE)
 check("59. hook未ack: attempt_countは変化しない(0のまま)", lineage_59.peek("run-59").attempt_count, 0)
 
-decision_59 = RetryQueueUpdateDecider().decide(RetryExecutionResult(dispatch_event=None, retry_result=result_59))
+decision_59 = RetryQueueUpdateDecider().decide(
+    RetryExecutionResult(dispatch_event=None, retry_result=result_59),
+    LegacyQueueDecisionInput(),  # outcome!=RETRIEDのためdecision_inputは判定に影響しない
+)
 check("59. hook未ack: RetryQueueUpdateDeciderはNOOP（COMPLETEにしない）", decision_59.outcome, RetryQueueUpdateOutcome.NOOP)
 
 # 59(b). hookは成功（ack=True）したが、その後.run()自体が例外を送出する
@@ -1104,7 +1144,7 @@ check("59. hook未ack: RetryQueueUpdateDeciderはNOOP（COMPLETEにしない）"
 #        達しているため、claimは解放せずEXECUTION_STARTEDのままreconcileへ委ねる）
 class FakeWorkflowEngineManagerRaisesAfterHook:
     def run(self, event, dry_run=False, target_step_filter=None, post_admission_hook=None,
-            correlation_metadata=None):
+            correlation_metadata=None, side_effect_execution_provenance=None):
         if post_admission_hook is not None:
             post_admission_hook("exec-59exc")
         raise RuntimeError("simulated .run() exception after hook ack succeeded")
@@ -1132,11 +1172,11 @@ class _RaisingHookLineageProxy:
     def __init__(self, real):
         self._real = real
 
-    def mark_execution_started(self, root_run_id, run_id):
+    def mark_execution_started(self, root_run_id, run_id, owner_token):
         raise RuntimeError("simulated HOOK_EXCEPTION")
 
-    def release_claim(self, root_run_id):
-        return self._real.release_claim(root_run_id)
+    def release_claim(self, root_run_id, expected_owner_token):
+        return self._real.release_claim(root_run_id, expected_owner_token)
 
     def mark_terminal(self, *args, **kwargs):
         raise AssertionError("mark_terminal() must not be called when the hook itself raised")
@@ -1144,7 +1184,7 @@ class _RaisingHookLineageProxy:
 
 class FakeWorkflowEngineManagerCallsHookThenPropagates:
     def run(self, event, dry_run=False, target_step_filter=None, post_admission_hook=None,
-            correlation_metadata=None):
+            correlation_metadata=None, side_effect_execution_provenance=None):
         post_admission_hook("exec-59hookexc")  # このhook自体が例外を送出する
 
 
@@ -1171,11 +1211,11 @@ class _MarkTerminalFailingProxy:
     def __init__(self, real):
         self._real = real
 
-    def mark_execution_started(self, root_run_id, run_id):
-        return self._real.mark_execution_started(root_run_id, run_id)
+    def mark_execution_started(self, root_run_id, run_id, owner_token):
+        return self._real.mark_execution_started(root_run_id, run_id, owner_token)
 
-    def release_claim(self, root_run_id):
-        return self._real.release_claim(root_run_id)
+    def release_claim(self, root_run_id, expected_owner_token):
+        return self._real.release_claim(root_run_id, expected_owner_token)
 
     def mark_terminal(self, *args, **kwargs):
         return MarkTerminalResult(acknowledged=False, reason="simulated lineage store save failure")
@@ -1222,8 +1262,8 @@ check_true("62. root_run_id衝突: reasonにuniquenessが含まれる", "uniquen
 
 # membershipのrun_idが既存lineageに属しているケース（find_existing_lineage()を経由せず
 # create_new_lineage()を直接呼ぶ、membership index破損フォールバック相当の状況を模擬）
-lineage_62.claim("run-62a")
-lineage_62.mark_execution_started("run-62a", "exec-62a-1")
+claim_62a_reclaim = lineage_62.claim("run-62a")
+lineage_62.mark_execution_started("run-62a", "exec-62a-1", claim_62a_reclaim.owner_token)
 created_62c = lineage_62.create_new_lineage("exec-62a-1", make_monitor_record("exec-62a-1", WorkflowMonitorStatus.FAILED))
 check_true("62. membership衝突: admission_rejected=True", created_62c.admission_rejected)
 check_true("62. membership衝突: reasonに既存root_run_idが含まれる", "run-62a" in (created_62c.reason or ""))
@@ -1245,8 +1285,8 @@ check_true("63. next_attempt_ordinal不一致: reasonにinvariant_violationが�
 
 lineage_63b, _ = make_lineage_manager(FakePolicy(max_attempts=3))
 lineage_63b.create_new_lineage("run-63b", make_monitor_record("run-63b", WorkflowMonitorStatus.FAILED))
-lineage_63b.claim("run-63b")
-lineage_63b.mark_execution_started("run-63b", "run-63b")
+claim_63b = lineage_63b.claim("run-63b")
+lineage_63b.mark_execution_started("run-63b", "run-63b", claim_63b.owner_token)
 lineage_63b.mark_terminal("run-63b", RetryLineageDisposition.FAILED, "run-63b", [])
 corrupted_63b = lineage_63b._store.get("run-63b")
 corrupted_63b.next_attempt_ordinal = 42

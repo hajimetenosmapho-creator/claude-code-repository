@@ -587,22 +587,26 @@ check_true(
     True,
 )
 
+# Release 6.32（Side-Effect Fail-Closed & Human Review Safety）はExplicit
+# Side-Effect Execution Mode専用channelの新設に伴い、workflow_runner.py /
+# workflow_context.py / workflow_step_executor.py / agent_context.py への
+# 意図的な変更を含む（docs/design/side_effect_fail_closed_human_review_safety_foundation.md
+# 22.1f節）。test_e2e_v6_27_0/test_e2e_v6_28_0のZERODIFF-4と同一パターンにより、
+# これら4ファイルをunchanged_pathsから除外する。
+# sub-milestone 6C（§28.-36節 test#8、22.3.12節）：agent_executor.pyへ
+# SideEffectExecutionModeContractError carve-outを追加した承認済み変更に伴い、
+# 同ファイルもunchanged_pathsから除外する。
 unchanged_paths = [
     "src/collector.py",
     "src/keyword_filter.py",
     "src/duplicate_filter.py",
     "src/importance_judge.py",
     "src/article_generator.py",
-    "src/ai/workflow_runner.py",
     "src/ai/workflow_config.py",
-    "src/ai/workflow_context.py",
     "src/ai/workflow_result.py",
     "src/ai/workflow_step.py",
-    "src/ai/workflow_step_executor.py",
     "src/ai/workflow_report_builder.py",
     "src/ai/base_agent.py",
-    "src/ai/agent_executor.py",
-    "src/ai/agent_context.py",
     "src/ai/agent_decision.py",
     "src/ai/agent_result.py",
     "src/ai/agent_task.py",

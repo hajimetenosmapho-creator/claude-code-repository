@@ -174,22 +174,24 @@ Architecture Reconciliation（read-only investigation）により、v1.0の前�
      - 自動解除は禁止する（明示的なHuman actionがない限り、自動Retry対象へ戻らない）
 - **Out of Scope**：完全なidempotency key・既存draft照合等の高度な冪等性実装（post-MVP可）。`HUMAN_REVIEW_REQUIRED`の解除・対応を行うUIや高度な人手workflow（post-MVP可。本Releaseでは、write-ahead fail-closed契約とdurableな状態記録・Retry遮断契約までを扱う）。
 - **Dependency**：6.31（`root_run_id`ベースのDurable Retry Control State・Attempt lifecycleが存在すること）。
-- **Completion Criteria**：
-  - partial success／既に副作用が発生したrunに対する自動Retryが、重複下書き・重複media uploadを起こさないことをE2Eで確認
-  - **クラッシュ窓のfailure-path E2E**：外部副作用のPOST／upload成功後、durable結果確定前にプロセスが停止したケースで、当該runがfail-closedで`HUMAN_REVIEW_REQUIRED`へ移行し、自動Retryされないことを確認する（「外部POST成功後、durable結果確定前に停止→自動Retry→重複副作用」の禁止を実証する）
-  - 安全な再処理経路がないrunが`HUMAN_REVIEW_REQUIRED`として記録され、Retry Trigger／Eligibilityから確実に除外されることをE2Eで確認
-  - Runtime再起動後も`HUMAN_REVIEW_REQUIRED`状態が保持され、自動Retry対象へ戻らないことをE2Eで確認
-  - 明示的なHuman actionなしに`HUMAN_REVIEW_REQUIRED`が自動解除されないことをE2Eで確認
-  - 対象E2E・failure-path E2E（partial success自動Retry除外ケース・副作用クラッシュ窓ケース・再起動後保持ケース）がPASSすること
-  - Formal Regressionで既存機能に回帰がないこと（共通要件に従う）
-  - 未着手下流（Observability Runtime配線・Scheduler等）がZero-Diffのまま維持されること
-  - 外部副作用（WordPress REST API呼び出し）の安全性が確認されること（重複POSTが発生しないこと）
+- **Completion Criteria**（★=実証済み。根拠は`docs/design/side_effect_fail_closed_human_review_safety_amendment_protected_operation_manifest.md` §18 Implementation Verification Record（§34）・Final Independent Codex Review & Blocking Remediation（§35）を参照）：
+  - ★ partial success／既に副作用が発生したrunに対する自動Retryが、重複下書き・重複media uploadを起こさないことをE2Eで確認（`test_e2e_v6_32_21_execution_mode_propagation_call_site_ac.py`のC-A/C-Cシナリオで直接証明）
+  - ★ **クラッシュ窓のfailure-path E2E**：外部副作用のPOST／upload成功後、durable結果確定前にプロセスが停止したケースで、当該runがfail-closedで`HUMAN_REVIEW_REQUIRED`へ移行し、自動Retryされないことを確認する（§18 test#5〜#9・test#22等で直接証明。「外部POST成功後、durable結果確定前に停止→自動Retry→重複副作用」の禁止を実証済み）
+  - ★ 安全な再処理経路がないrunが`HUMAN_REVIEW_REQUIRED`として記録され、Retry Trigger／Eligibilityから確実に除外されることをE2Eで確認（§18各testの`opened_count=0`検証で直接証明）
+  - ★ Runtime再起動後も`HUMAN_REVIEW_REQUIRED`状態が保持され、自動Retry対象へ戻らないことをE2Eで確認（restart経路の§18 testで直接証明）
+  - 明示的なHuman actionなしに`HUMAN_REVIEW_REQUIRED`が自動解除されないことをE2Eで確認（`tests/test_e2e_v6_32_1_hrr_lifecycle.py`の既存範囲、本チェックポイントでの追加検証は未実施）
+  - ★ 対象E2E・failure-path E2E（partial success自動Retry除外ケース・副作用クラッシュ窓ケース・再起動後保持ケース）がPASSすること（v6.32系列Full Suite 39ファイル、1270/1270 PASS）
+  - ★ Formal Regressionで既存機能に回帰がないこと（正式Inventory34ファイル、5671/5671 PASS、FAIL 0）
+  - ★ 未着手下流（Observability Runtime配線・Scheduler等）がZero-Diffのまま維持されること（本Releaseの変更対象は`src/retry_observability_pipeline/`・`src/scheduler/`を含まないことをgit diffで確認済み）
+  - ★ 外部副作用（WordPress REST API呼び出し）の安全性が確認されること（重複POSTが発生しないこと、`test_e2e_v6_32_21`のC-A7で直接証明）
 - **Activation（Automatic Retry Activation Gate）**：本Release完了により、以下がすべてE2EでPASSした場合に限り、side-effectingなproduction workflowの自動Retryを有効化してよい（Staged Activation Gates章参照）：
   - lineage安全性（6.31）
   - attempt crash safety（6.31）
   - durable Human Review（6.32）
   - side-effect fail-closed契約（6.32）
-  この有効化はHuman Gate対象とし、Release完了それ自体が自動的な本番有効化を意味しない。
+  この有効化はHuman Gate対象とし、Release完了それ自体が自動的な本番有効化を意味しない。**Release 6.32完了時点でもこのHuman Gateは別途独立して要求されており、本Releaseの完了それ自体が自動有効化を意味しない点は変わらない。**
+
+**Release 6.32 完了記録**：Architecture Amendment（Protected Operation Manifest）はCodex Round 10で`APPROVED`（Blocking 0／Major 0）。§18 Implementation Matrix（全25項目）はproduction wiring実チェーンでの直接証拠に基づき**25/25 PASS（PARTIAL 0・MISSING 0）**。実装完了後のFinal Independent Codex Reviewは1回目`CHANGES REQUIRED`（Blocking 2）を検出し、HUMAN GATE承認のもと限定修正（既存fail-closed semanticsのproduction反映）を実施、2回目**APPROVED WITH SUGGESTIONS**（Blocking 0／Major 0／Minor 0／Suggestion 1 non-blocking、`release_claim()`戻り値未確認によるdiagnostic gap——Release safety blockerではないためfuture improvementとして記録のみ）に収束した。v6.32系列Full Suite（39ファイル、1270/1270 PASS）・正式Formal Regression（34ファイル、5671/5671 PASS）とも完了時点のWorking Treeで完全PASSを確認した。`generic non-HRR automatic retry redispatch`等、Amendment・Approved Architectureが明示的にOut of Scopeとした事項は本Releaseで解決済みではない。
 
 ### 6.33 — Retry Observability Runtime Integration
 

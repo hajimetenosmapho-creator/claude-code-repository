@@ -40,6 +40,8 @@ from .retry_lineage_genuine_action import (
 from .retry_lineage_manager import RetryLineageManager
 from .retry_lineage_phase import RetryLineagePhase
 from .retry_lineage_record import (
+    HumanReviewResolution,
+    HumanReviewResolutionRecord,
     RetryAttemptExecutionScope,
     RetryLineageMembershipEntry,
     RetryLineageRecord,
@@ -51,15 +53,22 @@ from .retry_lineage_results import (
     MarkTerminalResult,
     OpenNextAttemptResult,
     ReconcileSummary,
+    ResolveHumanReviewResult,
 )
 from .retry_lineage_store import JsonRetryLineageStore, RetryLineageStore
 from .retry_lineage_store_lock import RetryLineageStoreLock, RetryLineageStoreLockError
 from .retry_lineage_target_resolution import (
+    SIDE_EFFECT_CONTRACT_VERSION,
+    ContractVersionEvidence,
+    RetryLineageContractVersionError,
+    classify_contract_version_evidence,
     compute_initial_confirmed_steps,
     compute_newly_confirmed,
     compute_steps_to_execute,
     decide_disposition,
     disposition_from_categories,
+    is_6_32_contract_lineage,
+    resolve_final_disposition,
 )
 
 __all__ = [
@@ -90,4 +99,13 @@ __all__ = [
     "OpenNextAttemptResult",
     "ReconcileSummary",
     "RetryLineageManager",
+    "HumanReviewResolution",
+    "HumanReviewResolutionRecord",
+    "ResolveHumanReviewResult",
+    "SIDE_EFFECT_CONTRACT_VERSION",
+    "ContractVersionEvidence",
+    "RetryLineageContractVersionError",
+    "classify_contract_version_evidence",
+    "is_6_32_contract_lineage",
+    "resolve_final_disposition",
 ]

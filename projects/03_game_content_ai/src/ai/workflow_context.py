@@ -12,8 +12,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .workflow_step import WorkflowStep, WorkflowStepResult
+
+if TYPE_CHECKING:
+    from side_effect_safety import LegacyDirectExecutionContext, RetryLineageProtectedExecutionContext
 
 
 @dataclass
@@ -28,3 +32,7 @@ class WorkflowContext:
     report_paths: list[Path] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+
+    # Release 6.32、22.1f節：呼び出し箇所C（AiPublishService._post()）へ伝播する
+    # Explicit Side-Effect Execution Mode専用channel。
+    side_effect_execution_context: "RetryLineageProtectedExecutionContext | LegacyDirectExecutionContext | None" = None

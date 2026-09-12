@@ -454,14 +454,17 @@ unchanged_paths_re = [
     # （docs/design/production_canonical_run_outcome_contract_foundation.md 24章）。
     "src/execution_history/step_execution_record.py",
     "src/execution_history/workflow_execution_record.py",
-    "src/workflow_engine/workflow_engine_manager.py",
+    # src/workflow_engine/workflow_engine_manager.pyはRelease 6.32により
+    # side_effect_execution_provenance引数（2.6節）の追加対象となった。
     "src/workflow_engine/workflow_engine_event.py",
     "src/workflow_monitor/workflow_monitor.py",
     "src/workflow_monitor/workflow_monitor_manager.py",
     "src/workflow_monitor/workflow_monitor_config.py",
     "src/workflow_monitor/workflow_monitor_record.py",
     "src/workflow_monitor/workflow_monitor_status.py",
-    "src/ai/agent_manager.py",
+    # src/ai/agent_manager.pyはRelease 6.32（Side-Effect Fail-Closed & Human
+    # Review Safety）によりExplicit Side-Effect Execution Mode専用channelの
+    # 新設に伴う承認済み変更対象となった（22.1f節）。
     "src/scheduler/scheduler_engine.py",
 ]
 

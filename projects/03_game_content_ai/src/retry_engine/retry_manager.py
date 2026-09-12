@@ -235,7 +235,11 @@ from .retry_queue_terminal_cleanup_executor import (
     RetryQueueTerminalCleanupExecutor,
     RetryQueueTerminalCleanupResult,
 )
-from .retry_queue_update_decider import RetryQueueUpdateDecider, RetryQueueUpdateDecision
+from .retry_queue_update_decider import (
+    RetryQueueUpdateDecider,
+    RetryQueueUpdateDecision,
+    build_retry_queue_decision_requests,
+)
 from .retry_request import RetryRequest
 from .retry_result import RetryOutcome, RetryResult
 
@@ -325,6 +329,8 @@ class RetryManager:
         terminal_cleanup_executor: RetryQueueTerminalCleanupExecutor | None = None,
         retry_history_manager: "RetryHistoryManager | NullRetryHistoryManager | None" = None,
         history_recorder: RetryHistoryRecordExecutor | None = None,
+        manifest: "object | None" = None,
+        side_effect_classifier: "object | None" = None,
     ) -> "RetryManager | NullRetryManager":
         """
         呼び出し元が構築済みの WorkflowEngineManager / WorkflowMonitorManager を
@@ -376,6 +382,14 @@ class RetryManager:
         RetryManager.__init__ 内で RetryHistoryRecordExecutor() にフォールバックするため、
         本引数を渡さない既存の呼び出しはすべて本Release前と同じ挙動になる（v4.7.0）。
 
+        manifest / side_effect_classifier（Architecture Amendment、Protected
+        Operation Manifest）も省略可能（デフォルトNone）。省略した場合は
+        RetryExecutor.__init__内でNoneのまま保持され、既存6.31以前の
+        decide_disposition()（step-only）へフォールバックする。型はretry_engine
+        パッケージの依存原則（execution_history/ai/pipeline/scheduler非依存）を
+        壊さないため`object`として受け取り、そのままRetryExecutorへ委譲する
+        （実体の型付けはretry_executor.py側で行う）。
+
         lineage（Release 6.31、必須）：呼び出し元（RetryCompositionRoot）が構築済みの
         RetryLineageManagerをDependency Injectionで受け取る。省略不可（デフォルトなし）。
         retry() の内部実装（_retry_locked()）がlineageのfind_existing_lineage() /
@@ -388,7 +402,10 @@ class RetryManager:
         if isinstance(workflow_engine_manager, NullWorkflowEngineManager):
             return NullRetryManager()
 
-        executor = RetryExecutor(workflow_engine_manager=workflow_engine_manager, lineage=lineage)
+        executor = RetryExecutor(
+            workflow_engine_manager=workflow_engine_manager, lineage=lineage,
+            manifest=manifest, side_effect_classifier=side_effect_classifier,
+        )
         return cls(
             policy=retry_policy,
             executor=executor,
@@ -577,23 +594,29 @@ class RetryManager:
         return self._execution_coordinator.execute(selected, retry_fn=self.retry, dry_run=dry_run)
 
     def decide_retry_queue_updates(
-        self, events: list[SchedulerEvent], dry_run: bool = False
+        self, execution_results: list[RetryExecutionResult]
     ) -> list[RetryQueueUpdateDecision]:
         """
-        SchedulerEventのリストから、dispatchable=Trueの候補についてretry()を実行し
-        （execute_dispatchable_retries()、v4.0.0、無変更）、各RetryExecutionResultに
-        ついて対応するRetry Queue項目の更新先状態（COMPLETED / FAILED / 更新なし）を
-        判定する。
+        呼び出し元が既に取得済みのexecution_resultsを受け取り、対応するRetry Queue
+        項目の更新先状態（COMPLETED / FAILED / 更新なし）を判定する。
+        execute_dispatchable_retries()を内部で再実行しない——呼び出し元
+        （RetryRuntimeOrchestrator.run_once()）の既存invariant
+        「execute_dispatchable_retries()を2回以上呼ばない」を維持する
+        （Release 6.32、docs/design/side_effect_fail_closed_human_review_safety_foundation.md
+        22.4a節）。
 
         2段階の委譲のみで完結する：
-            1. self.execute_dispatchable_retries(events, dry_run=dry_run)（v4.0.0、無変更）
-            2. self._queue_update_decider.decide_all(execution_results)（新規、判定）
+            1. build_retry_queue_decision_requests(execution_results, self._lineage)
+               （Release 6.32新設、22.4a節。6.32 contract対象lineageはmark_terminal()が
+               確定させた権威あるterminal_dispositionを、pre-6.32 legacy lineageは
+               従来どおりdecide_disposition()ベースの判定を選択する）
+            2. self._queue_update_decider.decide_all(requests)（判定）
 
         判定結果を使ってRetryQueueManager.remove()を呼び出す処理、判定結果をQueueへ
-        実際に反映する処理は本Releaseには一切存在しない（Foundation First）。
+        実際に反映する処理は本メソッドには一切存在しない（Foundation First）。
         """
-        execution_results = self.execute_dispatchable_retries(events, dry_run=dry_run)
-        return self._queue_update_decider.decide_all(execution_results)
+        requests = build_retry_queue_decision_requests(execution_results, self._lineage)
+        return self._queue_update_decider.decide_all(requests)
 
     def apply_retry_queue_removals(
         self, events: list[SchedulerEvent], dry_run: bool = False
@@ -603,16 +626,19 @@ class RetryManager:
         COMPLETE / FAILの項目のみRetryQueueManager.remove()を呼び出し、Queueから
         該当項目を除去する。
 
-        2段階の委譲のみで完結する：
-            1. self.decide_retry_queue_updates(events, dry_run=dry_run)（v4.1.0、無変更）
-            2. self._queue_removal_executor.apply_all(decisions, remove_fn=self._queue.remove)
+        3段階の委譲のみで完結する：
+            1. self.execute_dispatchable_retries(events, dry_run=dry_run)（v4.0.0、無変更）
+            2. self.decide_retry_queue_updates(execution_results)（Release 6.32で
+               execution_results受け取りへ改修、22.4a節）
+            3. self._queue_removal_executor.apply_all(decisions, remove_fn=self._queue.remove)
                （新規、除去）
 
         outcomeがNOOP（SKIPPED / NOT_FOUND / DISABLED由来）の項目はremove_fnを
         一切呼び出さない（Foundation First。SKIPPEDのQueue滞留対応は本Releaseの
         対象外）。
         """
-        decisions = self.decide_retry_queue_updates(events, dry_run=dry_run)
+        execution_results = self.execute_dispatchable_retries(events, dry_run=dry_run)
+        decisions = self.decide_retry_queue_updates(execution_results)
         return self._queue_removal_executor.apply_all(decisions, remove_fn=self._queue.remove)
 
     def decide_retry_queue_cleanup(
@@ -622,14 +648,17 @@ class RetryManager:
         SchedulerEventのリストから、各RetryQueueUpdateDecisionについてSKIPPED由来の
         NOOPのみをCLEANUP対象と判定する。
 
-        2段階の委譲のみで完結する：
-            1. self.decide_retry_queue_updates(events, dry_run=dry_run)（v4.1.0、無変更）
-            2. self._queue_cleanup_decider.decide_all(decisions)（新規、判定）
+        3段階の委譲のみで完結する：
+            1. self.execute_dispatchable_retries(events, dry_run=dry_run)（v4.0.0、無変更）
+            2. self.decide_retry_queue_updates(execution_results)（Release 6.32で
+               execution_results受け取りへ改修、22.4a節）
+            3. self._queue_cleanup_decider.decide_all(decisions)（判定）
 
         判定結果を使ってRetryQueueManager.remove()を呼び出す処理、判定結果をQueueへ
         実際に反映する処理は本メソッドには一切存在しない（Foundation First）。
         """
-        decisions = self.decide_retry_queue_updates(events, dry_run=dry_run)
+        execution_results = self.execute_dispatchable_retries(events, dry_run=dry_run)
+        decisions = self.decide_retry_queue_updates(execution_results)
         return self._queue_cleanup_decider.decide_all(decisions)
 
     def apply_retry_queue_cleanup(
@@ -659,14 +688,17 @@ class RetryManager:
         DISABLED由来のNOOPのみを対象に、RetryOutcomeTerminality分類表を参照して
         CLEANUP/KEEPを判定する。
 
-        2段階の委譲のみで完結する：
-            1. self.decide_retry_queue_updates(events, dry_run=dry_run)（v4.1.0、無変更）
-            2. self._terminal_cleanup_decider.decide_all(decisions)（新規、判定）
+        3段階の委譲のみで完結する：
+            1. self.execute_dispatchable_retries(events, dry_run=dry_run)（v4.0.0、無変更）
+            2. self.decide_retry_queue_updates(execution_results)（Release 6.32で
+               execution_results受け取りへ改修、22.4a節）
+            3. self._terminal_cleanup_decider.decide_all(decisions)（判定）
 
         判定結果を使ってRetryQueueManager.remove()を呼び出す処理、判定結果をQueueへ
         実際に反映する処理は本メソッドには一切存在しない（Foundation First）。
         """
-        decisions = self.decide_retry_queue_updates(events, dry_run=dry_run)
+        execution_results = self.execute_dispatchable_retries(events, dry_run=dry_run)
+        decisions = self.decide_retry_queue_updates(execution_results)
         return self._terminal_cleanup_decider.decide_all(decisions)
 
     def apply_retry_queue_terminal_cleanup(
@@ -773,12 +805,14 @@ class NullRetryManager:
         return []
 
     def decide_retry_queue_updates(
-        self, events: list[SchedulerEvent], dry_run: bool = False
+        self, execution_results: list[RetryExecutionResult]
     ) -> list[RetryQueueUpdateDecision]:
         """
         RETRY_ENGINE_ENABLED=false（デフォルト）、または下位ゲートが閉じている場合、
         判定自体を一切行わず常に空リストを返す（「受け取れるが何もしない」）。
-        RetryQueueUpdateDeciderへの参照は保持しない。
+        RetryQueueUpdateDeciderへの参照は保持しない。execute_dispatchable_retries()
+        が常に空リストを返すため、本メソッドが呼ばれる場合もexecution_resultsは
+        常に空である（Release 6.32でexecution_results受け取りへ改修、22.4a節）。
         """
         return []
 

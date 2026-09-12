@@ -206,11 +206,39 @@ from openai_image_generation import (  # noqa: E402
 from image_generation_fallback_policy import (  # noqa: E402
     ImageGenerationFailureCategory,
     ImageGenerationFallbackAction,
+    decide_image_generation_fallback,
+    extract_safe_reason,
 )
 from article_featured_media_runtime import FeaturedMediaFailureObservation  # noqa: E402
+from side_effect_safety import (  # noqa: E402
+    LegacyEntrypoint,
+    LegacyExecutionOrigin,
+    SideEffectExecutionModeContractError,
+    build_legacy_direct_provenance,
+    complete_legacy_execution_context,
+)
+from side_effect_safety.side_effect_execution_mode import ExecutionModeFailureReasonCode  # noqa: E402
+from side_effect_safety.media_upload_write_ahead_wiring import (  # noqa: E402
+    FeaturedMediaPropagatedFailure,
+    build_legacy_featured_media_side_effect_binding,
+)
 
 ArticleFeaturedMediaRuntime = main.ArticleFeaturedMediaRuntime
 ArticleFeaturedMediaRuntimeStatus = main.ArticleFeaturedMediaRuntimeStatus
+
+# Release 6.32（22.3.2節）：_apply_featured_media_step()はside_effect_bindingを
+# 引数に取るようになった。本ファイルはlegacy経路（main.py起動時に1回構築される
+# runtimeをそのまま使い回す既存6.31以前の挙動）のみを対象とするため、
+# 固定のLegacyDirectExecutionContextでbindingを都度組み立てる（v6.32.3節の
+# call site Aテストと同一パターン）。
+_LEGACY_CONTEXT = complete_legacy_execution_context(
+    build_legacy_direct_provenance(LegacyEntrypoint.RUN_MAIN_DIRECT),
+    LegacyExecutionOrigin.MAIN_DIRECT,
+)
+
+
+def _legacy_binding(runtime):
+    return build_legacy_featured_media_side_effect_binding(_LEGACY_CONTEXT, runtime)
 
 
 # ─── テストfixture builder（v6.20.0 precedent踏襲） ───
@@ -306,11 +334,17 @@ def run_apply_step_capturing_stdout(runtime, article):
     v6.25.0（DI-5）: 戻り値は ArticleFeaturedMediaRuntimeResult そのもの
     （article単体ではない）。呼び出し元は result.article／result.status／
     result.observation を個別に参照する。
+
+    Release 6.32（22.3.2節）: runtimeはlegacy binding経由でのみ渡す
+    （_apply_featured_media_step()は`side_effect_binding`引数を取り、
+    `runtime`を直接の第1引数としては受け取らない）。
     """
     buf = io.StringIO()
     try:
         with contextlib.redirect_stdout(buf):
-            result = main._apply_featured_media_step(runtime, article)
+            result = main._apply_featured_media_step(
+                article, side_effect_binding=_legacy_binding(runtime),
+            )
         return result, None, buf.getvalue()
     except Exception as exc:
         return None, exc, buf.getvalue()
@@ -461,10 +495,20 @@ check_false(
 print()
 
 # =====================================================================
-# PROP: PROPAGATE対象reasonで元例外が無変換で送出される（IDENT）
+# PROP: PROPAGATE対象reasonで FeaturedMediaPropagatedFailure へ包まれる
+#
+# Release 6.32（15.4.1・22.3.2節）: _apply_featured_media_step()は
+# legacy/protectedいずれの分岐でもruntime.apply()を単一のtry/exceptで包み、
+# PROPAGATE対象の例外は分類済みのFeaturedMediaFailureObservationとして
+# FeaturedMediaPropagatedFailureへ包んで送出する。元例外オブジェクトが
+# identityを保ったまま素通しされるという旧v6.21.0契約（PROP-IDENT／
+# PROP-MESSAGE-UNCHANGED）は、この新設計と意図的に非互換であるため、
+# 「carrierがobservationのみを運び、元例外への参照・messageを一切保持
+# しない」という強化されたsecret-safe契約へ置き換える（migration計画
+# 承認済み）。
 # =====================================================================
 
-print("[PROP] PROPAGATE対象reasonでの元例外伝播")
+print("[PROP] PROPAGATE対象reasonでFeaturedMediaPropagatedFailureへ包まれる")
 
 _PROP_SECRET_MARKER = "SECRET_TOKEN_MARKER_PROP_7c1e"
 _prop_error = OpenAIImageGenerationError(
@@ -475,20 +519,74 @@ _prop_runtime = ArticleFeaturedMediaRuntime(
 )
 _prop_input = make_article()
 _prop_result, _prop_exc, _prop_stdout = run_apply_step_capturing_stdout(_prop_runtime, _prop_input)
+
 check_true("PROP-RAISED. 例外が送出される", _prop_exc is not None)
 check_true(
-    "PROP-IDENT. 送出された例外が注入した例外オブジェクトと同一（is比較・W-1）",
-    _prop_exc is _prop_error,
+    "PROP-CARRIER-TYPE. 送出される例外はFeaturedMediaPropagatedFailure（Foundationの元例外そのものではない）",
+    isinstance(_prop_exc, FeaturedMediaPropagatedFailure),
 )
-check_true("PROP-CAUSE-UNTOUCHED. __cause__が加工されていない", _prop_exc.__cause__ is None)
-check_contains(
-    "PROP-MESSAGE-UNCHANGED. 元例外のmessageが不変",
-    str(_prop_exc),
-    _PROP_SECRET_MARKER,
+check_true(
+    "PROP-NO-RAW-EXC-REF. carrierは元例外オブジェクトへの参照をfield値として一切保持しない",
+    _prop_exc is not None and all(v is not _prop_error for v in vars(_prop_exc).values()),
+)
+check_false(
+    "PROP-NO-SECRET-IN-CARRIER-STR. carrierのstr()表現に元例外messageが含まれない（secret非保持）",
+    _PROP_SECRET_MARKER in str(_prop_exc),
+)
+_prop_expected_decision = decide_image_generation_fallback(_prop_error)
+check(
+    "PROP-OBSERVATION-CATEGORY-MATCHES-DECIDE. carrier.observation.categoryがdecide_image_generation_fallback()と一致する",
+    _prop_exc.observation.category,
+    _prop_expected_decision.category,
+)
+check(
+    "PROP-OBSERVATION-REASON-MATCHES-EXTRACT. carrier.observation.reasonがextract_safe_reason()と一致する",
+    _prop_exc.observation.reason,
+    extract_safe_reason(_prop_error),
+)
+check_false(
+    "PROP-NO-SECRET-IN-OBSERVATION-REASON. carrier.observation.reasonに元例外messageのsecretが含まれない",
+    _PROP_SECRET_MARKER in (_prop_exc.observation.reason or ""),
+)
+check_true("PROP-CAUSE-UNTOUCHED. carrier.__cause__がNone（chainingされていない）", _prop_exc.__cause__ is None)
+check_true(
+    "PROP-CONTEXT-NONE. carrier.__context__がNone（except節の外でraiseされ暗黙のchainingが一切付与されない）",
+    _prop_exc.__context__ is None,
 )
 check_false(
     "PROP-SEC-NO-MARKER. 例外message原文がhelper内でconsoleに出力されない（SEC-2）",
     _PROP_SECRET_MARKER in _prop_stdout,
+)
+
+
+class _ContractErrorRaisingCompositionRoot:
+    """runtime.apply()内でSideEffectExecutionModeContractErrorを送出するFake。
+    PROP-CONTRACT-ERROR-NOT-WRAPPED用（22.3.2節、この例外型は
+    FeaturedMediaPropagatedFailureへ包まれてはならない）。"""
+
+    def __init__(self):
+        self.orchestrator = object()  # is_available()=Trueのためだけに非Noneを保持
+        self.image_mime_type = "image/png"
+
+    def is_available(self):
+        return True
+
+
+_prop_contract_runtime = ArticleFeaturedMediaRuntime(_ContractErrorRaisingCompositionRoot())
+
+
+def _raising_apply(article):
+    raise SideEffectExecutionModeContractError(ExecutionModeFailureReasonCode.UNKNOWN_EXECUTION_MODE)
+
+
+_prop_contract_runtime.apply = _raising_apply
+_prop_contract_result, _prop_contract_exc, _ = run_apply_step_capturing_stdout(
+    _prop_contract_runtime, make_article()
+)
+check_true(
+    "PROP-CONTRACT-ERROR-NOT-WRAPPED. SideEffectExecutionModeContractErrorはFeaturedMediaPropagatedFailureへ包まれず素通しされる",
+    isinstance(_prop_contract_exc, SideEffectExecutionModeContractError)
+    and not isinstance(_prop_contract_exc, FeaturedMediaPropagatedFailure),
 )
 print()
 
@@ -801,6 +899,22 @@ print()
 
 # =====================================================================
 # LOOP: 記事ループのPROPAGATE glue（AST構造検証）
+#
+# Release 6.32（22.3.2・22.3.13(3)節）: _apply_featured_media_step()の
+# 呼び出しを囲むtryは、handlerが1件から2件へ変わった：
+#   handlers[0] = except SideEffectExecutionModeContractError: raise
+#                 （6.32新設のcarve-out。contract violationをFeaturedMedia-
+#                 PropagatedFailureのPROPAGATE分類へ合流させず素通しする）
+#   handlers[1] = except FeaturedMediaPropagatedFailure as propagated:
+#                 （旧v6.21.0のexcept Exception as excに相当する箇所。
+#                 分類は_apply_featured_media_step()内部で完了済みのため、
+#                 ここでは`propagated.observation`を取り出すのみ）
+# 旧v6.21.0が「ループのexcept節に束縛された生例外excの使用形」を監査して
+# いたSEC-NO-STR-EXC等5種は、生例外excを束縛する場所が
+# _apply_featured_media_step()内部のtry（runtime.apply()を囲むtry、
+# handlers[1] = except Exception as exc:）へ移動したため、監査対象の
+# ASTノードをそちらへ再照準する（ロジック・保証内容は無変更、migration
+# 計画承認済み）。
 # =====================================================================
 
 print("[LOOP] 記事ループのPROPAGATE glue")
@@ -809,26 +923,131 @@ _wiring_try = find_try_wrapping_call(_main_tree, "_apply_featured_media_step")
 check_true("LOOP-TRY-EXISTS. _apply_featured_media_stepを囲むtryが存在する", _wiring_try is not None)
 
 if _wiring_try is not None:
-    check("LOOP-HANDLER-COUNT. ExceptHandlerが1件のみ", len(_wiring_try.handlers), 1)
-    _handler = _wiring_try.handlers[0]
-    check_true(
-        "LOOP-HANDLER-TYPE-EXCEPTION. 捕捉型がExceptionである（BaseExceptionを含まない・W-4）",
-        isinstance(_handler.type, ast.Name) and _handler.type.id == "Exception",
-    )
-    # v6.25.0（DI-5）: 例外は`exc`として束縛される（classify_propagated_failure()
-    # へ渡すため）。SEC-2／SEC-3の本来の保証（str(exc)／class名をconsole・log・
-    # reportへ出力しない）を、「束縛しない」という実装詳細ではなく、束縛された
-    # excの使用形そのものをpositive allow-list方式で機械検証する
-    # （v6.23.0 I-EXC-1・v6.24.0 I-VAL-1と同型）。
-    check(
-        "LOOP-HANDLER-BINDS-EXC. 例外がexcという名前で束縛される（v6.25.0）",
-        _handler.name,
-        "exc",
-    )
+    check("LOOP-HANDLER-COUNT. ExceptHandlerが2件（contract-error carve-out＋PROPAGATE本体）", len(_wiring_try.handlers), 2)
+
+    _handler0 = _wiring_try.handlers[0] if len(_wiring_try.handlers) > 0 else None
+    _handler1 = _wiring_try.handlers[1] if len(_wiring_try.handlers) > 1 else None
+
+    if _handler0 is not None:
+        check_true(
+            "LOOP-HANDLER0-TYPE-CONTRACT-ERROR. handlers[0]の捕捉型がSideEffectExecutionModeContractErrorである",
+            isinstance(_handler0.type, ast.Name) and _handler0.type.id == "SideEffectExecutionModeContractError",
+        )
+        check(
+            "LOOP-HANDLER0-NO-BINDING. handlers[0]は例外を名前へ束縛しない（bare raise）",
+            _handler0.name,
+            None,
+        )
+        check_true(
+            "LOOP-HANDLER0-BARE-RAISE. handlers[0]の本体はraise文1件のみ（対象なしの再送出）",
+            len(_handler0.body) == 1
+            and isinstance(_handler0.body[0], ast.Raise)
+            and _handler0.body[0].exc is None,
+        )
+
+    if _handler1 is not None:
+        check_true(
+            "LOOP-HANDLER1-TYPE-FMPF. handlers[1]の捕捉型がFeaturedMediaPropagatedFailureである",
+            isinstance(_handler1.type, ast.Name) and _handler1.type.id == "FeaturedMediaPropagatedFailure",
+        )
+        check(
+            "LOOP-HANDLER1-BINDS-PROPAGATED. handlers[1]はpropagatedという名前で束縛される",
+            _handler1.name,
+            "propagated",
+        )
+
+        _obs_assigns = [
+            n
+            for n in _handler1.body
+            if isinstance(n, ast.Assign)
+            and len(n.targets) == 1
+            and isinstance(n.targets[0], ast.Name)
+            and n.targets[0].id == "featured_media_observation"
+        ]
+        check(
+            "LOOP-OBSERVATION-FROM-ATTR. featured_media_observation = propagated.observationという代入が存在する",
+            len(_obs_assigns) == 1
+            and isinstance(_obs_assigns[0].value, ast.Attribute)
+            and _obs_assigns[0].value.attr == "observation"
+            and isinstance(_obs_assigns[0].value.value, ast.Name)
+            and _obs_assigns[0].value.value.id == "propagated",
+            True,
+        )
+
+        _handler_nodes = list(walk_stmts(_handler1.body))
+        check_true(
+            "LOOP-HANDLER-CALLS-HELPER. handlers[1]が_handle_featured_media_failureを呼ぶ",
+            contains_call_to(_handler1.body, "_handle_featured_media_failure"),
+        )
+        check_false(
+            "LOOP-HANDLER-NO-SAVE-ALL. handlers[1]内でsave_all()が呼ばれない（F-1）",
+            "save_all" in attribute_call_names(_handler_nodes),
+        )
+
+        _augassigns = [
+            n
+            for n in _handler_nodes
+            if isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name) and n.target.id == "wp_failed_count"
+        ]
+        check("LOOP-WPFAILED-INCREMENTED. wp_failed_countへの加算が1件（F-5）", len(_augassigns), 1)
+        if _augassigns:
+            check_true("LOOP-WPFAILED-ADD. 加算演算がAddである", isinstance(_augassigns[0].op, ast.Add))
+
+        _continues = [n for n in _handler_nodes if isinstance(n, ast.Continue)]
+        check("LOOP-CONTINUE-PRESENT. handlers[1]がcontinueを含む（run停止しない・F-7・W-2）", len(_continues), 1)
+
+        _breaks = [n for n in _handler_nodes if isinstance(n, ast.Break)]
+        _returns = [n for n in _handler_nodes if isinstance(n, ast.Return)]
+        _exit_calls = [
+            n
+            for n in _handler_nodes
+            if isinstance(n, ast.Call)
+            and (
+                (isinstance(n.func, ast.Attribute) and n.func.attr == "exit")
+                or (isinstance(n.func, ast.Name) and n.func.id == "exit")
+            )
+        ]
+        check("LOOP-NO-BREAK. handlers[1]内にbreakがない", _breaks, [])
+        check("LOOP-NO-RETURN. handlers[1]内にreturnがない", _returns, [])
+        check("LOOP-NO-SYSEXIT. handlers[1]内にsys.exit()がない", _exit_calls, [])
+print()
+
+# =====================================================================
+# LOOP-RAWEXC: 生例外excの使用形監査（_apply_featured_media_step()内部へ再照準）
+#
+# 旧v6.21.0はループのexcept節に束縛されたexcを監査していたが、Release 6.32
+# （22.3.2節）でexcを束縛する場所自体が_apply_featured_media_step()内部
+# （runtime.apply()を囲むtryのexcept Exception as exc:）へ移動したため、
+# 監査ロジックはそのまま・監査対象ノードのみをそちらへ差し替える。
+# =====================================================================
+
+print("[LOOP-RAWEXC] _apply_featured_media_step()内部のexc使用形監査（移設・ロジック無変更）")
+
+_apply_step_func = find_function_def(_main_tree, "_apply_featured_media_step")
+check_true("LOOP-RAWEXC-FUNC-EXISTS. _apply_featured_media_step()が存在する", _apply_step_func is not None)
+
+_raw_exc_handler = None
+if _apply_step_func is not None:
+    for _try_node in ast.walk(_apply_step_func):
+        if isinstance(_try_node, ast.Try):
+            for _h in _try_node.handlers:
+                if isinstance(_h.type, ast.Name) and _h.type.id == "Exception" and _h.name == "exc":
+                    _raw_exc_handler = _h
+                    break
+        if _raw_exc_handler is not None:
+            break
+
+check_true(
+    "LOOP-RAWEXC-HANDLER-FOUND. except Exception as exc: 節が_apply_featured_media_step()内部に存在する",
+    _raw_exc_handler is not None,
+)
+
+if _raw_exc_handler is not None:
+    _handler = _raw_exc_handler
 
     _exc_name_loads = find_name_loads(_handler.body, "exc")
     check_true(
-        "LOOP-HANDLER-EXC-USED. excが少なくとも1回参照される",
+        "LOOP-RAWEXC-EXC-USED. excが少なくとも1回参照される",
         len(_exc_name_loads) > 0,
     )
 
@@ -898,6 +1117,10 @@ if _wiring_try is not None:
         0,
     )
 
+    # v6.32: classify_propagated_failure(exc)の戻り値は`observation`へ代入され、
+    # その後raiseされるFeaturedMediaPropagatedFailure(observation)のコンストラクタ
+    # 引数として使われる（excそのものは渡されない）。excの唯一の許可された使用形は
+    # 引き続きclassify_propagated_failure(exc)の引数位置のみである。
     _classify_calls = find_calls_to(_handler.body, "classify_propagated_failure")
     _allowed_exc_load_ids = {
         id(a)
@@ -911,43 +1134,6 @@ if _wiring_try is not None:
         len(_disallowed_exc_loads),
         0,
     )
-
-    _handler_nodes = list(walk_stmts(_handler.body))
-    check_true(
-        "LOOP-HANDLER-CALLS-HELPER. handlerが_handle_featured_media_failureを呼ぶ",
-        contains_call_to(_handler.body, "_handle_featured_media_failure"),
-    )
-    check_false(
-        "LOOP-HANDLER-NO-SAVE-ALL. handler内でsave_all()が呼ばれない（F-1）",
-        "save_all" in attribute_call_names(_handler_nodes),
-    )
-
-    _augassigns = [
-        n
-        for n in _handler_nodes
-        if isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name) and n.target.id == "wp_failed_count"
-    ]
-    check("LOOP-WPFAILED-INCREMENTED. wp_failed_countへの加算が1件（F-5）", len(_augassigns), 1)
-    if _augassigns:
-        check_true("LOOP-WPFAILED-ADD. 加算演算がAddである", isinstance(_augassigns[0].op, ast.Add))
-
-    _continues = [n for n in _handler_nodes if isinstance(n, ast.Continue)]
-    check("LOOP-CONTINUE-PRESENT. handlerがcontinueを含む（run停止しない・F-7・W-2）", len(_continues), 1)
-
-    _breaks = [n for n in _handler_nodes if isinstance(n, ast.Break)]
-    _returns = [n for n in _handler_nodes if isinstance(n, ast.Return)]
-    _exit_calls = [
-        n
-        for n in _handler_nodes
-        if isinstance(n, ast.Call)
-        and (
-            (isinstance(n.func, ast.Attribute) and n.func.attr == "exit")
-            or (isinstance(n.func, ast.Name) and n.func.id == "exit")
-        )
-    ]
-    check("LOOP-NO-BREAK. handler内にbreakがない", _breaks, [])
-    check("LOOP-NO-RETURN. handler内にreturnがない", _returns, [])
-    check("LOOP-NO-SYSEXIT. handler内にsys.exit()がない", _exit_calls, [])
 print()
 
 # =====================================================================

@@ -294,9 +294,48 @@ try:
     # RELEASE_START_HEAD基準ゼロdiff要求は撤廃せず、これら2 pathのみ承認済み
     # 変更ファイル1件に限定した狭い例外とする（docs/design/
     # production_canonical_run_outcome_contract_foundation.md 24章）。
+    # Release 6.32（Side-Effect Fail-Closed & Human Review Safety）はExplicit
+    # Side-Effect Execution Mode専用channelの新設・伝播に伴い、src/ai・
+    # src/pipeline・scripts配下の承認済み変更ファイルを追加した
+    # （zero_diff_guard_registry.pyの_SOURCE_CHANGE_CONTRIBUTIONSにv6.32.0として
+    # 登録済み、22.1f節）。sub-milestone 3（呼び出し箇所A、15.7・22.3.1節）は
+    # src/outputs/wordpress_output.py（__init__()へside_effect_execution_context・
+    # draft_state_manager引数追加、save()のExplicit Execution Mode対応）を追加する。
     _ZERODIFF1_ALLOWED_EXCEPTIONS = {
-        "src/pipeline": {"src/pipeline/news_pipeline_runner.py"},
-        "scripts": {"scripts/run_workflow_engine.py"},
+        "src/outputs": {
+            "src/outputs/wordpress_output.py",
+            # sub-milestone 3 completion gap（22.3.13節(2)）：OutputManager.save_all()
+            # へSideEffectExecutionModeContractError carve-outを追加した承認済み変更。
+            "src/outputs/manager.py",
+        },
+        "src/ai": {
+            "src/ai/agent_context.py",
+            "src/ai/agent_manager.py",
+            # sub-milestone 6C（§28.-36節test#8、22.3.12節）：agent_executor.py
+            # へのSideEffectExecutionModeContractError carve-out追加。
+            "src/ai/agent_executor.py",
+            "src/ai/news_agent.py",
+            "src/ai/publish_trigger_agent.py",
+            "src/ai/workflow_trigger_agent.py",
+            "src/ai/workflow_runner.py",
+            "src/ai/workflow_context.py",
+            "src/ai/workflow_step_executor.py",
+            "src/ai/ai_publish_service.py",
+        },
+        "src/pipeline": {
+            "src/pipeline/news_pipeline_runner.py",
+            "src/pipeline/publish_pipeline_runner.py",
+            "src/pipeline/workflow_pipeline_runner.py",
+        },
+        "scripts": {
+            "scripts/run_workflow_engine.py",
+            "scripts/run_news_agent.py",
+            "scripts/run_workflow_trigger_agent.py",
+            "scripts/run_publish_trigger_agent.py",
+            "scripts/run_review_trigger_agent.py",
+            "scripts/run_ai_publish.py",
+            "scripts/run_ai_workflow.py",
+        },
     }
 
     for _path in registry.PROTECTED_PATHS:
@@ -363,7 +402,11 @@ try:
     # v6.21.0／v6.22.0はcoverage-loop構造（_allowed_source_changes.items()を反復する
     # 検査）を持たない固定件数のguardであり、完全一致で検証する。
     _EXPECTED_TOTALS_EXACT = {
-        "test_e2e_v6_21_0_article_featured_media_runtime_wiring.py": 170,
+        # v6.32.0 sub-milestone 4（TEST MIGRATION HUMAN GATE承認済み）：
+        # _apply_featured_media_step()のside_effect_binding方式への変更に伴う
+        # v6.21.0自身のPROP系・LOOP系新規assertion追加（170→182、正当なcoverage
+        # 追加でありregressionではない）。
+        "test_e2e_v6_21_0_article_featured_media_runtime_wiring.py": 182,
         "test_e2e_v6_22_0_wordpress_media_upload_failure_reason_classification_foundation.py": 324,
     }
     # v6.23.0／v6.24.0はcoverage-loop構造を持ち、共有レジストリの許容キー数に

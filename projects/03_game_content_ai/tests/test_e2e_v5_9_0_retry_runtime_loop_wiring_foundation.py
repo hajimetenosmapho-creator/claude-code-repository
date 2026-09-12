@@ -574,7 +574,6 @@ unchanged_paths_32 = [
     "src/scheduler",
     "src/retry_scheduler_source",
     "src/retry_scheduler_decision",
-    "src/ai",
 ]
 
 # src/workflow_engine と src/execution_history は、Release 6.30 Production
@@ -616,12 +615,38 @@ _ALLOWED_EXECUTION_HISTORY_CHANGES_32 = {
 # src/retry_lineageはこの4パッケージのいずれの配下でもないため対象外）。
 _ALLOWED_RETRY_ENGINE_CHANGES_32 = {
     "src/retry_engine/retry_manager.py",
+    # Release 6.32（22.1f節）：RetryExecutor.execute()→WorkflowEngineManager.run()
+    # のprotected context実配線の承認済み変更のため追加。
     "src/retry_engine/retry_executor.py",
     "src/retry_engine/retry_result.py",
     "src/retry_engine/retry_queue_update_decider.py",
+    # Release 6.32 sub-milestone 6D-1（Lineage-Authoritative Disposition Input
+    # Contract、22.4・22.4a節）：__all__への新規シンボル追加（22.4章の
+    # discriminated union・builder群）のため追加。
+    "src/retry_engine/__init__.py",
 }
 _ALLOWED_RETRY_COMPOSITION_CHANGES_32 = {
     "src/retry_composition/retry_composition_root.py",
+    # Release 6.32：retry_after_human_review()（17.3節）を新設した
+    # __init__.py・retry_after_human_review.py。
+    "src/retry_composition/__init__.py",
+    "src/retry_composition/retry_after_human_review.py",
+}
+# Release 6.32（Side-Effect Fail-Closed & Human Review Safety）：src/aiも
+# 同じallow-list方式へ移行する（22.1f節）。
+_ALLOWED_AI_CHANGES_32 = {
+    "src/ai/agent_context.py",
+    "src/ai/agent_manager.py",
+    # sub-milestone 6C（§28.-36節test#8、22.3.12節）：agent_executor.pyへの
+    # SideEffectExecutionModeContractError carve-out追加。
+    "src/ai/agent_executor.py",
+    "src/ai/news_agent.py",
+    "src/ai/publish_trigger_agent.py",
+    "src/ai/workflow_trigger_agent.py",
+    "src/ai/workflow_runner.py",
+    "src/ai/workflow_context.py",
+    "src/ai/workflow_step_executor.py",
+    "src/ai/ai_publish_service.py",
 }
 _ALLOWED_RETRY_ENQUEUE_TRIGGER_CHANGES_32 = {
     "src/retry_enqueue_trigger/retry_enqueue_trigger.py",
@@ -654,6 +679,7 @@ if git_available:
             "retry_runtime_orchestrator", "src/retry_runtime_orchestrator",
             _ALLOWED_RETRY_RUNTIME_ORCHESTRATOR_CHANGES_32,
         ),
+        ("ai", "src/ai", _ALLOWED_AI_CHANGES_32),
     ):
         _dir_diff = subprocess.run(
             ["git", "status", "--porcelain", "--untracked-files=all", "--", _dir],

@@ -145,7 +145,11 @@ class _MockReviewService:
         self._report_path  = report_path
         self.called_with_article_id = None
 
-    def run(self, article_id=None):
+    def run(self, article_id=None, side_effect_execution_context=None):
+        # Release 6.32（15.6節）：PublishStepExecutor経由の呼び出しでは
+        # side_effect_execution_contextが渡される（PublishStepExecutorが
+        # 事前にvalidate済みの値。本Mockはbusiness logicのみを検証するため
+        # 受け取るが未使用のままでよい）。
         self.called_with_article_id = article_id
         return self._report_path
 
@@ -434,6 +438,22 @@ from ai import (
     PublishStepExecutor,
     PublishReviewStepExecutor,
 )
+from side_effect_safety import (
+    LegacyEntrypoint,
+    LegacyExecutionOrigin,
+    build_legacy_direct_provenance,
+    complete_legacy_execution_context,
+)
+
+# Release 6.32（22.3.12節）：PublishStepExecutor.execute()はcontext.dry_run=False時、
+# context.side_effect_execution_contextをvalidateするauthoritative validation
+# boundaryとなった。本ファイルはWorkflowStepExecutorのbusiness logicのみを
+# 検証対象とする（TEST MIGRATION HUMAN GATE承認済み）ため、PublishStepExecutorを
+# 実行するテスト31にのみ固定のlegacy contextを供給する。
+_LEGACY_CONTEXT = complete_legacy_execution_context(
+    build_legacy_direct_provenance(LegacyEntrypoint.RUN_AI_WORKFLOW),
+    LegacyExecutionOrigin.AI_WORKFLOW_DIRECT,
+)
 
 executor_classes = [
     ImprovementStepExecutor,
@@ -531,7 +551,9 @@ with tempfile.TemporaryDirectory() as tmpdir:
 with tempfile.TemporaryDirectory() as tmpdir:
     svc = _MockReviewService(review_count=1)
     executor = PublishStepExecutor(service=svc)
-    ctx = WorkflowContext(article_id=None, dry_run=False)
+    ctx = WorkflowContext(
+        article_id=None, dry_run=False, side_effect_execution_context=_LEGACY_CONTEXT,
+    )
     r = executor.execute(ctx)
     check("31. PublishStepExecutor success=True", r.success, True)
     check("31. PublishStepExecutor processed_count=1", r.processed_count, 1)

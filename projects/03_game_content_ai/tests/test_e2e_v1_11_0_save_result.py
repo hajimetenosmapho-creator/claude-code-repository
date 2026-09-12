@@ -24,6 +24,22 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+# Release 6.32（呼び出し箇所A、15.7節）：WordPressOutput.__init__()へ
+# side_effect_execution_context が必須引数として追加されたため、本ファイルの
+# 全構築箇所はlegacy contextを明示的に供給する（本ファイルはRetry Lineage外の
+# 直接的なunit-levelテストであり、main.py直接起動と同型のLEGACY_DIRECT）。
+from side_effect_safety import (
+    LegacyEntrypoint,
+    LegacyExecutionOrigin,
+    build_legacy_direct_provenance,
+    complete_legacy_execution_context,
+)
+
+_LEGACY_CONTEXT = complete_legacy_execution_context(
+    build_legacy_direct_provenance(LegacyEntrypoint.RUN_MAIN_DIRECT),
+    LegacyExecutionOrigin.MAIN_DIRECT,
+)
+
 # ─── テスト用ユーティリティ ───
 
 results = []
@@ -143,6 +159,7 @@ with patch("requests.post", return_value=mock_response):
         site_url="https://nozo3-kao6.tokyo",
         username="testuser",
         app_password="xxxx xxxx xxxx xxxx xxxx xxxx",
+        side_effect_execution_context=_LEGACY_CONTEXT,
     )
     article = make_article()
     result = wp_output.save(article)
@@ -172,6 +189,7 @@ with patch("requests.post", return_value=mock_error_response):
         site_url="https://nozo3-kao6.tokyo",
         username="bad_user",
         app_password="wrong_pass",
+        side_effect_execution_context=_LEGACY_CONTEXT,
     )
     try:
         wp_output2.save(make_article())
@@ -190,7 +208,10 @@ from outputs.manager import OutputManager
 with tempfile.TemporaryDirectory() as tmp:
     tmp_path = Path(tmp)
     md = MarkdownOutput(output_dir=tmp_path)
-    wp = WordPressOutput(site_url="", username="", app_password="")  # is_available=False
+    wp = WordPressOutput(
+        site_url="", username="", app_password="",
+        side_effect_execution_context=_LEGACY_CONTEXT,
+    )  # is_available=False
 
     mgr_no_wp = OutputManager([md, wp])
     article = make_article()
@@ -209,6 +230,7 @@ with tempfile.TemporaryDirectory() as tmp:
         site_url="https://nozo3-kao6.tokyo",
         username="user",
         app_password="pass",
+        side_effect_execution_context=_LEGACY_CONTEXT,
     )
     mgr_with_wp = OutputManager([md2, wp2])
     article = make_article()
@@ -227,7 +249,10 @@ with tempfile.TemporaryDirectory() as tmp:
 with tempfile.TemporaryDirectory() as tmp:
     tmp_path = Path(tmp)
     md3 = MarkdownOutput(output_dir=tmp_path)
-    wp3 = WordPressOutput(site_url="https://nozo3-kao6.tokyo", username="u", app_password="p")
+    wp3 = WordPressOutput(
+        site_url="https://nozo3-kao6.tokyo", username="u", app_password="p",
+        side_effect_execution_context=_LEGACY_CONTEXT,
+    )
     mgr_wp_fail = OutputManager([md3, wp3])
     article = make_article()
 
@@ -309,6 +334,7 @@ with patch("requests.post", return_value=mock_response_diff_id):
         site_url="https://nozo3-kao6.tokyo",
         username="user",
         app_password="pass",
+        side_effect_execution_context=_LEGACY_CONTEXT,
     )
     r = wp_test.save(make_article())
 

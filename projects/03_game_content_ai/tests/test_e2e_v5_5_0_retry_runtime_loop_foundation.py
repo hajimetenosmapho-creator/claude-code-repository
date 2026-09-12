@@ -368,13 +368,9 @@ unchanged_paths_15 = [
     "src/retry_queue",
     "src/retry_history",
     "src/retry_enqueue_trigger",
-    "src/retry_engine",
-    "src/ai",
     "src/scheduler",
     "src/retry_scheduler_source",
     "src/retry_scheduler_decision",
-    "src/retry_composition",
-    "src/retry_runtime_orchestrator",
     "scripts/run_retry_runtime.py",
 ]
 
@@ -389,6 +385,9 @@ _ALLOWED_WORKFLOW_ENGINE_CHANGES_15 = {
     "src/workflow_engine/workflow_engine_executor.py",
     "src/workflow_engine/workflow_engine_result.py",
     "src/workflow_engine/workflow_engine_exceptions.py",
+    # Release 6.32：side_effect_execution_provenance引数・フィールド（2.6節）。
+    "src/workflow_engine/workflow_engine_context.py",
+    "src/workflow_engine/workflow_engine_manager.py",
 }
 _ALLOWED_EXECUTION_HISTORY_CHANGES_15 = {
     "src/execution_history/__init__.py",
@@ -396,6 +395,44 @@ _ALLOWED_EXECUTION_HISTORY_CHANGES_15 = {
     "src/execution_history/execution_history_store.py",
     "src/execution_history/json_execution_history_store.py",
     "src/execution_history/start_run_write_result.py",
+}
+# Release 6.32：retry_after_human_review()（17.3節）を新設した
+# __init__.py・retry_after_human_review.py。
+_ALLOWED_RETRY_COMPOSITION_CHANGES_15 = {
+    "src/retry_composition/__init__.py",
+    "src/retry_composition/retry_after_human_review.py",
+}
+# Release 6.32（Side-Effect Fail-Closed & Human Review Safety）：src/aiも
+# 同じallow-list方式へ移行する（22.1f節）。
+_ALLOWED_AI_CHANGES_15 = {
+    "src/ai/agent_context.py",
+    "src/ai/agent_manager.py",
+    # sub-milestone 6C（§28.-36節test#8、22.3.12節）：agent_executor.pyへの
+    # SideEffectExecutionModeContractError carve-out追加。
+    "src/ai/agent_executor.py",
+    "src/ai/news_agent.py",
+    "src/ai/publish_trigger_agent.py",
+    "src/ai/workflow_trigger_agent.py",
+    "src/ai/workflow_runner.py",
+    "src/ai/workflow_context.py",
+    "src/ai/workflow_step_executor.py",
+    "src/ai/ai_publish_service.py",
+}
+# Release 6.32 sub-milestone 6D-1（Lineage-Authoritative Disposition Input
+# Contract、22.4・22.4a節）：RetryQueueUpdateDecider.decide()/decide_all()の
+# discriminated union化・RetryManager.decide_retry_queue_updates()の
+# execution_results受け取りへの改修に伴う承認済み変更ファイル。
+# retry_executor.pyは22.1f節（protected context実配線）の別件既承認変更。
+_ALLOWED_RETRY_ENGINE_CHANGES_15 = {
+    "src/retry_engine/__init__.py",
+    "src/retry_engine/retry_queue_update_decider.py",
+    "src/retry_engine/retry_manager.py",
+    "src/retry_engine/retry_executor.py",
+}
+# Release 6.32 sub-milestone 6D-1：run_once()のQueue Update判定経路を
+# RetryManager.decide_retry_queue_updates()経由へ一本化（22.4a節「No bypass」）。
+_ALLOWED_RETRY_RUNTIME_ORCHESTRATOR_CHANGES_15 = {
+    "src/retry_runtime_orchestrator/retry_runtime_orchestrator.py",
 }
 
 git_available = True
@@ -420,6 +457,14 @@ if git_available:
     for _label, _dir, _allowed in (
         ("workflow_engine", "src/workflow_engine", _ALLOWED_WORKFLOW_ENGINE_CHANGES_15),
         ("execution_history", "src/execution_history", _ALLOWED_EXECUTION_HISTORY_CHANGES_15),
+        ("retry_composition", "src/retry_composition", _ALLOWED_RETRY_COMPOSITION_CHANGES_15),
+        ("ai", "src/ai", _ALLOWED_AI_CHANGES_15),
+        ("retry_engine", "src/retry_engine", _ALLOWED_RETRY_ENGINE_CHANGES_15),
+        (
+            "retry_runtime_orchestrator",
+            "src/retry_runtime_orchestrator",
+            _ALLOWED_RETRY_RUNTIME_ORCHESTRATOR_CHANGES_15,
+        ),
     ):
         _dir_diff = subprocess.run(
             ["git", "status", "--porcelain", "--untracked-files=all", "--", _dir],
