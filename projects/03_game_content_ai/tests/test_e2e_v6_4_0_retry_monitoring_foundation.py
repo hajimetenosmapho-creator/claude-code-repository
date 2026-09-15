@@ -359,13 +359,17 @@ print("[テスト21-29] Runtime Pipeline・retry_metrics関連コンポーネン
 # 承認済み変更対象ファイルを持つため、このリストからは除外する
 # （docs/design/retry_lineage_eligibility_durable_attempt_state.md 22章。
 # 他のリスト項目・historical baselineは無変更）。
+# Release 6.33（Retry Observability Runtime Integration）により、
+# src/retry_runtime_logging（RetryRuntimeCycleLogger.log_cycle()のbool化）・
+# scripts/run_retry_runtime.py（RetryObservabilityPipeline配線）は承認済み
+# 変更対象ファイルを持つため、このリストからは除外する
+# （docs/design/retry_observability_runtime_integration_foundation.md AD-2・
+# AD-3。他のリスト項目・historical baselineは無変更）。
 unchanged_paths = [
     "src/retry_runtime_lock",
     "src/retry_runtime_shutdown",
     "src/retry_runtime_loop",
-    "src/retry_runtime_logging",
     "src/retry_metrics",
-    "scripts/run_retry_runtime.py",
 ]
 
 import subprocess

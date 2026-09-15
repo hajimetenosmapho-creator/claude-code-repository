@@ -57,6 +57,15 @@ E2E テスト: v6.8.0 Retry Notification CLI Report Wiring Foundation
 Working Tree／git diff状態は恒久E2Eへ含めない。既存production code無改修の確認は
 Release Review時にGitコマンドで行う。
 
+v6.33.0追記（AD-6a Test Migration）:
+    build_report()がRetryObservabilityPipelineへの薄い委譲へ置き換わったことに伴い
+    （docs/design/retry_observability_runtime_integration_foundation.md AD-6・AD-6a）、
+    PI-5A／PI-5B／EX-1／EX-2の4シナリオが直接monkeypatchしていたCLIローカルの
+    RetryAlertEvaluator／RetryNotificationMessageBuilder参照は、実際にクラス参照を
+    解決するretry_observability_pipeline.retry_observability_pipelineモジュールへ
+    patch対象を再配置した。検証するアサーション自体（呼び出し回数・引数identity・
+    例外伝播／Exit Code）は無変更。
+
 実行方法:
     cd projects/03_game_content_ai
     ./venv/Scripts/python.exe tests/test_e2e_v6_8_0_retry_notification_cli_report_wiring_foundation.py
@@ -131,6 +140,7 @@ import retry_metrics as retry_metrics_pkg
 import retry_monitoring as retry_monitoring_pkg
 import retry_notification as retry_notification_pkg
 import retry_notification_message as retry_notification_message_pkg
+import retry_observability_pipeline.retry_observability_pipeline as retry_observability_pipeline_module
 
 EXPECTED_NOTIFICATION_MESSAGE_BODY = (
     "Retry Runtimeで通知対象の状態が検出されました。詳細を確認してください。"
@@ -635,7 +645,7 @@ print("[PI-5A] Message Builder Call Contract - NO_NOTIFICATION側")
 CountingMessageBuilder.last_instance = None
 with tempfile.TemporaryDirectory() as _tmp:
     _missing_path = Path(_tmp) / "does_not_exist.jsonl"
-    with patched_attr(show_retry_notification, "RetryNotificationMessageBuilder", CountingMessageBuilder):
+    with patched_attr(retry_observability_pipeline_module, "RetryNotificationMessageBuilder", CountingMessageBuilder):
         _pi5a_report = build_report(_missing_path)
 
 _pi5a_instance = CountingMessageBuilder.last_instance
@@ -657,7 +667,7 @@ CountingMessageBuilder.last_instance = None
 with tempfile.TemporaryDirectory() as _tmp:
     _degraded_path_5b = Path(_tmp) / "degraded.jsonl"
     _write_single_record_log(_degraded_path_5b, scanned=10, enqueued=6)
-    with patched_attr(show_retry_notification, "RetryNotificationMessageBuilder", CountingMessageBuilder):
+    with patched_attr(retry_observability_pipeline_module, "RetryNotificationMessageBuilder", CountingMessageBuilder):
         _pi5b_report = build_report(_degraded_path_5b)
 
 _pi5b_instance = CountingMessageBuilder.last_instance
@@ -796,7 +806,7 @@ with tempfile.TemporaryDirectory() as _tmp:
     _raising_value_error = make_raising_evaluator(lambda: ValueError("fake unmapped status"))
     _stdout_buf, _stderr_buf = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(_stdout_buf), contextlib.redirect_stderr(_stderr_buf):
-        with patched_attr(show_retry_notification, "RetryAlertEvaluator", _raising_value_error):
+        with patched_attr(retry_observability_pipeline_module, "RetryAlertEvaluator", _raising_value_error):
             _rc = main(["--log-path", str(_missing_path)])
 _stdout_text, _stderr_text = _stdout_buf.getvalue(), _stderr_buf.getvalue()
 check("EX-1: 戻り値1", _rc, 1)
@@ -812,7 +822,7 @@ with tempfile.TemporaryDirectory() as _tmp:
     _missing_path = Path(_tmp) / "missing.jsonl"
     _raising_runtime_error = make_raising_evaluator(lambda: RuntimeError("boom"))
     _propagated = False
-    with patched_attr(show_retry_notification, "RetryAlertEvaluator", _raising_runtime_error):
+    with patched_attr(retry_observability_pipeline_module, "RetryAlertEvaluator", _raising_runtime_error):
         try:
             main(["--log-path", str(_missing_path)])
         except RuntimeError:

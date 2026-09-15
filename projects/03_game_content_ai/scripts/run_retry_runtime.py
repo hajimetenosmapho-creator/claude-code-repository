@@ -89,6 +89,24 @@ Structured Loop Logging（v6.2.0、docs/design/retry_runtime_structured_loop_log
       出力したうえで処理を継続する。
     - ログローテーション・Metrics集計・Dashboard化は本Releaseの対象外。
 
+Retry Observability Runtime Integration（v6.33.0、docs/design/
+retry_observability_runtime_integration_foundation.md）:
+    - 単発実行・--loop実行のいずれでも、1サイクル分のRetry業務ロジックの実行
+      （run_once()）・ログ記録（log_cycle()）が完了した直後に、
+      RetryObservabilityPipelineを呼び出してRetryObservabilityReportを取得し、
+      コンソールへ人間可読な形式で出力する（RetryRuntimeObservabilityReporter）。
+    - log_cycle()がOSErrorを捕捉し書き込みに失敗した場合（戻り値False）、
+      当該cycleのobservability出力は行わない（Current-Cycle Inclusion
+      Contract。stale historyを当該cycleのreportとして観測しないため）。
+      Retry Runtime本体・次cycle以降には一切影響しない。
+    - 観測対象は.run/retry_runtime_log.jsonlの全件（windowingは行わない。
+      Notification CLI側と同一のfull-history semantics）。
+    - 読み取り・評価・整形・コンソール出力のいずれかの段階で失敗しても
+      （Exceptionのみ。BaseExceptionは対象外）、Retry Runtime本体は停止しない。
+      ベストエフォートとし、stderrへWARNINGメッセージを出力したうえで処理を
+      継続する。
+    - 新規ログファイル・外部Sender等への送信は本Releaseの対象外。
+
 注意:
     - Gateが無効（RETRY_ENGINE_ENABLED=false等）の場合でもエラーにはならず、
       結果件数がすべて0件として表示される（NullRetryManager等のNull Object
@@ -112,9 +130,11 @@ from dotenv import load_dotenv
 load_dotenv(_PROJECT_ROOT / ".env")
 
 from retry_composition import RetryCompositionRoot
+from retry_observability_pipeline import RetryObservabilityReport
 from retry_runtime_lock import RetryRuntimeLock, RetryRuntimeLockError
 from retry_runtime_logging import RetryRuntimeCycleLogger
 from retry_runtime_loop import RetryRuntimeLoop
+from retry_runtime_observability import RetryRuntimeObservabilityReporter
 from retry_runtime_orchestrator import RetryRuntimeCycleResult, RetryRuntimeOrchestrator
 from retry_runtime_shutdown import RetryRuntimeShutdown
 
@@ -144,6 +164,37 @@ def format_summary(result: RetryRuntimeCycleResult) -> str:
         f"  Cleanup         : cleaned={len(result.cleanup_results)}",
         f"  TerminalCleanup : cleaned={len(result.terminal_cleanup_results)}",
         f"  History         : recorded={len(result.history_results)}",
+        "=" * 50,
+    ]
+    return "\n".join(lines)
+
+
+def format_observability_report(report: RetryObservabilityReport) -> str:
+    """
+    RetryObservabilityReport 1回分の評価結果を、人間向けのサマリー文字列に
+    変換する（format_summary()と同系統の独立関数。他scriptsからimportしない。
+    docs/design/retry_observability_runtime_integration_foundation.md AD-5）。
+    """
+    metrics = report.metrics
+    period_start_text = metrics.period_start if metrics.period_start is not None else "（記録なし）"
+    period_end_text = metrics.period_end if metrics.period_end is not None else "（記録なし）"
+    ratio_text = (
+        f"{metrics.enqueue_success_ratio:.2f}"
+        if metrics.enqueue_success_ratio is not None
+        else "（算出不能）"
+    )
+    lines = [
+        "=" * 50,
+        "Retry Observability Report",
+        "=" * 50,
+        "  Metrics         : "
+        f"cycle_count={metrics.cycle_count}, period_start={period_start_text}, "
+        f"period_end={period_end_text}, enqueue_success_ratio={ratio_text}",
+        f"  Health          : {report.health_report.status.value}",
+        f"  Alert           : {report.alert.level.value}",
+        f"  Notification    : {report.notification_decision.status.value}",
+        "  Message         : "
+        + (report.message.body if report.message is not None else "（通知対象ではないため、Messageは生成されません）"),
         "=" * 50,
     ]
     return "\n".join(lines)
@@ -187,6 +238,9 @@ def main() -> None:
             cycle_logger = RetryRuntimeCycleLogger(
                 log_path=_PROJECT_ROOT / ".run" / "retry_runtime_log.jsonl",
             )
+            observability_reporter = RetryRuntimeObservabilityReporter(
+                log_path=_PROJECT_ROOT / ".run" / "retry_runtime_log.jsonl",
+            )
             cycle_count = 0
 
             def run_cycle():
@@ -194,11 +248,13 @@ def main() -> None:
                 cycle_count += 1
                 result = orchestrator.run_once(dry_run=args.dry_run)
                 print(format_summary(result))
-                cycle_logger.log_cycle(
+                log_write_succeeded = cycle_logger.log_cycle(
                     cycle_number=cycle_count,
                     result=result,
                     dry_run=args.dry_run,
                 )
+                if log_write_succeeded:
+                    observability_reporter.observe_and_report(format_observability_report)
                 return result
 
             if not args.loop:

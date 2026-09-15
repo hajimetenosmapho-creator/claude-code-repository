@@ -371,8 +371,13 @@ unchanged_paths_15 = [
     "src/scheduler",
     "src/retry_scheduler_source",
     "src/retry_scheduler_decision",
-    "scripts/run_retry_runtime.py",
 ]
+
+# Release 6.33（Retry Observability Runtime Integration）により、
+# scripts/run_retry_runtime.py（RetryObservabilityPipeline配線）は承認済み
+# 変更対象ファイルを持つため、このリストからは除外する（docs/design/
+# retry_observability_runtime_integration_foundation.md AD-2。他のリスト項目・
+# historical baselineは無変更）。
 
 # src/workflow_engine と src/execution_history は、Release 6.30 Production
 # Canonical Run & Outcome Contract Foundationにより承認済み変更対象ファイルを

@@ -335,6 +335,11 @@ try:
             "scripts/run_review_trigger_agent.py",
             "scripts/run_ai_publish.py",
             "scripts/run_ai_workflow.py",
+            # v6.33.0（Retry Observability Runtime Integration）：RetryObservabilityPipeline
+            # のRetry Runtime実配線・show_retry_notification.pyのPipelineへの委譲統一に伴う
+            # 承認済み変更（docs/CHANGELOG.md [KI-32]と同型の狭い例外追加）。
+            "scripts/run_retry_runtime.py",
+            "scripts/show_retry_notification.py",
         },
     }
 

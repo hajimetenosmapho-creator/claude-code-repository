@@ -399,6 +399,192 @@
 - **対応状況**：対応済み。承認済み変更pathのみを対象とする狭い除外編集を各ファイルへ適用し、`tests/zero_diff_guard_registry.py`の`_TEST_CHANGE_CONTRIBUTIONS`へ`"v6.31.0"`として本レジストリ自身・新規E2E自身とあわせて登録した（`RELEASE_ORDER`への`"v6.31.0"`追記を含む）。`test_e2e_v6_30_0`自身についても、テスト#39（Retry Runtime Ruling A）が`RetryManager`/`RetryExecutor`を旧APIで直接構築していたため、新しい必須引数（`lineage`）を満たす最小限のFakeを追加する改訂を行った
 - **今後の対応**：不要（本エントリで対応を確定）。将来Releaseで上記6パッケージにさらに変更が入るたびに同種の除外編集が必要になりうるが、その都度Charter/Design側で変更対象の承認範囲を確認し、`[KI-3]`以降と同じ手順（狭い除外編集＋registry登録）を踏めばよい
 
+### [KI-32] Release 6.33（Retry Observability Runtime Integration）の承認済み変更により、既存E2E3ファイルのArchitecture Guardが構造的にFAILする状態が生じたため、各ファイルへ狭い除外編集を適用した（`[KI-31]`と同型の設計上の既知差分・対応記録）
+
+- **発見日**：2026-09-13（Release 6.33実装時）
+- **対象**：`tests/test_e2e_v5_5_0_retry_runtime_loop_foundation.py`・`test_e2e_v6_3_0_retry_metrics_foundation.py`・`test_e2e_v6_4_0_retry_monitoring_foundation.py`の計3ファイル
+- **症状（除外編集前の状態）**：上記各テストは`src/retry_runtime_logging` / `scripts/run_retry_runtime.py`への無変更を、registry導入以前から個別ファイルが持つstandalone guard（`git diff`ベース）として前提としており、Release 6.33の承認済み変更（`RetryRuntimeCycleLogger.log_cycle()`の`None`→`bool`化、`RetryObservabilityPipeline`のRuntime配線）によりこれらのpathの`git diff`が非ゼロを返すため、除外編集を適用しなければ機械的にFAILする状態だった
+- **原因**：`docs/design/retry_observability_runtime_integration_foundation.md`（Architecture Design Rev.4、Codex独立review Round 1〜4、Round 4で`APPROVED`（Blocking 0／Major 0／Minor 0／Suggestions 0）に収束、Human Gate承認）AD-2・AD-3で確定した、Retry Runtimeへの`RetryObservabilityPipeline`配線・Current-Cycle Inclusion Contractの実装が、上記2 pathへ及んだことによる、`[KI-3]`〜`[KI-31]`と同型の既知差分
+- **対応状況**：対応済み。承認済み変更pathのみを対象とする狭い除外編集を各ファイルへ適用し、`tests/zero_diff_guard_registry.py`の`_TEST_CHANGE_CONTRIBUTIONS`へ`"v6.33.0"`として本レジストリ自身・新規E2E自身・`scripts/show_retry_notification.py`のPipeline委譲（AD-6a）に伴い再配置した`test_e2e_v6_8_0_retry_notification_cli_report_wiring_foundation.py`・**上記除外編集の対象である3ファイル自身（`test_e2e_v5_5_0_retry_runtime_loop_foundation.py` / `test_e2e_v6_3_0_retry_metrics_foundation.py` / `test_e2e_v6_4_0_retry_monitoring_foundation.py`。Independent Codex Code Review Round 2 MINOR-4で欠落を指摘され追記）**とあわせて登録した（`RELEASE_ORDER`への`"v6.33.0"`追記を含む。既存recordの書き換えは行わない、append-onlyのGR-9原則）。`_SOURCE_CHANGE_CONTRIBUTIONS`へは、保護対象パス`"scripts"`配下の`scripts/run_retry_runtime.py`・`scripts/show_retry_notification.py`の承認済み変更として`"v6.33.0"`寄与を追記した（新規package`src/retry_runtime_observability/`はPROTECTED_PATHS対象外のため追記不要。`_TEST_CHANGE_CONTRIBUTIONS`とは区別し、source-change contributionへは影響しない）
+- **今後の対応**：不要（本エントリで対応を確定）。将来Releaseで`src/retry_runtime_logging` / `scripts/run_retry_runtime.py`にさらに変更が入るたびに同種の除外編集が必要になりうるが、その都度Charter/Design側で変更対象の承認範囲を確認し、`[KI-3]`以降と同じ手順（狭い除外編集＋registry登録）を踏めばよい
+
+---
+
+## [v6.33.0] - 2026-09-13 ★ Retry Observability Runtime Integration
+
+> `RetryObservabilityPipeline`（v6.29.0で完成した消費者不在のOrchestration/Facade）を
+> 実際のRetry Runtime（`scripts/run_retry_runtime.py`）へ配線し、
+> `scripts/show_retry_notification.py::build_report()`が保持し続けていた合成ロジックの
+> 重複を解消した、v6.29.0設計書14章が定義した「将来Wiring境界」の実施。
+>
+> Architecture Design（`docs/design/retry_observability_runtime_integration_foundation.md`）は
+> Claude Code単独設計→Codex `codex-readonly-review` workflowによる独立
+> read-only Architecture Reviewを4ラウンド実施し、Rev.1〜Rev.3で検出された
+> 累計MAJOR 6件・MINOR 5件（Bounded Tail Windowという未承認のobservability
+> policy変更の撤回・failure containment境界の拡張とWARNING出力自体の
+> best-effort化・current-cycle inclusion契約・v6.8 CLI monkeypatchテストの
+> 移行戦略・zero-diff registryのsource contribution明記等）をRev.4までに
+> すべて解消し、Round 4で**APPROVED**（Blocking 0／Major 0／Minor 0／
+> Suggestions 0）に収束した。
+>
+> 実装完了後のIndependent Code Review（同workflow、read-only）Round 1は
+> `NOT APPROVED`（Blocking 0／Major 2／Minor 3）と判定した。MAJOR-2
+> （新規E2Eが実project直下の`.run/retry_runtime.lock`を直接削除しており、
+> 稼働中の別プロセスの排他制御を破壊しうるtest isolation不備）を最優先で
+> 修正し、`RetryRuntimeLock`を実ファイルI/Oを一切行わないFakeへ差し替える
+> 既存注入seam（他コンポーネントと同型のmodule属性差し替え）を用いて解消した
+> （production code側の変更なし）。MAJOR-1（`docs/ROADMAP.md` /
+> `docs/architecture.md`未更新。実装直後の報告では誤って「直近3 Releaseとも
+> 未更新」としていたが、実際には`docs/architecture.md`はv6.30.0〜v6.32.0とも
+> 専用セクションを維持しており事実誤認だった）は本CHANGELOG・`docs/ROADMAP.md`・
+> `docs/architecture.md`の3文書間の整合を取り直して解消した。MINOR
+> （call-order検証の強化・baseline pre-existing failureマッピングの精緻化・
+> stale docstring修正）もあわせて対応済み。詳細な対応内容は本エントリの
+> 各節および`docs/architecture.md`「Retry Observability Runtime Integration層」
+> 節を参照。Round 2 Independent Code Reviewは未実施。
+
+### Added
+
+- `src/retry_runtime_observability/` 新規package：`RetryRuntimeObservabilityReporter`
+  （`observe()`：全件のrecordsを読み取りPipelineへ渡すraw契約、`observe_and_report()`：
+  読み取り・評価・整形・コンソール出力の全段階を覆う単一failure containment境界。
+  `Exception`のみをcontainし`BaseException`（`SystemExit`/`KeyboardInterrupt`/
+  `GeneratorExit`）は対象外）。`retry_metrics`と`retry_observability_pipeline`
+  のみに依存する葉パッケージ。
+- `scripts/run_retry_runtime.py`：`format_observability_report()`（`format_summary()`
+  と同系統の独立関数）、`run_cycle()`内での`RetryRuntimeObservabilityReporter`呼び出し
+  （`log_cycle()`成功時のみ、AD-3 Current-Cycle Inclusion Contract）。
+- 新規E2E（`tests/test_e2e_v6_33_0_retry_observability_runtime_integration_foundation.py`、
+  v6.33 E2E PASS。real `.run/retry_runtime.lock`の有無によりアサーション総数が
+  186件または187件のいずれかになる条件分岐を含むため、固定数では表記しない）：
+  Full-History Semantics・failure containment
+  （Exception contain／BaseException非contain双方をreader/evaluate/format/
+  report-output全境界で検証）・Current-Cycle Inclusion Contract・
+  Architecture Guard（AST）・限定Zero-Diff確認を含む。
+
+### Changed
+
+- `src/retry_runtime_logging/retry_runtime_cycle_logger.py`：`log_cycle()`の
+  戻り値を`None`→`bool`へ変更（`True`＝append/write/closeがOSErrorを送出せず
+  完了、`False`＝OSError捕捉。fsync durability等は保証しない。既存の
+  「例外を送出しない」契約・`except OSError`のcatch対象範囲は無変更）。
+  WARNING出力（メッセージ整形・`print()`）をbest-effortヘルパー
+  `_warn_best_effort()`へ切り出し、二次障害（WARNING出力自体の失敗）が
+  呼び出し元へ伝播しないようcontainした。
+- `scripts/show_retry_notification.py::build_report()`：CLIローカルで
+  直接インスタンス化していた`RetryHealthEvaluator` / `RetryAlertEvaluator` /
+  `RetryNotificationEvaluator` / `RetryNotificationMessageBuilder`を削除し、
+  `RetryObservabilityPipeline().evaluate()`への薄い委譲へ統一（AD-6）。
+  `RetryRuntimeLogReader`の直接呼び出し・`format_report()`のシグネチャ・
+  出力形式は完全に無変更。
+- `tests/test_e2e_v6_8_0_retry_notification_cli_report_wiring_foundation.py`：
+  上記委譲に伴い、CLIローカルのクラス参照をmonkeypatchしていた4シナリオ
+  （PI-5A／PI-5B／EX-1／EX-2）のpatch対象を、実際にクラス参照を解決する
+  `retry_observability_pipeline.retry_observability_pipeline`モジュールへ
+  再配置（AD-6a。アサーション内容自体は無変更、test weakeningではない）。
+  197/197 PASS。
+- `tests/zero_diff_guard_registry.py`：`RELEASE_ORDER`へ`"v6.33.0"`を追記。
+  `_SOURCE_CHANGE_CONTRIBUTIONS`へ保護対象パス`"scripts"`の承認済み変更
+  （`scripts/run_retry_runtime.py` / `scripts/show_retry_notification.py`）を
+  追記。`_TEST_CHANGE_CONTRIBUTIONS`へ新規E2E自身・本レジストリ自身・
+  `test_e2e_v6_8_0_*`の計3件を追記（詳細は`[KI-32]`参照）。
+
+### Test Review・Regressionの実績
+
+新規E2E（`tests/test_e2e_v6_33_0_retry_observability_runtime_integration_foundation.py`）
+は、実行時のreal `.run/retry_runtime.lock`有無に応じてアサーション総数が
+186件（不在時）または187件（存在時）のいずれかになる（条件分岐する
+assertion。実測は173/173 PASSまたは174/174 PASSのいずれかであり、
+固定の「175/175」という表記は使わない。Code Review Round 1対応でLock
+Safety・call-order検証を強化した際に導入した条件分岐で、環境依存の総数を
+静的な固定値として文書化しないため、本CHANGELOGでは以降「**v6.33 E2E
+PASS**」とだけ記載する）。既存v6.8.0 CLI Wiring E2E（AD-6a移行後）は
+**197/197 PASS**。限定関連回帰（retry系全44ファイル）を実施し、Release 6.33が
+変更した`src/retry_runtime_logging` / `scripts/run_retry_runtime.py`に依存する
+既存Architecture Guard 3ファイル（`[KI-32]`参照）の除外編集適用後、
+Release 6.33に起因する新規FAILはないことを確認した。**正式Formal Regression
+（正式Inventory全体）は本CHANGELOG時点では未実施**（ユーザー指示により、
+Architecture実装・限定回帰確認までを本フェーズの範囲とし、正式Formal
+Regression・commit/pushは別フェーズで実施する）。
+
+**Baseline Pre-Existing Failure Mapping（Independent Codex Code Review Round 1
+MINOR-2対応、Round 2 MINOR-2で`[KI-30]`本文との再照合により訂正）**：
+上記限定関連回帰で残る25ファイルのFAILについて、「baselineから存在する」
+ことのみを根拠に許容とは判断せず、`[KI-30]`本文・実際の対象ファイルを
+read-onlyで再照合した。
+
+- **v4.8.0・v4.9.0（テスト到達前にクラッシュ）**：`[KI-18]`（v5.0.0による
+  `RetryEnqueueGuard.decide()`シグネチャ変更、`has_history: bool`→
+  `next_attempt: int, max_attempts: int`）で既存文書化済み。Release 6.33は
+  `src/retry_enqueue_trigger/`を変更していない（git diff 0を個別確認）
+- **`[KI-30]`が記録時点（v6.30）でassertionレベルの部分FAILとして個別の
+  テスト番号付きで列挙し、現在もその通り部分FAILのまま一致するもの**：
+  v3.3.0（テスト17）・v5.0.0
+  （テスト16・22）・v5.1.0（テスト15・20）・v5.2.0（テスト18・22・23・25）・
+  v5.4.0（テスト7）・v5.5.0（テスト16）
+- **`[KI-30]`が部分FAILとして列挙していたが、現在は「スクリプト全体の
+  クラッシュ（`TypeError: ...__init__() missing ... 'lineage'`等）」へ
+  エスカレーションしているもの**：v3.0.0・v3.2.0・v3.8.0・v3.9.0・
+  v4.0.0〜v4.4.0・v4.5.0・v5.3.0・v5.6.0（v3.2.0は`[KI-7]`が記録していた
+  旧・部分FAIL（テスト16・17）からの状態変化であり、上記「部分FAILのまま
+  一致するもの」バケットへの掲載は本Release 6.33検証時点の実測（完全
+  クラッシュへのエスカレーションを確認）と矛盾するため、本訂正で当該
+  バケットから削除しこちらのみに一本化した。v4.4.0は`RetryQueueUpdateDecider.
+  decide()`が`queue_decision_input`必須引数を獲得したことによる同型クラッシュ
+  であり、同じ原因で既に本バケットに含まれていたv4.1.0〜v4.3.0との整合を
+  取るため追加した。実測はいずれも本Release 6.33検証時点で確認済み）。
+  `[KI-30]`記録時点（v6.30）から`[KI-31]`（Release 6.31 Retry Lineage,
+  Eligibility & Durable Attempt State）を経て、`RetryManager` / `RetryExecutor` /
+  `RetryRuntimeOrchestrator` / `RetryQueueUpdateDecider`が`lineage` / `monitor` /
+  `queue_decision_input`等の必須引数を獲得したこと（`[KI-31]`が参照する承認済み
+  Architecture Design）に起因する、`[KI-30]`記録以降の自然な症状のエスカレー
+  ションであり、Release 6.33が新規に発生させたものではない。**このエスカレー
+  ション自体を単独のKI番号として個別文書化した記録は現時点で存在しない**
+  （`[KI-30]`・`[KI-31]`のいずれも「クラッシュへの変化」そのものは
+  明記していない）
+- **`[KI-30]`が「除外編集後は0 FAILで完走した」（v6.30時点）と明記していた
+  にもかかわらず、現在はクラッシュへエスカレーションしているもの**：
+  v4.7.0・v5.8.0。上記エスカレーション群と同一原因（`[KI-31]`のlineage等
+  必須引数化）
+- **`[KI-30]`が3件のテスト番号で部分FAILを記録していたが、現在は
+  1件多い（未文書化の追加差分がある）もの**：v4.6.0（`[KI-30]`は
+  テスト12・16・18の3件を記録。現在はテスト17も加わり4件）
+- **`[KI-30]`本文のいずれにも一切登場せず、Release 6.30時点での状態が
+  未記録のもの**：v3.5.0・v3.6.0（いずれも現在は部分FAIL。クラッシュへの
+  エスカレーションではない）
+
+Release 6.33が変更したproduction path（`src/retry_runtime_logging` /
+`src/retry_runtime_observability` / `scripts/run_retry_runtime.py` /
+`scripts/show_retry_notification.py`）は、上記25ファイルがいずれも依存
+しない。新規E2Eテスト43は`src/retry_engine` / `src/retry_lineage` /
+`src/retry_queue` / `src/retry_history` / `src/scheduler`のgit diffが0で
+あることのみを機械的に確認する（`src/retry_composition` /
+`src/retry_runtime_orchestrator`は対象に含まない）。これら2 pathを含む
+全pathのzero-diffは、git stashによるbaseline再現比較で個別に確認済み
+である（新規E2E自体の自動検証範囲ではない）。
+
+上記のとおり、25ファイルのFAILはいずれもRelease 6.33起因の新規FAILでは
+ない（git diffベースで確認済み）。一方、`[KI-30]`記録以降のエスカレーション
+（部分FAIL→クラッシュ）自体の単独文書化、v4.6.0の追加差分、v3.5.0／v3.6.0の
+未記録状態はいずれも既存Known Issueへの1対1のマッピングが未整備のまま
+であり、**正式Formal Regressionにおける正式な許容可否の判定・KI番号の
+正式な割り当ては未確定**のまま次フェーズへ持ち越す（「Release 6.33起因
+ではない」ことと「Formal Regressionで正式に許容される」ことは区別する）。
+
+### Future Extension
+
+- Bounded Tail Window（希釈問題対応）・Incremental Offset Tracking：
+  Release 6.33のCodex Round 1指摘により、「records調達方式の内部最適化」
+  としては再提案しない。再検討する場合はRuntime/CLI間のauthoritative
+  horizon統一方針を含む独立したobservability policy変更として、新規
+  Architecture Reviewを経ること。
+- Observability結果の構造化ログ記録・外部Sender連携（Slack等）。
+- v6.32 `release_claim()`残存Suggestion（引き続きOut of Scope）。
+
+詳細は`docs/design/retry_observability_runtime_integration_foundation.md`
+（Architecture Design Rev.4、Codex独立review Round 1〜4、16章
+Finding Resolution Matrixに全指摘の解消記録を含む）を参照。
+
 ---
 
 ## [v6.31.0] - 2026-08-31 ★ Retry Lineage, Eligibility & Durable Attempt State

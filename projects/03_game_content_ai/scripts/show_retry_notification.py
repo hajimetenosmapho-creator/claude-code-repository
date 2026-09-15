@@ -1,5 +1,6 @@
 """
-Retry Notification CLI Report Wiring Foundation（v6.8.0）
+Retry Notification CLI Report Wiring Foundation（v6.8.0、v6.33.0でPipelineへの
+薄い委譲へ統一）
 
 Release 6.3〜6.7で完成した以下5つの「消費者不在の先行実装」を、単一CLIスクリプトから
 初めて連続実行し、人間可読なReportとして標準出力へ表示する（docs/design/
@@ -13,8 +14,17 @@ retry_notification_cli_report_wiring_foundation.md）。
         -> RetryNotificationMessageBuilder
         -> Retry Notification CLI Report
 
-Runtime Pipelineへの本組み込みは行わない。RetryCompositionRoot / RetryRuntimeOrchestrator /
-scripts/run_retry_runtime.py はいずれも無改修（本スクリプトから依存しない・依存されない）。
+v6.29.0で完成したRetryObservabilityPipeline（metrics〜messageの5段階を固定順序で
+呼び出すOrchestration/Facade）と、build_report()が保持し続けていたこの合成ロジックの
+重複を解消するため、v6.33.0でbuild_report()をPipelineへの薄い委譲へ置き換えた
+（docs/design/retry_observability_runtime_integration_foundation.md AD-6）。
+RetryRuntimeLogReaderの直接呼び出しは維持し、format_report()のシグネチャ・出力形式は
+完全に無変更のまま保つ。
+
+本スクリプト自体はRuntime Pipelineへの組み込みではない。RetryCompositionRoot /
+RetryRuntimeOrchestratorはいずれも無改修。scripts/run_retry_runtime.pyはv6.33.0で
+RetryObservabilityPipelineの配線を受けたが（AD-2、本スクリプトとは別の変更）、
+本スクリプトはそのファイルへ依存せず・依存もされない（相互に独立した2つの消費経路）。
 
 使い方:
     cd projects/03_game_content_ai
@@ -46,22 +56,15 @@ _SRC_ROOT = _PROJECT_ROOT / "src"
 if str(_SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(_SRC_ROOT))
 
-from retry_alert import RetryAlert, RetryAlertEvaluator
+from retry_alert import RetryAlert
 from retry_metrics import (
-    RetryMetricsCalculator,
     RetryMetricsSnapshot,
     RetryRuntimeLogReader,
 )
-from retry_monitoring import RetryHealthEvaluator, RetryHealthReport
-from retry_notification import (
-    RetryNotificationDecision,
-    RetryNotificationEvaluator,
-    RetryNotificationStatus,
-)
-from retry_notification_message import (
-    RetryNotificationMessage,
-    RetryNotificationMessageBuilder,
-)
+from retry_monitoring import RetryHealthReport
+from retry_notification import RetryNotificationDecision
+from retry_notification_message import RetryNotificationMessage
+from retry_observability_pipeline import RetryObservabilityPipeline
 
 _DEFAULT_LOG_PATH = _PROJECT_ROOT / ".run" / "retry_runtime_log.jsonl"
 
@@ -88,43 +91,26 @@ class RetryNotificationCliReport:
 
 def build_report(log_path: Path) -> RetryNotificationCliReport:
     """
-    log_path（.run/retry_runtime_log.jsonl等）を読み取り、Metrics -> Health ->
-    Alert -> Notification -> Message の順に評価し、RetryNotificationCliReport を返す。
+    log_path（.run/retry_runtime_log.jsonl等）を読み取り、
+    RetryObservabilityPipeline.evaluate() へ委譲してRetryNotificationCliReport
+    を返す（v6.33.0、docs/design/retry_observability_runtime_integration_
+    foundation.md AD-6）。
 
-    NOTIFY の場合のみ RetryNotificationMessageBuilder.build() を呼び出す。
-    NO_NOTIFICATION の場合は message=None とし、Builderを呼び出さない（設計書16章）。
+    Metrics -> Health -> Alert -> Notification -> Message の評価順序・
+    NOTIFYの場合のみRetryNotificationMessageBuilder.build()を呼ぶ契約・
+    NO_NOTIFICATIONの場合はmessage=Noneとする契約（設計書16章）は、いずれも
+    Pipeline内部（retry_observability_pipeline）へ移り無変更のまま維持される。
     """
     reader = RetryRuntimeLogReader(log_path=log_path)
-    calculator = RetryMetricsCalculator()
-    health_evaluator = RetryHealthEvaluator()
-    alert_evaluator = RetryAlertEvaluator()
-    notification_evaluator = RetryNotificationEvaluator()
-    message_builder = RetryNotificationMessageBuilder()
-
     records = reader.read()
-    metrics = calculator.calculate(records)
-    health_report = health_evaluator.evaluate(metrics)
-    alert = alert_evaluator.evaluate(health_report)
-    notification_decision = notification_evaluator.evaluate(alert)
-
-    if notification_decision.status is RetryNotificationStatus.NOTIFY:
-        message = message_builder.build(notification_decision)
-    elif notification_decision.status is RetryNotificationStatus.NO_NOTIFICATION:
-        message = None
-    else:
-        # 構造上到達不能。RetryNotificationStatusが将来拡張された場合の
-        # 防御的フォールバック禁止分岐（既存5パッケージの網羅分岐パターンを継承）。
-        raise ValueError(
-            "show_retry_notification: "
-            f"未対応のRetryNotificationStatusです: {notification_decision.status!r}"
-        )
+    observability_report = RetryObservabilityPipeline().evaluate(records)
 
     return RetryNotificationCliReport(
-        metrics=metrics,
-        health_report=health_report,
-        alert=alert,
-        notification_decision=notification_decision,
-        message=message,
+        metrics=observability_report.metrics,
+        health_report=observability_report.health_report,
+        alert=observability_report.alert,
+        notification_decision=observability_report.notification_decision,
+        message=observability_report.message,
     )
 
 

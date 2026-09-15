@@ -53,6 +53,7 @@ RELEASE_ORDER: tuple[str, ...] = (
     "v6.30.0",
     "v6.31.0",
     "v6.32.0",
+    "v6.33.0",
 )
 
 
@@ -193,6 +194,15 @@ _SOURCE_CHANGE_CONTRIBUTIONS: tuple[tuple[str, str, frozenset], ...] = (
     ("src/outputs", "v6.32.0", frozenset({
         "src/outputs/wordpress_output.py",
         "src/outputs/manager.py",
+    })),
+    # v6.33.0（Retry Observability Runtime Integration）：Retry Runtimeへの
+    # RetryObservabilityPipeline配線（scripts/run_retry_runtime.py）と、
+    # scripts/show_retry_notification.pyのPipelineへの薄い委譲統一
+    # （docs/design/retry_observability_runtime_integration_foundation.md
+    # AD-2・AD-6）に伴う承認済み変更。
+    ("scripts", "v6.33.0", frozenset({
+        "scripts/run_retry_runtime.py",
+        "scripts/show_retry_notification.py",
     })),
 )
 
@@ -529,6 +539,37 @@ _TEST_CHANGE_CONTRIBUTIONS: tuple[tuple[str, str], ...] = (
     # §18 test#23（_reconcile_all_locked() static oracle）自身。新規E2E追加のみ、
     # srcへの変更なし。
     ("test_e2e_v6_32_37_reconcile_all_locked_static_oracle.py", "v6.32.0"),
+    # v6.33.0（Retry Observability Runtime Integration）自身。新規独立package
+    # （src/retry_runtime_observability）はPROTECTED_PATHS対象外のためsource
+    # contributionは不要。新規E2E追加と、その追加・上記scripts source
+    # contributionを許容するための本レジストリ自身の編集
+    # （RELEASE_ORDERへの"v6.33.0"追記本体）を登録する。
+    ("test_e2e_v6_33_0_retry_observability_runtime_integration_foundation.py", "v6.33.0"),
+    ("zero_diff_guard_registry.py", "v6.33.0"),
+    # v6.33.0：scripts/show_retry_notification.py::build_report()のPipelineへの
+    # 委譲統一（AD-6）に伴い、CLIローカルのEvaluator/Builderクラス参照を
+    # monkeypatchしていた既存テスト4箇所（PI-5A/PI-5B/EX-1/EX-2）のpatch対象を、
+    # 実際にクラス参照を解決するretry_observability_pipeline.retry_observability_pipeline
+    # モジュールへ再配置した（AD-6a。アサーション内容自体は無変更）。
+    ("test_e2e_v6_8_0_retry_notification_cli_report_wiring_foundation.py", "v6.33.0"),
+    # v6.33.0（Independent Code Review Round 1 MAJOR-2/Round 2 MINOR-4対応）：
+    # src/retry_runtime_logging（log_cycle()のbool化）・scripts/run_retry_runtime.py
+    # （RetryObservabilityPipeline配線）の承認済み変更により、これらpathの
+    # 無変更を独自にhardcodeしていた既存E2E（registry導入以前の各Releaseが
+    # 個別に持つ、本registryを参照しないstandalone guard）3ファイルが副作用として
+    # 壊れるため、v6.30.0/v6.31.0/v6.32.0のHistorical Zero-Diff Guard Migrationと
+    # 同一パターンで、該当pathの検査を狭く除外する改訂を行った既存E2E一式を
+    # 登録する（個々の除外方法・対象pathは各ファイル内のコメントを参照。
+    # `docs/CHANGELOG.md` `[KI-32]`参照）。
+    ("test_e2e_v5_5_0_retry_runtime_loop_foundation.py", "v6.33.0"),
+    ("test_e2e_v6_3_0_retry_metrics_foundation.py", "v6.33.0"),
+    ("test_e2e_v6_4_0_retry_monitoring_foundation.py", "v6.33.0"),
+    # v6.33.0（正式Formal Regression検証時に発見された[KI-32]対応漏れ）：
+    # test_e2e_v6_27_0自身が持つ独自の_ZERODIFF1_ALLOWED_EXCEPTIONS["scripts"]
+    # （本registryを参照しないstandalone guard）が、上記3ファイルと同型の
+    # 理由（scripts/run_retry_runtime.py・scripts/show_retry_notification.pyへの
+    # 承認済み変更）でFAILしていたため、同一パターンの狭い除外編集を追加登録する。
+    ("test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py", "v6.33.0"),
 )
 
 

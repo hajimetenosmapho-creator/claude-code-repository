@@ -1086,9 +1086,51 @@ MVP到達までのRelease計画（6.30以降）は `docs/MVP_COMPLETION_ROADMAP.
   Inventory32ファイル：v1.11.0＋v5.9.0＋v6.0.0〜v6.29.0）は**5376/5376
   PASS、FAIL 0／SKIP 0、全ファイルexit code 0**で完了した。
   main.py等既存productionコードはいずれも無改修（Runtime Zero Diff）。
-  `RetryRuntimeOrchestrator` / `RetryCompositionRoot` / `SchedulerEngine`
-  への実配線は引き続き未着手のまま、次Wiring Release候補とする
-  （`docs/design/retry_observability_pipeline_foundation.md`）。
+  `RetryRuntimeOrchestrator` / `RetryCompositionRoot`への実配線は本Release
+  時点では未着手だったが、v6.33.0（Retry Observability Runtime Integration、
+  下記エントリ参照）でRetry Runtime本体（`scripts/run_retry_runtime.py`）
+  への実配線を完了した（`SchedulerEngine`側の統合は引き続き対象外。
+  `docs/design/retry_observability_pipeline_foundation.md`）。
+- [x] **Retry Observability Runtime Integration**（v6.33.0）：
+  `RetryObservabilityPipeline`（v6.29.0）をRetry Runtime本体
+  （`scripts/run_retry_runtime.py`）へ実配線し、`scripts/show_retry_notification.py::
+  build_report()`が保持し続けていた合成ロジックの重複を解消した、v6.29.0
+  設計書14章が定義した「将来Wiring境界」の実施。新規独立package
+  `src/retry_runtime_observability/`（`RetryRuntimeObservabilityReporter`。
+  `observe()`：全件records読み取り＋Pipeline評価のraw契約、
+  `observe_and_report()`：読み取り・評価・整形・コンソール出力の全段階を
+  覆う単一failure containment境界。`Exception`のみをcontainし`BaseException`
+  （`SystemExit`/`KeyboardInterrupt`/`GeneratorExit`）は対象外）を新設し、
+  `run_cycle()`内で`cycle_logger.log_cycle()`成功時のみ呼び出すよう配線した
+  （Current-Cycle Inclusion Contract）。Runtime・CLIともfull-history semantics
+  を維持し（windowingは導入しない）、`RetryRuntimeCycleLogger.log_cycle()`の
+  戻り値を`None`→`bool`へ追加的に変更した（`True`はappend/write/closeが
+  OSErrorを送出せず完了したことのみを意味し、fsync durability等は保証しない）。
+  `scripts/show_retry_notification.py::build_report()`を`RetryObservabilityPipeline.
+  evaluate()`への薄い委譲へ統一し、`RetryHealthEvaluator`等4クラスの直接
+  インスタンス化を削除した。retry判断ロジック・durable state・side-effect
+  safety・Pipelineの Fail Fast契約はいずれも変更していない。Architecture Design
+  （`docs/design/retry_observability_runtime_integration_foundation.md`）は
+  Claude Code単独設計→Codex `codex-readonly-review` workflowによる独立
+  read-only Architecture Reviewを4ラウンド実施し、Rev.1〜Rev.3で検出された
+  累計MAJOR 6件・MINOR 5件（Bounded Tail Windowという未承認のobservability
+  policy変更の撤回・failure containment境界の拡張・current-cycle inclusion
+  契約・既存v6.8 CLIテストのmonkeypatch移行戦略等）をすべて解消し、Round 4で
+  `APPROVED`（Blocking 0／Major 0／Minor 0／Suggestions 0）に収束した。新規
+  E2E（`test_e2e_v6_33_0_retry_observability_runtime_integration_foundation.py`、
+  v6.33 E2E PASS。real `.run/retry_runtime.lock`の有無でアサーション総数が
+  186件・187件のいずれかになる条件分岐を含むため固定数は表記しない）・
+  既存v6.8.0 CLI Wiring E2E（monkeypatch対象再配置後、197/197 PASS）とも
+  完全PASS。限定関連回帰（retry系44ファイル）を
+  実施し、Release 6.33が変更した`src/retry_runtime_logging` /
+  `scripts/run_retry_runtime.py`に依存する既存Architecture Guard3ファイルへ
+  狭い除外編集を適用した（`docs/CHANGELOG.md` `[KI-32]`参照）。正式Formal
+  Regression（全Inventory）は本エントリ時点では未実施（別フェーズで実施予定）。
+  Bounded Tail Window（希釈問題対応）は未承認のobservability policy変更に
+  該当するとしてRound 1で撤回し、本Releaseからは除外してFuture Candidateへ
+  先送りした（下記参照）。external sender・Scheduler統合・v6.32
+  `release_claim()`残存Suggestionはいずれも引き続きOut of Scope
+  （`docs/design/retry_observability_runtime_integration_foundation.md`）。
 - [x] **Zero-Diff Guard Registry Foundation**（v6.26.0、DEF-6.23-9）：
   v6.22.0 DEF-6.22-14の継続として提起され、v6.23.0で命名（DEF-6.23-9）、
   v6.24.0で「baseline 固定 guard が3→4件へ増え、次Release以降のO(N)保守
@@ -1538,11 +1580,23 @@ MVP到達までのRelease計画（6.30以降）は `docs/MVP_COMPLETION_ROADMAP.
   （`docs/design/retry_alert_foundation.md` 7章）。`RetryNotificationDecision`側は
   `scripts/show_retry_notification.py`としてv6.8.0で実装済み（上記「Retry Notification CLI
   Report Wiring Foundation」参照、`docs/design/retry_notification_foundation.md` 15章）
-- [ ] **Runtime／Scheduler Integration**：`Metrics → Monitoring → Alert → Notification`パイプライン
-  全体をRetry Runtimeへ実際に配線し、定期的に評価が回るようにするComposition Root配線。v6.3.0
-  （Metrics）〜v6.7.0（Notification Message）はいずれも「消費者不在の先行実装」のままであり
-  （v6.8.0のCLI Report Wiringは確認用の消費者に留まる）、本項目が初めてRuntime本体の実際の
-  消費者を作る
+- [x] **Runtime Integration**：v6.33.0（Retry Observability Runtime Integration、上記「完了済み」
+  参照）で完了。`Metrics → Monitoring → Alert → Notification → Message`パイプライン全体を
+  Retry Runtime本体（`scripts/run_retry_runtime.py`）へ実際に配線し、1サイクルごとに評価が回る
+  ようにした。`SchedulerEngine`（Job/Event Scheduler）側との統合は本項目の対象外のまま
+  （実施済みなし、Future Candidateとしても現時点で具体的な候補なし）
+- [ ] **Bounded Tail Window / Incremental Offset Tracking**（v6.33.0で検討・撤回、Future Candidate
+  へ先送り）：`RetryMetricsCalculator`が前提とするcross-cycle cumulative semanticsの下で、
+  Runtime稼働期間が伸びるほど`enqueue_success_ratio`が過去の健全な履歴で希釈され直近の劣化を
+  検出しにくくなる問題（希釈問題）、および`.run/retry_runtime_log.jsonl`の全件re-readによる
+  I/Oコスト増大への対応。v6.33.0のCodex Round 1 Architecture Reviewで、素朴なwindowing
+  （直近N件のみを評価に使う）はRuntime/CLI間でauthoritative horizonの不一致を生む未承認の
+  observability policy変更に該当するとMAJOR指摘され撤回した。再検討する場合は、
+  (a) Runtime/CLI双方でauthoritative horizonをどう統一するか（あるいは意図的に分離するとして
+  それをどう明示するか）、(b) health/alert/notification判定へ与える影響、を含む独立した
+  observability policy変更として、新規Architecture Reviewを経ること（「records調達方式の
+  内部最適化」としては再提案しない。`docs/design/
+  retry_observability_runtime_integration_foundation.md` 15章）
 - [ ] **Retry Monitoring CLI/Report Wiring Foundation**：`scripts/show_retry_health.py`等を新設し、`RetryHealthReport`を人間可読な形式でコンソール表示する。v5.3.0/v5.4.0の分離と同型のパターン（`docs/design/retry_monitoring_foundation.md` 11.2節）
 - [ ] **閾値の外部設定化**：`RetryHealthThresholds`（v6.4.0時点ではコード上の固定デフォルト値）を環境変数または設定ファイルから読み込めるようにする。設定ファイルの読み込みは新しい外部I/O・永続化変更に該当する可能性があるため独立したArchitecture Reviewを要する（`docs/design/retry_monitoring_foundation.md` 11.3節）
 - [ ] **複数指標に基づく総合判定**：v6.4.0の`RetryHealthEvaluator`は`enqueue_success_ratio`のみを参照する単一指標判定。`RetryMetricsSnapshot`が保持する他のフィールド（`enqueue_failed_total`等）を組み合わせた総合判定へ拡張するかどうかは、Retry Runtime Log Schema Extensionの進捗と合わせて検討する（`docs/design/retry_monitoring_foundation.md` 11.4節）
