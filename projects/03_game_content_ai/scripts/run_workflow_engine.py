@@ -20,10 +20,11 @@ Scheduler（v2.6.0）の判定結果（SchedulerEvent）を受け取り、Workfl
 
 動作の流れ（デフォルト、Scheduler経由）:
     1. InMemorySchedulerRepository() を生成し、SchedulerManager経由で
-       固定・最小限のデモ用SchedulerJobを1件だけ登録する
-       （job_id="workflow_engine_demo_daily", trigger_type=DAILY, schedule="09:00"）。
-       複数Job・設定ファイル化・動的登録はFoundation Releaseの対象外
-       （docs/design/workflow_engine_foundation.md 10章・12章「責務範囲の明文化」）
+       ProductionScheduleSource（v6.34.0、唯一のproduction schedule source。
+       docs/design/scheduler_driver_duplicate_dispatch_safety_foundation.md 9章）
+       が返す全Job定義を登録する。本スクリプトは引き続き「先頭にマッチした1件
+       （events[0]）のみを処理する」単発診断/手動実行ツールのまま据え置く
+       （複数event一括処理はscripts/run_scheduler_driver.py（v6.34.0新設）の責務）。
     2. SchedulerEngine().run_due(jobs) で実行対象のSchedulerEventを取得する（v2.6.0、無改修）
     3. 対象がなければ「実行対象なし」を表示して終了する
     4. 対象があれば、SchedulerEventの各フィールドをそのままコピーして
@@ -76,10 +77,9 @@ from execution_history import ExecutionHistoryConfig
 from scheduler import (
     InMemorySchedulerRepository,
     SchedulerEngine,
-    SchedulerJob,
     SchedulerManager,
-    TriggerType,
 )
+from scheduler_schedule_source import ProductionScheduleSource
 from workflow_engine import (
     SOURCE_MANUAL,
     SOURCE_SCHEDULER,
@@ -96,23 +96,7 @@ from side_effect_safety import (
     complete_legacy_execution_context,
 )
 
-DEMO_JOB_ID = "workflow_engine_demo_daily"
-DEMO_JOB_SCHEDULE = "09:00"
 MANUAL_TRIGGER_REASON = "Manual invocation via --job-id."
-
-
-def build_demo_job() -> SchedulerJob:
-    """
-    Foundation Releaseで扱う固定・最小限（1件のみ）のデモJob。
-
-    複数Job・設定ファイル化・動的登録はFuture Extensions（対象外）。
-    """
-    return SchedulerJob(
-        job_id=DEMO_JOB_ID,
-        name="Workflow Engine Demo (Daily 09:00)",
-        trigger_type=TriggerType.DAILY,
-        schedule=DEMO_JOB_SCHEDULE,
-    )
 
 
 def resolve_event(args) -> WorkflowEngineEvent | None:
@@ -120,6 +104,14 @@ def resolve_event(args) -> WorkflowEngineEvent | None:
     --job-id 指定時は手動経路、未指定時は Scheduler 経由で WorkflowEngineEvent を構築する。
 
     Scheduler経由で実行対象のJobがない場合は None を返す。
+
+    Job定義は ProductionScheduleSource（v6.34.0、唯一のproduction schedule source。
+    docs/design/scheduler_driver_duplicate_dispatch_safety_foundation.md 9.2章）から
+    取得する。旧来のローカルbuild_demo_job()は廃止し、production_jobsを一元的な
+    供給元とした（全件をSchedulerManagerへ登録する）。複数Jobが同時にマッチした
+    場合でも、本スクリプトは既存どおり先頭の1件（events[0]）のみを処理する
+    （複数event一括処理はscripts/run_scheduler_driver.py（v6.34.0新設）の責務であり、
+    本スクリプトは単発診断/手動実行ツールのまま据え置く。9.2章・25章R9）。
     """
     if args.job_id is not None:
         return WorkflowEngineEvent(
@@ -131,14 +123,17 @@ def resolve_event(args) -> WorkflowEngineEvent | None:
 
     repository = InMemorySchedulerRepository()
     scheduler_manager = SchedulerManager(repository)
-    scheduler_manager.register_job(build_demo_job())
+    production_jobs = ProductionScheduleSource().jobs()
+    for job in production_jobs:
+        scheduler_manager.register_job(job)
 
     jobs = scheduler_manager.list_jobs()
     events = SchedulerEngine().run_due(jobs)
 
     if not events:
-        print("[情報] 実行対象のJobはありません（現在時刻がデモJobのスケジュールと一致しません）。")
-        print(f"  デモJob: job_id={DEMO_JOB_ID}, schedule={DEMO_JOB_SCHEDULE}（DAILY）")
+        print("[情報] 実行対象のJobはありません（現在時刻がJobのスケジュールと一致しません）。")
+        for job in production_jobs:
+            print(f"  Job: job_id={job.job_id}, schedule={job.schedule}（{job.trigger_type.value}）")
         print("  --job-id オプションで手動起動することもできます。")
         return None
 

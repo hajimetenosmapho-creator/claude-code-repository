@@ -108,6 +108,16 @@ SIDE_EFFECT_CAPABLE_MANIFEST = {
     # protected composition rootであり...A・B・C到達」。9番目のSIDE_EFFECT_CAPABLE
     # エントリとして、表には現れないがここで明示的に転記する。
     "scripts/run_retry_runtime.py": frozenset({SINK_A, SINK_B, SINK_C}),
+    # v6.34.0（Scheduler Driver & Duplicate Dispatch Safety）：新設
+    # scripts/run_scheduler_driver.py。外部副作用への唯一の経路は
+    # SchedulerDriverOrchestrator._dispatch_one()内の
+    # self._workflow_engine_manager.run()呼び出しのみであり、これは
+    # scripts/run_workflow_engine.pyが直接呼ぶWorkflowEngineManager.run()と
+    # 完全に同一のsink到達性（NEWS/REVIEW/PUBLISH経由のA・B・C）を持つ
+    # （docs/design/scheduler_driver_duplicate_dispatch_safety_foundation.md
+    # 6.2章。本Releaseはsrc/workflow_engine/を無改修のまま呼び出すのみで、
+    # 新規のsink到達経路を一切追加しない）。10番目のSIDE_EFFECT_CAPABLEエントリ。
+    "scripts/run_scheduler_driver.py": frozenset({SINK_A, SINK_B, SINK_C}),
 }
 
 NON_SIDE_EFFECT_CAPABLE_MANIFEST = {
@@ -131,7 +141,7 @@ _AGENT_MANAGER_FANOUT_FILES = {
 }
 
 assert set(SIDE_EFFECT_CAPABLE_MANIFEST) & NON_SIDE_EFFECT_CAPABLE_MANIFEST == set()
-assert len(SIDE_EFFECT_CAPABLE_MANIFEST) == 9
+assert len(SIDE_EFFECT_CAPABLE_MANIFEST) == 10
 assert len(NON_SIDE_EFFECT_CAPABLE_MANIFEST) == 10
 
 FULL_MANIFEST = dict(SIDE_EFFECT_CAPABLE_MANIFEST)
@@ -1251,6 +1261,19 @@ check(
     set(SIDE_EFFECT_CAPABLE_MANIFEST["scripts/run_workflow_engine.py"]),
 )
 check("Stage B-1d'. run_workflow_engine.py に解決不能な動的呼び出し辺なし", _workflow_engine_result.unresolved, [])
+
+# v6.34.0：scripts/run_scheduler_driver.py。汎用closureエンジンで実際に
+# closure_of_script()を呼び出し、SIDE_EFFECT_CAPABLE_MANIFESTでの宣言値
+# （run_workflow_engine.pyと同一のA・B・C到達）を実測で検証する
+# （manifestへの追記のみで済ませず、Stage Bの実測検証対象へ明示的に加える）。
+_scheduler_driver_result = closure_of_script("scripts/run_scheduler_driver.py")
+print(f"    run_scheduler_driver.py: sinks={_scheduler_driver_result.sinks} unresolved={_scheduler_driver_result.unresolved}")
+check(
+    "Stage B-1e. run_scheduler_driver.py の到達sink集合",
+    _scheduler_driver_result.sinks,
+    set(SIDE_EFFECT_CAPABLE_MANIFEST["scripts/run_scheduler_driver.py"]),
+)
+check("Stage B-1e'. run_scheduler_driver.py に解決不能な動的呼び出し辺なし", _scheduler_driver_result.unresolved, [])
 print()
 
 

@@ -5877,3 +5877,53 @@ Architecture DesignはRound 1〜3で累計MAJOR 6件・MINOR 5件（Bounded Tail
 Bounded Tail Window / Incremental Offset Tracking（希釈問題対応・I/Oコスト削減）。Codex Round 1指摘により「records調達方式の内部最適化」としては再提案せず、Runtime/CLI間のauthoritative horizon統一方針を含む独立したobservability policy変更として新規Architecture Reviewを要する。Observability結果の構造化ログ記録・外部Sender連携（Slack等）。v6.32 `release_claim()`残存Suggestion（引き続きOut of Scope）。
 
 詳細は`docs/design/retry_observability_runtime_integration_foundation.md`（Architecture Design Rev.4、Codex独立review Round 1〜4、16章Finding Resolution Matrixに全指摘の解消記録を含む）を参照。
+
+## Scheduler Driver & Duplicate Dispatch Safety層（`src/scheduler_dispatch_ledger/` / `src/scheduler_schedule_source/` / `src/scheduler_driver/` / `scripts/run_scheduler_driver.py`、v6.34.0 実装完了）
+
+> **本節は実装完了時点の記録である。新規E2E（`test_e2e_v6_34_0_scheduler_driver_duplicate_dispatch_safety_foundation.py`）は**55/55 PASS**。Invariant #35 closure oracle（`test_e2e_v6_32_7_invariant_35_closure_oracle.py`）改訂後は54/54 PASS。Architecture Design（`docs/design/scheduler_driver_duplicate_dispatch_safety_foundation.md`）はCodex `codex-readonly-review`による独立read-only Architecture Reviewを5ラウンド実施し、Round 5で`APPROVED`（Blocking 0／Major 0）に収束した。実装完了後のIndependent Code Review（同workflow、read-only、`scheduler_dispatch_ledger_store.py`を中心に6ラウンド）も`APPROVED`（Blocking 0／Major 0／Minor 1 cosmetic）に収束した。正式Formal Regression（正式Inventory37ファイル実測）は32/37ファイルexit code 0、残る5ファイルは新設`scripts/run_scheduler_driver.py`がuncommittedであることのみに起因する既知差分（`docs/CHANGELOG.md` [KI-33]参照）。**commit/pushは未実施（Human Gate待ち）**。**
+
+`SchedulerEngine`（v2.6.0、無改修）を定期的に駆動し、production workflow（`WorkflowEngineManager.run()`経由のNEWS/REVIEW/PUBLISH）へ配線するloop driverを新設した。再起動・クラッシュ・多重driverに対してもduplicate dispatchをfail-closedで防止する（`docs/MVP_COMPLETION_ROADMAP.md` 6.34節）。
+
+### 新規package `src/scheduler_dispatch_ledger/`
+
+stable event identity（`(job_id, occurrence_minute)`の組、`event_identity = f"{job_id}::{occurrence_minute}"`）ごとのdispatch記録を保持する独立package。3-phase（`CLAIMED` / `CONFIRMED` / `RECOVERY_REQUIRED`、write-once-forward-only）、owner_token authorityなし（single-active-driver制約下ではRetry Lineageの4-phase・owner_tokenモデルほどの複雑さを要しない、Architecture 8.4章）。`claim()`は既存recordがあれば（phase不問）常に`acknowledged=False`を返し、これ1点で同一event_identityの二重claimが構造的に不可能になる。`confirm()`は既存recordの`phase==CLAIMED`を要求する。`reconcile_stale_claims()`は列挙・全件読み取り（1件でも失敗すれば書き込みゼロ件で例外送出）の後、per-recordロック取得後にfresh readで`phase`を再確認してからのみ`RECOVERY_REQUIRED`へ書き込む（`retry_lineage_manager.py`の`_reconcile_all_locked()`と同型のcontract）。
+
+`JsonSchedulerDispatchLedgerStore`は、`get()`/`list_all()`が読み取り・パース・スキーマ検証のいずれかに失敗した場合に`SchedulerDispatchLedgerStoreReadError`を送出し、Noneを返さない（「読み取り不能」と「recordが確実に存在しない」を明確に区別する、既存`JsonRetryLineageStore`の「読み取り失敗はログのうえNone/スキップ」という契約とは意図的に異なる）。Independent Code Review（6ラウンド）を経て、`Path.exists()`/`Path.glob()`（Python 3.14でOSErrorを握りつぶす）を避け`os.lstat()`/`os.scandir()`を直接使用、symlinkを一切許容せず(`stat.S_ISREG()`/`stat.S_ISDIR()`検査)、TOCTOU windowを2 syscall分まで縮小する再確認、`_sanitize_event_identity()`のWindows case-insensitivityに対しても単射（injective）なUTF-8バイト単位エスケープ（`~XX`形式、安全文字は数字・`_`・`.`のみ）、filename/event_identityクロスチェック、を実装した。
+
+### 新規package `src/scheduler_schedule_source/`
+
+`ProductionScheduleSource`：production `SchedulerJob`定義の唯一の供給元。`scripts/run_workflow_engine.py`が保持していたローカル固定Job定義（`job_id="workflow_engine_demo_daily"`, DAILY 09:00）を、値を完全に維持したまま移設した。`scripts/run_workflow_engine.py`と新設`scripts/run_scheduler_driver.py`の両方が本クラスを唯一の供給元として使用する。
+
+### 新規package `src/scheduler_driver/`
+
+`SchedulerDriverOrchestrator.run_once()`：(1) Ownership-Integrity Self-Check（`_verify_lock_ownership()`、`run_once()`冒頭の最初の文）、(2) `reconcile_stale_claims()`、(3) `SchedulerEngine.evaluate()`（無改修のまま呼び出すのみ、pure boundary維持）、(4) Design Decision Jの2層filter（`metadata["retry_candidate"]`キー不在を一次機構＝`SchedulerEngine`自身の`_build_retry_events()`が発する構造的provenance signal、`ProductionScheduleSource`のjob_id allowlistを二次防御）でretry候補eventを除外、(5) 各eventについてfail-closed claim→`WorkflowEngineManager.run()`呼び出し（`try/except Exception`でcontain、再raiseしない、BaseExceptionは対象外）→confirm()（戻り値を必ず確認）、の順で処理する。
+
+`LockIntegrityViolationError`/`_verify_lock_ownership()`/`_release_if_owned()`（Lock Lifecycle Contract）：`lock.release()`を直接呼び出すコードはリポジトリ全体で`_release_if_owned()`内部ただ1箇所に限定し、`scripts/run_scheduler_driver.py`の`main()`の`finally`節からのみ呼び出す。releaseの直前に必ずownershipを再検証し（`Exception`を広く捕捉、`BaseException`は対象外）、検証失敗時はreleaseをスキップして他プロセスの正当なlockを保護する。TOCTOU残存windowはAccepted Risk（低確率、未解消、OS標準APIにアトミックなcompare-and-deleteプリミティブが存在しないため）として明記されている。
+
+### `scripts/run_scheduler_driver.py`（新規CLIエントリスクリプト）
+
+`RetryRuntimeLock`/`RetryRuntimeLoop`/`RetryRuntimeShutdown`（いずれも`src/retry_runtime_*/`）を**コード変更ゼロ**のまま再利用する（これら3クラスは元々「Retryドメインを一切知らない汎用コンポーネント」と自己文書化されていたことを根拠とする）。single-active-driver制約は新しいロックパス（`.run/scheduler_driver.lock`）で独立したインスタンスとして課され、Retry Runtime（`.run/retry_runtime.lock`）とは完全に独立している。`SCHEDULER_DRIVER_ENABLED`ゲート（デフォルトfalse）をlock取得・CompositionRoot構築のいずれよりも前に確認する。
+
+### `scripts/run_workflow_engine.py`の変更
+
+`build_demo_job()`を`ProductionScheduleSource().jobs()`（全件ループ登録）へ置換した。`events[0]`のみを処理する既存挙動・`--job-id`手動経路は意図的に無変更のまま維持した（複数event一括処理は新設`scripts/run_scheduler_driver.py`の責務）。
+
+### Retry Runtimeとのownership分離
+
+Scheduler DriverとRetry Runtimeは、lock（`.run/scheduler_driver.lock` vs `.run/retry_runtime.lock`）・durable state（`state/scheduler_dispatch/` vs `state/retry_lineage/`）・dispatch対象（`ProductionScheduleSource`由来のgenuine occurrence vs `RetryLineageManager`がclaimしたretryable candidate）のいずれも完全に独立している。両プロセスの同時実行は許容される。record-level非衝突（独立した`run_id`・独立したrecord）は無条件に保証されるが、content-level idempotency（同時実行時の重複投稿等）は対象外であり、既存Post-MVP `duplicate_filter`項目へ委ねる（Architecture 14.1章）。
+
+### Architecture Review・Independent Code Reviewの経緯
+
+Architecture DesignはCodex `codex-readonly-review`によるRound 1〜5を経て`APPROVED`に収束した：Round 1（Blocking 2：single-active-driverのstale-lock競合対策未確立・durable ledgerのstore-level失敗時fail-closed契約未定義／Major 4）→Round 2（Blocking 2：Ownership-Integrity Self-Checkがcycle境界のみの検証／Major 2）→Round 3（Blocking 2：起動時検証のtry外配置・fresh-read-under-lock契約欠如／Major 2）→Round 4（Blocking 0、Major 1：TOCTOU認識の絶対的表現の矛盾）→Round 5（**APPROVED**）。
+
+実装完了後のIndependent Code Reviewは`scheduler_dispatch_ledger_store.py`を主対象に6ラウンドを要した：Round 1（Blocking 1：store_dir不在の誤判定／Major 1：schema検証不足）→Round 2（Blocking 1：`Path.exists()`/`Path.glob()`のPython 3.14 OSError握りつぶし）→Round 3（Blocking 1：TOCTOU・symlink追従）→Round 4（Blocking 0、Major 1：ファイル名sanitizeの非単射性）→Round 5（Major 1：Windows case-insensitivity対応不足）→Round 6（**APPROVED**、Minor 1 cosmetic）。各ラウンドの指摘はArchitecture契約を弱めずに解消し、直接検証する回帰テスト（テスト29〜34）を追加した。
+
+### Test Review・Regressionの実績
+
+新規E2E（`tests/test_e2e_v6_34_0_scheduler_driver_duplicate_dispatch_safety_foundation.py`）は**55/55 PASS**。Invariant #35 closure oracle改訂後は54/54 PASS（新設`scripts/run_scheduler_driver.py`の実測sink到達性`{A,B,C}`が宣言値と一致することをAST closure engineで確認）。正式Formal Regression（正式Inventory37ファイル実測）は32/37ファイルexit code 0。残る5ファイル（`test_e2e_v6_22_0`・`v6_23_0`・`v6_24_0`・`v6_26_0`・`v6_27_0`）は、新設`scripts/run_scheduler_driver.py`が本Implementation Phase完了時点でuncommittedであることのみに起因する既知差分（`docs/CHANGELOG.md` [KI-33]、`[KI-3]`系列と同型、commit後に自然解消見込み）。
+
+### Future Extension
+
+Manual Recovery Procedure用の専用CLIスクリプト（Architecture Gate Checklist item 9でスコープ外と確定済み）。`RECOVERY_REQUIRED`occurrenceの自動復旧（Out of Scope）。Ownership-Integrity Self-Check / Lock Lifecycle ContractのTOCTOU残存window（Accepted Risk、25章R2）。`RetryRuntimeLock`等の`Retry`命名コンポーネントのリネーム（Open Issue、25章R4）。
+
+詳細は`docs/design/scheduler_driver_duplicate_dispatch_safety_foundation.md`（Architecture Design、Codex Round 1〜5の記録を含む全28章）を参照。

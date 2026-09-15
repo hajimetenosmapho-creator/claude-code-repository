@@ -54,6 +54,7 @@ RELEASE_ORDER: tuple[str, ...] = (
     "v6.31.0",
     "v6.32.0",
     "v6.33.0",
+    "v6.34.0",
 )
 
 
@@ -203,6 +204,14 @@ _SOURCE_CHANGE_CONTRIBUTIONS: tuple[tuple[str, str, frozenset], ...] = (
     ("scripts", "v6.33.0", frozenset({
         "scripts/run_retry_runtime.py",
         "scripts/show_retry_notification.py",
+    })),
+    # v6.34.0（Scheduler Driver & Duplicate Dispatch Safety）：production schedule
+    # sourceの一元化に伴うscripts/run_workflow_engine.pyの変更（build_demo_job()を
+    # ProductionScheduleSource().jobs()へ置換、9.2章）と、新設
+    # scripts/run_scheduler_driver.py（12章 Lock Lifecycle Contract）。
+    ("scripts", "v6.34.0", frozenset({
+        "scripts/run_workflow_engine.py",
+        "scripts/run_scheduler_driver.py",
     })),
 )
 
@@ -570,6 +579,27 @@ _TEST_CHANGE_CONTRIBUTIONS: tuple[tuple[str, str], ...] = (
     # 理由（scripts/run_retry_runtime.py・scripts/show_retry_notification.pyへの
     # 承認済み変更）でFAILしていたため、同一パターンの狭い除外編集を追加登録する。
     ("test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py", "v6.33.0"),
+    # v6.34.0（Scheduler Driver & Duplicate Dispatch Safety）自身。新規独立package
+    # （src/scheduler_dispatch_ledger・src/scheduler_schedule_source・
+    # src/scheduler_driver）はPROTECTED_PATHS対象外のためsource contributionは
+    # 不要。新規E2E追加と、その追加・上記scripts source contributionを許容する
+    # ための本レジストリ自身の編集（RELEASE_ORDERへの"v6.34.0"追記本体）を登録する。
+    ("test_e2e_v6_34_0_scheduler_driver_duplicate_dispatch_safety_foundation.py", "v6.34.0"),
+    ("zero_diff_guard_registry.py", "v6.34.0"),
+    # v6.34.0（post-commit Formal Regressionで発見された[KI-33]対応漏れ）：
+    # test_e2e_v6_27_0自身が持つ独自の_ZERODIFF1_ALLOWED_EXCEPTIONS["scripts"]
+    # （本registryを参照しないstandalone guard）が、新設scripts/run_scheduler_driver.py
+    # への承認済み変更（上記scripts source contribution参照）でZERODIFF-1[scripts]と
+    # してFAILしていたため、v6.33.0（[KI-32]）と同型の狭い除外編集を追加登録する。
+    ("test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py", "v6.34.0"),
+    # v6.34.0：新設scripts/run_scheduler_driver.pyがInvariant #35 closure oracle
+    # （§22.3.11・28.-34節test#3）のcandidate root列挙に新たに出現するため、
+    # SIDE_EFFECT_CAPABLE_MANIFESTへ10番目のエントリ（run_workflow_engine.pyと
+    # 同一のsink到達性A・B・C）として追記し、Stage Bの実測closure検証
+    # （closure_of_script()呼び出し）でsinks={A,B,C}・unresolved=[]であることを
+    # 確認した（docs/design/scheduler_driver_duplicate_dispatch_safety_foundation.md
+    # 6.2章：新規のsink到達経路を一切追加しないという設計と整合する実測結果）。
+    ("test_e2e_v6_32_7_invariant_35_closure_oracle.py", "v6.34.0"),
 )
 
 

@@ -340,6 +340,12 @@ try:
             # 承認済み変更（docs/CHANGELOG.md [KI-32]と同型の狭い例外追加）。
             "scripts/run_retry_runtime.py",
             "scripts/show_retry_notification.py",
+            # v6.34.0（Scheduler Driver & Duplicate Dispatch Safety）：新設
+            # scripts/run_scheduler_driver.pyへの承認済み変更（zero_diff_guard_registry.py
+            # の_SOURCE_CHANGE_CONTRIBUTIONSにv6.34.0として登録済み）。post-commit Formal
+            # Regressionで発見されたhistorical guard mapping漏れの補正
+            # （docs/CHANGELOG.md [KI-33]参照、[KI-32]と同型の狭い例外追加）。
+            "scripts/run_scheduler_driver.py",
         },
     }
 
