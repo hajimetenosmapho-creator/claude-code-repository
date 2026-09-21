@@ -54,6 +54,20 @@ Release 6.32での変更（docs/design/side_effect_fail_closed_human_review_safe
       （`RetryLineageProtectedProvenance`、member_run_id未確定のpre-context）を
       追加で構築・伝播する。`member_run_id`の補完・完成形contextへの完成は
       `WorkflowEngineExecutor`のprotected factory呼び出しでのみ行われる。
+
+Release 6.37.0での変更（docs/design/release_claim_diagnostic_correctness_fix.md、
+Release 6.32 Final Review由来の非blocking Suggestion対応、Fast Track）:
+    - `hook_ack_state["acknowledged"] is False`経路（旧行251-269）で呼ぶ
+      `self._lineage.release_claim()`の戻り値を取得し、`RetryResult.reason`を
+      実際の解放成否で分岐させる。従来は解放の成否に関わらず無条件に
+      「claim released back to READY_ELIGIBLE」と返しており、
+      `release_claim()`自体が失敗した場合（durable store save失敗等）に
+      実durable phase（CLAIMEDのまま）とreason文言がずれ得た
+      （既存6.31由来のdiagnostic gap）。durable state自体はfail-closedの
+      まま無変更であり、CLAIMED orphanは既存`reconcile_all()`が引き続き
+      回収する。`release_claim()`本体・authority contract・例外再raise側
+      call site（旧行242-249、対応するreason文言自体が存在しないため無変更）は
+      一切変更しない。
 """
 from __future__ import annotations
 
@@ -249,7 +263,13 @@ class RetryExecutor:
             raise
 
         if not request.dry_run and hook_ack_state["acknowledged"] is False:
-            self._lineage.release_claim(lineage.root_run_id, claim.owner_token)
+            # Release 6.37.0（release_claim_diagnostic_correctness_fix.md）：
+            # release_claim()の戻り値を確認し、reasonへ実際の解放成否を反映する
+            # （旧: 成否に関わらず無条件で「released back to READY_ELIGIBLE」と
+            # 返していたため、durable save失敗時にreasonとdurable phaseが
+            # ずれ得た）。release_claim()自体の契約・durable stateは無変更。
+            # 失敗時もCLAIMED orphanは既存reconcile_all()が引き続き回収する。
+            released = self._lineage.release_claim(lineage.root_run_id, claim.owner_token)
             return RetryResult(
                 original_run_id=lineage.root_run_id,
                 outcome=RetryOutcome.SKIPPED,
@@ -257,8 +277,17 @@ class RetryExecutor:
                 monitor_status=None,
                 reason=(
                     "post-admission hook did not acknowledge (mark_execution_started() "
-                    "failed); claim released back to READY_ELIGIBLE (Architecture "
-                    "Amendment, Blocking#1)."
+                    "failed); "
+                    + (
+                        "claim released back to READY_ELIGIBLE (Architecture "
+                        "Amendment, Blocking#1)."
+                        if released
+                        else
+                        "claim release failed (release_claim() returned False); "
+                        "durable phase may remain CLAIMED (Architecture Amendment, "
+                        "Blocking#1, Release 6.37.0 diagnostic correctness fix); "
+                        "orphan recovery deferred to reconcile_all()."
+                    )
                 ),
                 workflow_engine_result=engine_result,
                 requested_attempt_argument=request.attempt,

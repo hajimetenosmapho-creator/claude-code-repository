@@ -1,10 +1,12 @@
-# MVP Completion Roadmap（v1.4）
+# MVP Completion Roadmap（v1.5）
 
 Release 6.30開始前に、MVP到達までのRelease計画を正式化したドキュメント。個々のReleaseの詳細設計は各`docs/design/*.md`で別途行い、本書はスコープ全体の地図として維持する。
 
 **v1.3（正式版）**：v1.0はCodex Architecture Review（round 1）で`NEEDS_REVISION`（Major M-1〜M-7）、v1.1はArchitecture Reconciliationを踏まえた改訂だったがCodex Review（round 2）で再度`NEEDS_REVISION`（Major A-1〜A-6）、v1.2はA-1〜A-6への対応版だったがCodex Review（round 3）で再度`NEEDS_REVISION`（Major M3-1〜M3-4、Minor N3-1/N3-2、Suggestion S3-1）と判定された。v1.3改訂時点では、M3-1〜M3-4・N3-1・N3-2・S3-1を反映し、①6.30/6.31間の循環依存解消、②retry lineage契約の追加、③attempt lifecycleのcrash boundary契約、④外部副作用のfail-closed契約、⑤段階的activation gate、を確定したもの。Codex Review（round 4）で`APPROVED_WITH_SUGGESTIONS`（Blocking 0／Major 0）となり、Minor（R4-N1）・Suggestion（R4-S1／R4-S2）を反映のうえ正式版として採用した。
 
 **v1.4**：Release 6.35でMVP COMPLETEに到達した後、最初のPost-MVP Releaseとして6.36の個別節を新設した改訂（Roadmap Governance章の手続きに従うchange record付き）。MVP Definition of Done（Release 6.30〜6.35が定める内容）は本改訂で一切変更しない。Release 6.35のMVP COMPLETEという到達点も変更しない。6.36のArchitecture Design自体はCodex `codex-readonly-review`独立reviewを5ラウンド実施して`APPROVED`（Blocking 0／Major 0）に収束し、Human Gateで承認済み（詳細は本書末尾のChange Record・6.36節を参照）。
+
+**v1.5**：Post-MVP 2件目のReleaseとして6.37の個別節を新設した改訂。6.37はFast Track Release（`docs/development_workflow.md` 7章のFast Track候補条件8項目をすべて満たすことを実装着手前に確認）であり、Architecture Design文書の代わりにDesign Summary（`docs/design/release_claim_diagnostic_correctness_fix.md`）を作成した。MVP Definition of Done・Release 6.35のMVP COMPLETEという到達点はいずれも本改訂で変更しない（詳細は本書末尾のChange Record・6.37節を参照）。
 
 ---
 
@@ -288,6 +290,26 @@ Architecture Reconciliation（read-only investigation）により、v1.0の前�
   - Independent Codex High code reviewが`APPROVED`（Blocking 0／Major 0）に到達すること
 - **Architecture Design Status（2026-09-21追記）**：Architecture Design（`docs/design/manual_recovery_diagnostic_cli_foundation.md`）がCodex `codex-readonly-review`（Codex High）による独立read-only reviewを5ラウンド実施して`APPROVED`（Blocking 0／Major 0）に収束した。Architecture Gate Checklist（8項目）をユーザーが個別にACCEPT済み（Human Gate承認 2026-09-21）。private helper（`_sanitize_event_identity()`/`_entry_from_dict()`、`src/scheduler_dispatch_ledger/scheduler_dispatch_ledger_store.py`）の跨モジュールimportを、本Release限定のArchitecture exceptionとして承認済み（E2Eで依存を固定し、silent breakを防止する）。
 
+### 6.37 — release_claim() Diagnostic Correctness Fix（Fast Track、Post-MVP 2件目）
+
+- **位置づけ**：Release 6.35でMVP COMPLETEに到達した後の、Post-MVP 2件目のRelease（6.36に続く）。MVP Definition of Doneは変更・再オープンしない。
+- **分類**：Fast Track Release（`docs/development_workflow.md` 6〜7章）。Architecture Contract Change: NO。
+- **Goal**：Release 6.32 Final Review由来の非blocking Suggestion——`RetryExecutor.execute()`が`RetryLineageManager.release_claim()`の戻り値を確認せず、release失敗時（durable store save失敗等）に`RetryResult.reason`が実durable state（CLAIMEDのまま）とずれ得た既存6.31由来のgap——を、既存Retry Lineage / attempt lifecycle / reconciliation契約を一切変更せずに解消する。durable safety改善ではなくdiagnostic correctness改善として扱う。
+- **In Scope**：
+  - `RetryExecutor.execute()`の`hook_ack_state["acknowledged"] is False`経路で`release_claim()`のbool戻り値を取得し、`RetryResult.reason`へ実際の解放成否を反映する
+  - `test_e2e_v6_32_35_admission_failure_durable_save_failure_closure.py`のN7(d)/N8(d)のTEST MIGRATION（意図transplant）
+  - success/failure coverageの確認と、不足分（M9b(d)・N7b(d)）の最小targeted test追加
+  - Design Summary（`docs/design/release_claim_diagnostic_correctness_fix.md`）・CHANGELOG／本Roadmap／architecture.mdの整合更新
+  - targeted validation・関連Architecture Guard・Formal Regression全37ファイル
+  - Independent Codex `codex-readonly-review`（Codex High）レビュー
+- **Out of Scope**：`release_claim()`本体・authority contract変更、例外再raise側call site（対応するreason文言自体が存在しないため無変更）のロジック/ログ変更、`reconcile_all()`変更、自動修復・自動再claim・自動retry、新state／phase／retry policy、Queue/History persistence、WordPress/Media idempotency、Scheduler関連。
+- **Dependency**：6.32（`release_claim()` Suggestion提起元）。
+- **Completion Criteria**：
+  - targeted test・関連Architecture Guard・Formal Regression（正式Inventory37ファイル）で既存機能に回帰がないこと
+  - Independent Codex High code reviewの結果を記録すること
+  - `docs/development_workflow.md` 7章のFast Track候補条件8項目をすべて満たすことを実装着手前に確認すること
+- **実装結果（2026-09-21追記）**：`src/retry_engine/retry_executor.py`を変更（Zero-Diff対象・変更内容は`docs/CHANGELOG.md` `[v6.37.0]`参照）。targeted test 31/31 PASS（従来29件＋新規2件）。関連Architecture Guard（`test_e2e_v6_3*.py`系列54ファイル）53/54 PASS、唯一のFAILは`test_e2e_v6_33_0`テスト43（commit前のuncommitted状態にのみ起因する既知差分、`docs/CHANGELOG.md` `[KI-36]`参照）。Formal Regression（正式Inventory37ファイル）36/37 exit code 0（同一原因）。
+
 ---
 
 ## Staged Activation Gates
@@ -400,6 +422,7 @@ Release番号はForecastであり固定約束ではない（Roadmap Governance�
 | 2026-09-16 | Release 6.34 Architecture Design（`docs/design/scheduler_driver_duplicate_dispatch_safety_foundation.md`）がCodex `codex-readonly-review`独立read-only reviewを5ラウンド実施して`APPROVED`（Blocking 0／Major 0）に収束した。§26 Architecture Gate Checklist（9項目）をユーザーが個別にACCEPT（Gate 9のManual Recovery専用CLIは本Releaseから除外）。本行はRoadmap本文の変更を伴わないため、文書バージョンはv1.3のまま据え置く | 6.34（本体） | 承認済み（Human Gate承認 2026-09-16） |
 | 2026-09-16 | Release 6.34 実装完了。Independent Code Review（`src/scheduler_dispatch_ledger/scheduler_dispatch_ledger_store.py`を中心に6ラウンド）は`APPROVED`（Blocking 0／Major 0／Minor 1 cosmetic）。新規E2E 55/55 PASS。Invariant #35 closure oracle改訂後54/54 PASS。Formal Regression：正式Inventory37ファイル実測、32/37ファイルexit code 0（残る5ファイルは新設`scripts/run_scheduler_driver.py`のuncommitted状態にのみ起因する既知差分、`docs/CHANGELOG.md` `[KI-33]`参照、commit後に自然解消見込み）。本行もRoadmap本文の変更を伴わないため、文書バージョンはv1.3のまま据え置く | 6.34（本体） | 実装・検証完了（**commit/push未実施、Human Gate待ち**） |
 | 2026-09-21 | v1.4改訂：Release 6.35でMVP COMPLETEに到達した後、最初のPost-MVP Releaseとして6.36「Manual Recovery Diagnostic CLI Foundation」の個別節を新設した（本行がその変更本体）。Architecture Design（`docs/design/manual_recovery_diagnostic_cli_foundation.md`）はCodex `codex-readonly-review`独立read-only reviewを5ラウンド実施して`APPROVED`（Blocking 0／Major 0）に収束し、Architecture Gate Checklist（8項目）をユーザーが個別にACCEPT。private helper（`_sanitize_event_identity()`/`_entry_from_dict()`）の跨モジュールimportを本Release限定のArchitecture exceptionとして承認。MVP Definition of Done・Release 6.35のMVP COMPLETEという到達点は、いずれも本改訂で変更しない | 6.36（新設） | 承認済み（Human Gate承認 2026-09-21。Implementation Phase開始承認済み、commit/pushは未承認） |
+| 2026-09-21 | v1.5改訂：Post-MVP 2件目のReleaseとして6.37「release_claim() Diagnostic Correctness Fix」の個別節を新設した（本行がその変更本体）。6.37はFast Track Release（Architecture Contract Change: NO）であり、`docs/development_workflow.md` 7章のFast Track候補条件8項目をすべて満たすことを実装着手前に確認済み。Architecture Design文書の代わりにDesign Summary（`docs/design/release_claim_diagnostic_correctness_fix.md`）を作成。MVP Definition of Done・Release 6.35のMVP COMPLETEという到達点は、いずれも本改訂で変更しない | 6.37（新設） | 承認済み（Human Gate承認 2026-09-21。Implementation Phase開始承認済み、commit/pushは未承認） |
 
 ---
 

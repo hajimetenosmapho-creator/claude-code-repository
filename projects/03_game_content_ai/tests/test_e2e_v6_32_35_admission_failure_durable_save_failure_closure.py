@@ -119,6 +119,20 @@ production code（RetryLineageManager・RetryExecutor・
 JsonRetryLineageStore・ProtectedOperationManifestStore等）は
 一切変更しない。network / WordPress / 外部I/O = 0。
 
+## Release 6.37.0 TEST MIGRATION（意図transplant、Human Gate承認済み）
+
+`docs/design/release_claim_diagnostic_correctness_fix.md`（Fast Track、
+Architecture Contract Change: NO）により、`RetryExecutor.execute()`が
+`release_claim()`の戻り値をreasonへ反映するよう修正された。これに伴い、
+本ファイルのN7(d)は「無条件文言」を期待値としていた記述を、
+「release_claim()の実際の成否をreasonが正しく反映すること」を検証する
+記述へ改訂する（N8(d)の「実際のdurable phaseはCLAIMEDのまま」という
+検証意図自体は変更なし——durable state・reconciliation契約は無変更のため）。
+あわせて、release成功時（グループM）にもreason文言が実際の解放成功を
+正しく反映することを直接確認するM9bを追加し、成功/失敗双方のreason正確性を
+対で証明する。production code（release_claim()本体・reconcile_all()・
+durable state契約）は本改訂でも一切変更しない。
+
 実行方法:
     cd projects/03_game_content_ai
     ./venv/Scripts/python.exe tests/test_e2e_v6_32_35_admission_failure_durable_save_failure_closure.py
@@ -343,6 +357,11 @@ check("M6(d). RetryExecutor.execute()の結果はSKIPPED", result_full_m2.outcom
 check_true("M7(d). reasonに'post-admission hook did not acknowledge'を含む", "post-admission hook did not acknowledge" in (result_full_m2.reason or ""))
 check("M8(d). 呼び出し箇所write-ahead相当（draft_state.create_attempted）の呼び出し回数=0", len(write_ahead_calls_m2), 0)
 check("M9(d). execute()完了後、phase=READY_ELIGIBLE（同期的にrelease_claim()成功）", lineage_m2.peek("run-m2").phase, RetryLineagePhase.READY_ELIGIBLE)
+# Release 6.37.0追加：release成功時、reasonが実際の解放成功を正しく反映することを
+# 直接確認する（失敗時の検証はグループN N7(d)/N8(d)で行う。成功/失敗双方の
+# reason正確性を対で証明する）。
+check_true("M9b(d)【6.37.0追加】. release成功時、reasonは'claim released back to READY_ELIGIBLE'を含む（実際にphase=READY_ELIGIBLEへ遷移済みであることと整合）",
+           "claim released back to READY_ELIGIBLE" in (result_full_m2.reason or ""))
 
 # --- (e): 後続recovery/reclaimが安全 ---
 claim_m2b = lineage_m2.claim("run-m2")
@@ -391,18 +410,21 @@ check("N5(c). engine.run()自体は1回呼ばれる（post_admission_hookまで�
 check("N6(c). 呼び出し箇所write-ahead相当（draft_state.create_attempted）の呼び出し回数=0", len(write_ahead_calls_n2), 0)
 
 # --- (d) release_claim()のactual result/handling ---
-# (d-通常ケース) reason文言と実際のdurable phaseの一致を確認する。
-# この時点でexecute()は既にline244-245でrelease_claim()を呼んでいるはず。
-check_true("N7(d). RetryResult.reasonは'claim released back to READY_ELIGIBLE'を含む（既存の無条件文言）",
-           "released back to READY_ELIGIBLE" in (result_full_n2.reason or ""))
-# store_n2.save()は依然としてFalseを返すfaultが有効なため、release_claim()内部の
-# self._store.save(record)も失敗するはず——「無条件の文言」と「実際のdurable
-# phase」が一致しないケースを直接構成する。
+# Release 6.37.0 TEST MIGRATION（意図transplant）：store_n2.save()が
+# Falseを返すfaultが有効なため、release_claim()内部のself._store.save(record)も
+# 失敗する。修正後のRetryExecutor.execute()はこの戻り値を確認するため、
+# reasonは「released back to READY_ELIGIBLE」ではなく解放失敗を示す文言を
+# 返すはずである（N7(d)）。durable phaseがCLAIMEDのまま変化しないという
+# 検証意図自体（N8(d)）はRelease 6.32以来無変更——release_claim()本体・
+# durable state契約は本Releaseでも一切変更していない。
+check_true("N7(d)【6.37.0改訂】. release失敗時、RetryResult.reasonは解放失敗を示す文言（'claim release failed'）を含む",
+           "claim release failed" in (result_full_n2.reason or ""))
+check_false("N7b(d)【6.37.0追加】. release失敗時、reasonはもはや無条件の'claim released back to READY_ELIGIBLE'を含まない（診断gapが解消されたことの直接証拠）",
+            "claim released back to READY_ELIGIBLE" in (result_full_n2.reason or ""))
 actual_phase_after_n2 = lineage_n2.peek("run-n2").phase
 check(
-    "N8(d). 【重要】無条件のreason文言とは裏腹に、実際のdurable phaseはCLAIMEDのまま"
-    "（release_claim()自体もsave失敗で失敗しているため。既存6.31由来のdiagnostic gapを"
-    "直接再現・証明する）",
+    "N8(d). 実際のdurable phaseはCLAIMEDのまま（release_claim()自体もsave失敗で失敗しているため）"
+    "——修正後はreason文言（N7(d)）と実際のphaseが正しく整合することを、本チェックと合わせて証明する",
     actual_phase_after_n2, RetryLineagePhase.CLAIMED,
 )
 

@@ -433,6 +433,48 @@
 - **対応状況**：未解消（`[KI-33]`と同様、commit自体が解消条件）。`tests/zero_diff_guard_registry.py`（`RELEASE_ORDER`への`"v6.36.0"`追記・`_SOURCE_CHANGE_CONTRIBUTIONS`への`scripts/show_scheduler_recovery.py`登録・`_TEST_CHANGE_CONTRIBUTIONS`への4エントリ登録）は実装済みであり、これにより`tests/`側のallow-list起因チェック（`SELF-TESTS-NO-UNTRACKED`等）は既に解消済みであることを確認した。残るのは`scripts`配下のuntracked集合そのものを検査する非allow-list系チェックのみ
 - **今後の対応**：本Release 6.36.0がcommitされた時点で、上記5ファイルの該当チェックは`[KI-33]`と同様に自然解消する見込み（`scripts/show_scheduler_recovery.py`・新規E2Eがtrackedファイルになるため）。commit後のFormal Regression再実行で0 FAILになることを確認すること。加えて、`[KI-33]`のpost-commit追記が記録したとおり、`test_e2e_v6_27_0`のみ`ZERODIFF-1[scripts]`（historical guard mapping）で別途FAILする可能性があるが、本Releaseでは`_ZERODIFF1_ALLOWED_EXCEPTIONS["scripts"]`への事前登録を実装フェーズ内で既に済ませているため、`[KI-33]`のときのような追加のpost-commit補正は不要と見込む（commit後に必ず再確認すること）
 
+### [KI-36] Release 6.37.0（release_claim() Diagnostic Correctness Fix）実装フェーズで`src/retry_engine/retry_executor.py`を変更したため、`test_e2e_v6_33_0`のテスト43（`src/retry_engine`に対する素の`git diff --quiet`）がFAILする（commitにより自然解消する既知差分、`[KI-33]`・`[KI-35]`とは対象・検査方式が異なるが同じ「commit解消」パターン）
+
+- **発見日**：2026-09-21（Release 6.37.0 Implementation Phase、Formal Regression実施時）
+- **対象**：`tests/test_e2e_v6_33_0_retry_observability_runtime_integration_foundation.py`のテスト43のみ（同ファイル185/186 PASS。37-file Formal Regression全体では36/37ファイルがexit code 0）
+- **原因**：本テストのテスト43は、`zero_diff_guard_registry.py`のallow-list機構（`allowed_source_changes_for()`）を一切参照せず、`subprocess.run(["git", "diff", "--quiet", "--", "src/retry_engine"], ...)`という素の`git diff`（refを指定しない、working tree対index/HEAD比較）で`src/retry_engine`配下の無変更を直接確認する、v6.33.0新設のstandalone guardである。Release 6.37.0はFast Track承認済みの変更として`src/retry_engine/retry_executor.py`を変更しており、この変更が本Release完了時点でuncommittedであるため、素の`git diff`が差分を検出しFAILする。`[KI-33]`・`[KI-35]`（`scripts`配下のuntracked集合検査）とは対象・検査方式が異なるが、いずれも「commit前のuncommitted状態にのみ起因し、commit自体が解消条件」という同じ性質を持つ
+- **対応状況**：未解消（commit自体が解消条件）。本テストはallow-list（`zero_diff_guard_registry.py`）を参照しない設計のため、registry側への追加登録では解消しない（対象外）
+- **今後の対応**：本Release 6.37.0がcommitされた時点で、working treeとHEADの差分が0になるため、本チェックは自然解消する見込み。commit後のFormal Regression再実行で37/37 PASSになることを確認すること
+
+---
+
+## [v6.37.0] - 2026-09-21 ★ release_claim() Diagnostic Correctness Fix（Fast Track）
+
+> Release 6.32 Final Review由来の非blocking Suggestion——`RetryExecutor.execute()`が`RetryLineageManager.release_claim()`の戻り値を確認せず、release失敗時（durable store save失敗等）に`RetryResult.reason`が実durable state（CLAIMEDのまま）とずれ得た既存6.31由来のgap——を解消した、Fast Track Release（Architecture Contract Change: NO）。durable lineage state・reconciliation契約・`release_claim()`本体のauthority contract（4段階owner_token検証）はいずれも変更していない。CLAIMED orphanは引き続き既存`reconcile_all()`が回収する。本Suggestionは6.33〜6.36の各ReleaseでFast Track候補として保留され続けていたもの。
+>
+> `docs/development_workflow.md` 7章のFast Track候補条件8項目（Public API／Constructor／Composition Root／Layer／Dependency／永続化／Event／外部I/O、いずれも変更なし）を実装着手前に確認し、Human Gateで承認された（baseline `813ba378f794160ef3ef96988962c4d0d4fc3bf9`、Release 6.36.0完了時点）。
+
+### Changed
+
+- `src/retry_engine/retry_executor.py`：`RetryExecutor.execute()`の`hook_ack_state["acknowledged"] is False`経路で、`self._lineage.release_claim()`の戻り値を取得し`RetryResult.reason`へ実際の解放成否を反映するよう変更した。従来は解放の成否に関わらず無条件に「claim released back to READY_ELIGIBLE」と返していたため、`release_claim()`自体が失敗した場合に実durable phase（CLAIMEDのまま）とreason文言がずれ得た。失敗時は「claim release failed（release_claim()がFalseを返した）；durable phaseはCLAIMEDのまま残る可能性がある；orphan回収はreconcile_all()に委ねる」旨の文言を返す。`release_claim()`本体・例外再raise側call site（対応するreason文言自体が存在しないため無変更）・`reconcile_all()`は一切変更していない。
+- `tests/test_e2e_v6_32_35_admission_failure_durable_save_failure_closure.py`：N7(d)/N8(d)をTEST MIGRATION（意図transplant）した。N7(d)は「無条件文言」を期待値とする記述から「release失敗時、reasonが解放失敗を示す文言を含む」ことを検証する記述へ改訂し、N7b(d)（新規）で旧無条件文言がもはや含まれないことを直接確認する。N8(d)（durable phaseがCLAIMEDのまま、という検証意図自体は無変更）とあわせて、reason文言と実際のdurable phaseが正しく整合することを証明する。あわせてM9b(d)（新規）で、release成功時にもreasonが実際の解放成功を正しく反映することを直接確認し、成功/失敗双方のreason正確性を対で証明する。**31/31 PASS**（従来29件＋新規2件）。
+- `docs/MVP_COMPLETION_ROADMAP.md`：v1.4→v1.5。6.37個別節（Post-MVP、Fast Track）を新設し、Change Recordへ承認記録を追記。MVP Definition of Done・Release 6.35のMVP COMPLETEという到達点はいずれも変更しない。
+
+### Zero-Diff対象
+
+`release_claim()`本体・`mark_execution_started()`・`reconcile_all()`（いずれも`src/retry_lineage/retry_lineage_manager.py`）・durable lineage state schema・attempt lifecycle・authority check（4段階owner_token検証）はいずれも無改修。`RetryExecutor.execute()`の例外再raise側call site（hook例外経路）も無改修。
+
+### Test Review・Regressionの実績
+
+targeted test（`test_e2e_v6_32_35_admission_failure_durable_save_failure_closure.py`）：**31/31 PASS**。関連Architecture Guard（`tests/test_e2e_v6_3*.py`系列54ファイル一括実行）：**53/54 PASS**、唯一のFAILは`test_e2e_v6_33_0`のテスト43（`src/retry_engine`に対する素の`git diff --quiet`。本Releaseがcommit前のため意図通りFAILする既知差分、`[KI-36]`参照）。
+
+Formal Regression（既存37-fileの正式Inventory、本Releaseでは変更しない）は**36/37ファイルがexit code 0**。残る1ファイル（`test_e2e_v6_33_0`、185/186 PASS）は、本CHANGELOGの`[KI-36]`が記録する通り、**`src/retry_engine`への本Release承認済み変更が本Release完了時点でuncommittedであることのみに起因する既知差分**であり、commit後に自然解消する見込みである（`[KI-33]`・`[KI-35]`系列と同じ「commit解消」パターン）。
+
+Independent Codex `codex-readonly-review`（Codex High、read-only独立レビュー）：**APPROVED**（Blocking 0／Major 0／Minor 0／Suggestions 0）。EVIDENCE：`release_claim()`本体（`src/retry_lineage/retry_lineage_manager.py:430-453`）・authority check・`reconcile_all()`（同ファイル716-835行）はいずれも無変更であることを確認。例外再raise側call site（`retry_executor.py:256-263`）も無変更であることを確認。新設のreason分岐ロジック（`retry_executor.py:265-290`）・migrated/追加テスト（`test_e2e_v6_32_35`:343-364・396-443）はいずれも意図通りの契約を検証していることを確認。Public API／Constructor／Composition Root／Layer／Dependency／永続化／Event／外部I/O変更のいずれにも該当しないことを確認（Fast Track分類の妥当性を裏付け）。
+
+### Future Extension
+
+なし。本Releaseは既知Suggestion1件（`release_claim()`戻り値未確認によるdiagnostic gap）の解消のみを目的とした最小Releaseであり、新たなFuture Extensionを生まない。
+
+詳細は`docs/design/release_claim_diagnostic_correctness_fix.md`（Design Summary、Fast Track）を参照。
+
+**重要：本Releaseは実装・targeted validation・関連Architecture Guard・Formal Regressionまで完了しているが、commit/pushは実施していない（Human Gate待ち、ユーザー指示による）。**
+
 ---
 
 ## [v6.36.0] - 2026-09-21 ★ Manual Recovery Diagnostic CLI Foundation（最初のPost-MVP Release）
