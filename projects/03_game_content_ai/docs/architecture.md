@@ -5945,3 +5945,31 @@ Formal Regression本体の実施にあたり、19.1節が定める37-fileのmach
 Release全体を対象とするFinal Independent Codex Review（Initial Review・文書整合修正後のRe-Review #1・stale pointer解消後のRe-Review #2）はいずれも実施済みであり、Re-Review #2は`APPROVED`（Blocking 0／Major 0／Minor 0）である。commit/pushのみ、本節の時点では未実施である。
 
 詳細は`docs/design/mvp_end_to_end_hardening_validation.md`（Architecture Design + 30章 Implementation Reconciliation Amendment、Codex delta review #1〜#4・Full Independent Review・Pre-Formal-Regression Closure Reviewの記録を含む）を参照。
+
+## Manual Recovery Diagnostic CLI層（`scripts/show_scheduler_recovery.py`、v6.36.0 実装完了、最初のPost-MVP Release）
+
+> **本節は実装完了時点の記録である。** Release 6.35でMVP COMPLETEに到達した後の、最初のPost-MVP Release。Architecture Design（`docs/design/manual_recovery_diagnostic_cli_foundation.md`）はCodex `codex-readonly-review`（Codex High）による独立read-only Architecture Reviewを5ラウンド実施し、Round 5で`APPROVED`（Blocking 0／Major 0）に収束した。実装完了後のIndependent Code Reviewは3ラウンドを要した：Round 1（Blocking 1：Manual Recovery Procedure案内文が「追加対応は不要」という運用者の判断を代替する文言を含んでいた／Major 2：非regular-file拒否のテストがS_ISREG検査自体を証明できていなかった・AST静的チェックがCallノードのみを対象としbound-alias経由の呼び出しを見逃しうる形だった）→Round 2（Blocking 0、Major 1：非regular-fileテストが依然としてS_ISREG検査自体の有無を判別できるオラクルになっていなかった）→Round 3（**APPROVED**、Blocking 0／Major 0／Minor 0）。新規targeted E2E（`tests/test_e2e_v6_36_0_manual_recovery_diagnostic_cli_foundation.py`）は**54/54 PASS**。Formal Regression（既存37-file roster、本Releaseでは変更しない）は32/37 PASS、残る5ファイルは新設`scripts/show_scheduler_recovery.py`・新規E2Eがuncommittedであることのみに起因する既知差分（`docs/CHANGELOG.md` [KI-35]参照、[KI-33]・[KI-34]と同型、commit後に自然解消見込み）。**commit/pushは未実施（Human Gate待ち）**。
+
+`SchedulerDispatchLedger.list_recovery_required()`（v6.34.0で実装済み、read-only診断API）を消費する、人間が安全に使えるread-only診断CLIを新設した。`RECOVERY_REQUIRED`occurrenceを確認する手段が存在しないという、6.34 Architecture Gate Checklist item 9・6.35 Out of Scopeで明示的に除外されてきた既知のgapを、既存contractを一切変更せずに埋める（`docs/MVP_COMPLETION_ROADMAP.md` 6.36節）。
+
+### `scripts/show_scheduler_recovery.py`（新規CLIエントリスクリプト）
+
+`_ReadOnlyDispatchLedgerStore`（`SchedulerDispatchLedgerStore` ABCの新規実装、本ファイル内定義）を新設し、`JsonSchedulerDispatchLedgerStore`は一切instantiateしない（そのconstructorが行う`mkdir(parents=True, exist_ok=True)`という既存挙動を、CLIの実行経路から構造的に排除するため）。`_ReadOnlyDispatchLedgerStore.__init__`はpathを保持するのみでmkdirを一切呼ばない。`save()`は`NotImplementedError`を送出する書き込み不能なdefensive実装。`get()`/`list_all()`は、`scheduler_dispatch_ledger_store`モジュールの真にmodule-levelな純粋関数（`_sanitize_event_identity()`・`_entry_from_dict()`）を直接importして再利用しつつ、ディレクトリ確認・列挙・個別ファイル読み取りという制御フロー（`os.lstat`/`os.scandir`/`Path.read_text`のみで構成、書き込み系APIを一切含まない）を本CLI自身の新規コードとして実装した。store.py本体と同一の filename/event_identity cross-check（`get()`相当・`list_all()`相当の両方）・非regular-file拒否（`stat.S_ISREG()`検査）をいずれも維持する。
+
+`SchedulerDispatchLedger.list_recovery_required()`のみを使用する。`claim()`/`confirm()`/`reconcile_stale_claims()`/`store.save()`/`peek()`はいずれもソースコード中に呼び出しが存在しないことをAST静的解析（`ast.Name`/`ast.Attribute`参照の網羅的収集、Call有無を問わない）で検証する。CLIはSchedulerDriverの起動用lock（`.run/scheduler_driver.lock`）・store lock（`.store.lock`）のいずれも取得しない（`list_recovery_required()`自体がこれらのlockを要求しない既存契約をそのまま継承する）。`--job-id`/`--event-identity`によるfilterは、`list_recovery_required()`結果に対するin-memory filter（AND条件）として実装し、`peek()`/`store.get()`は一切使用しない。
+
+出力は診断情報（`job_id`/`occurrence_minute`/`event_identity`/`claimed_at`/`updated_at`、および`confirmed_at`/`dispatch_run_id`/`outcome_summary`が非`None`の場合のみ追加表示）と、既存Manual Recovery Procedure（`docs/design/scheduler_driver_duplicate_dispatch_safety_foundation.md` 20章）の案内文のみであり、いずれの分岐も運用者の判断（対応要否・safe-to-retry等）を代替する文言を含まない。復旧の実行・判定・ledger状態の変更は一切行わない。
+
+### Independent Code Reviewの経緯
+
+Round 1で検出：(a)案内文が「記録が見つかる場合は追加対応不要」という運用者の判断を代替する文言を含んでいた（Blocking）、(b)非regular-file拒否のテストがディレクトリを使っていたため`Path.read_text()`自体がOSErrorを送出し、`stat.S_ISREG()`検査の有無を判別できないオラクルだった（Major）、(c)AST静的チェックが`ast.Call`×`ast.Attribute`のみを対象とし、bound-alias経由の呼び出しを見逃しうる形だった（Major）。(a)は案内文を両分岐とも「運用者が判断する」という開いた形へ書き換えて解消。(c)はチェック対象を`ast.Name`/`ast.Attribute`参照全体（Call有無を問わない）へ拡張して解消。(b)への対応（ディレクトリを使うテストの追加）はRound 2で「read_text()自体がOSErrorを送出するため、S_ISREG検査を削除しても同じ結果になる」という再指摘を受け、Round 3で`os.lstat()`をmockし実体は正当な読み取り可能JSONでありながらst_modeのみ非regular値を返す新規テスト（テスト13e）へ差し替えて解消し、`APPROVED`（Blocking 0／Major 0／Minor 0）に到達した。
+
+### Test Review・Regressionの実績
+
+新規targeted E2E（`tests/test_e2e_v6_36_0_manual_recovery_diagnostic_cli_foundation.py`）は**54/54 PASS**（store_dir未初期化時のディレクトリ非作成の直接確認、lock非取得の確認、`save()`のdefensive実装確認、filename/event_identity cross-check（get()相当・list_all()相当）、非regular-file拒否（ディレクトリ・mockされたst_modeの両方）、AST静的チェック、custom `.env`相当のconfig override確認、`--limit`契約、AND filter、非`None`付随フィールド表示を含む）。Formal Regression（既存37-file roster、本Releaseでは変更しない——6.35自身の新規E2Eもこのrosterに含まれていない先例に倣う）は32/37 PASS、残る5ファイル（`test_e2e_v6_22_0`・`v6_23_0`・`v6_24_0`・`v6_26_0`・`v6_27_0`）は新設`scripts/show_scheduler_recovery.py`・新規E2Eがuncommittedであることのみに起因する既知差分（`[KI-33]`・`[KI-34]`と同型、`[KI-35]`参照）。Invariant #35 closure oracle（`tests/test_e2e_v6_32_7_invariant_35_closure_oracle.py`）は、新設CLIをNON_SIDE_EFFECT_CAPABLE_MANIFESTの11番目のエントリ（計21エントリ）として追加後、**56/56 PASS**（sink A/B/Cのいずれにも到達しないことを実測確認）。
+
+### Future Extension
+
+なし（本Releaseは既知gap 1件の解消のみを目的とした最小Releaseであり、新たなFuture Extensionを生まない）。`release_claim()` Suggestion（`src/retry_engine/retry_executor.py`、6.32 Final Review由来）は本Releaseに含まれず、独立したFast Track候補として引き続き保留される。
+
+詳細は`docs/design/manual_recovery_diagnostic_cli_foundation.md`（Architecture Design、Codex Round 1〜5の記録を含む全22章）を参照。

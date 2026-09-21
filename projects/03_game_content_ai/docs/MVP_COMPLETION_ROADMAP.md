@@ -1,8 +1,10 @@
-# MVP Completion Roadmap（v1.3）
+# MVP Completion Roadmap（v1.4）
 
 Release 6.30開始前に、MVP到達までのRelease計画を正式化したドキュメント。個々のReleaseの詳細設計は各`docs/design/*.md`で別途行い、本書はスコープ全体の地図として維持する。
 
 **v1.3（正式版）**：v1.0はCodex Architecture Review（round 1）で`NEEDS_REVISION`（Major M-1〜M-7）、v1.1はArchitecture Reconciliationを踏まえた改訂だったがCodex Review（round 2）で再度`NEEDS_REVISION`（Major A-1〜A-6）、v1.2はA-1〜A-6への対応版だったがCodex Review（round 3）で再度`NEEDS_REVISION`（Major M3-1〜M3-4、Minor N3-1/N3-2、Suggestion S3-1）と判定された。v1.3改訂時点では、M3-1〜M3-4・N3-1・N3-2・S3-1を反映し、①6.30/6.31間の循環依存解消、②retry lineage契約の追加、③attempt lifecycleのcrash boundary契約、④外部副作用のfail-closed契約、⑤段階的activation gate、を確定したもの。Codex Review（round 4）で`APPROVED_WITH_SUGGESTIONS`（Blocking 0／Major 0）となり、Minor（R4-N1）・Suggestion（R4-S1／R4-S2）を反映のうえ正式版として採用した。
+
+**v1.4**：Release 6.35でMVP COMPLETEに到達した後、最初のPost-MVP Releaseとして6.36の個別節を新設した改訂（Roadmap Governance章の手続きに従うchange record付き）。MVP Definition of Done（Release 6.30〜6.35が定める内容）は本改訂で一切変更しない。Release 6.35のMVP COMPLETEという到達点も変更しない。6.36のArchitecture Design自体はCodex `codex-readonly-review`独立reviewを5ラウンド実施して`APPROVED`（Blocking 0／Major 0）に収束し、Human Gateで承認済み（詳細は本書末尾のChange Record・6.36節を参照）。
 
 ---
 
@@ -264,6 +266,28 @@ Architecture Reconciliation（read-only investigation）により、v1.0の前�
   - MVP Definition of Doneの全条件が、A〜Fのシナリオ群を通じて実Runtime経路で確認できること
   - Formal Regressionで既存機能に回帰がないこと（共通要件に従う）
 
+### 6.36 — Manual Recovery Diagnostic CLI Foundation（v1.4新設、最初のPost-MVP Release）
+
+- **位置づけ**：Release 6.35でMVP COMPLETEに到達した後の、最初のPost-MVP Release。MVP Definition of Doneは変更・再オープンしない。
+- **Goal**：`SchedulerDispatchLedger.list_recovery_required()`（6.34で実装済み、read-only診断API）を消費する、人間が安全に使えるread-only診断CLIを提供し、`RECOVERY_REQUIRED`occurrenceの確認手段が存在しないというgap（6.34 Architecture Gate Checklist item 9・6.35 Out of Scopeで明示的に除外されてきた既知のgap）を、既存contractを一切変更せずに埋める。
+- **In Scope**：
+  - `scripts/show_scheduler_recovery.py` のread-only CLI
+  - `SchedulerDispatchLedger.list_recovery_required()`によるRECOVERY_REQUIRED一覧取得
+  - `event_identity`/`job_id`によるread-only filter（`list_recovery_required()`結果に対するin-memory filter、`peek()`は使用しない）
+  - `job_id` / `occurrence_minute` / `claimed_at` / `updated_at` 等の診断表示
+  - Execution History確認手順の案内（既存`scripts/show_execution_history.py`）・必要時の`scripts/run_workflow_engine.py --job-id`による手動補完手順の案内（いずれも案内のみ、CLIからの自動実行はしない）
+  - store異常時のfail-closed診断（`JsonSchedulerDispatchLedgerStore`をinstantiateしない、read-only store adapterによる`mkdir`副作用の構造的排除を含む）
+- **Out of Scope**：RECOVERY_REQUIRED自動復旧・ledgerへの新規write API・re-claim/re-dispatch・HUMAN_REVIEW_REQUIRED UI・Windows Task Scheduler・WordPress/Media Upload idempotency・RetryQueue/RetryHistory完全永続化・production activation・`release_claim()` Suggestion（`src/retry_engine/retry_executor.py`、独立Fast Track候補のまま維持）・Dashboard/notification。
+- **Dependency**：6.34（`SchedulerDispatchLedger.list_recovery_required()`の提供元）。
+- **Completion Criteria**：
+  - CLIが`RECOVERY_REQUIRED`のentry一覧・filterを正しく処理することをtargeted E2Eで確認
+  - CLIが`JsonSchedulerDispatchLedgerStore`を一切instantiateせず、`state/`配下へ新規ディレクトリ・ファイル・lockを一切作成しないことを確認
+  - CLIが`claim()`/`confirm()`/`reconcile_stale_claims()`/`store.save()`のいずれも呼ばないことを確認
+  - filename/event_identity cross-checkが維持され、read不能・破損状態を正常な空結果へ丸めないことを確認
+  - targeted E2E・Architecture/Zero-Diff guards・Formal Regressionで既存機能に回帰がないこと（共通要件に従う）
+  - Independent Codex High code reviewが`APPROVED`（Blocking 0／Major 0）に到達すること
+- **Architecture Design Status（2026-09-21追記）**：Architecture Design（`docs/design/manual_recovery_diagnostic_cli_foundation.md`）がCodex `codex-readonly-review`（Codex High）による独立read-only reviewを5ラウンド実施して`APPROVED`（Blocking 0／Major 0）に収束した。Architecture Gate Checklist（8項目）をユーザーが個別にACCEPT済み（Human Gate承認 2026-09-21）。private helper（`_sanitize_event_identity()`/`_entry_from_dict()`、`src/scheduler_dispatch_ledger/scheduler_dispatch_ledger_store.py`）の跨モジュールimportを、本Release限定のArchitecture exceptionとして承認済み（E2Eで依存を固定し、silent breakを防止する）。
+
 ---
 
 ## Staged Activation Gates
@@ -375,6 +399,7 @@ Release番号はForecastであり固定約束ではない（Roadmap Governance�
 | 2026-08-31 | Release 6.31 実装完了・commit済み（baseline `a4d22e34a60ae02f1231af89434f4ac8ef07e860`）。実装後の独立Code ReviewでBlocking 2件・Major 2件を検出し限定的設計整合修正として反映、追加Human Gate 4件を承認。Final Release Review `APPROVED`（Blocking 0／Major 0）。新規E2E 151/151 PASS。Formal Regression：正式Inventory34ファイル、5644/5644 PASS、FAIL 0／SKIP 0、全ファイルexit code 0。本行もRoadmap本文の変更を伴わないため、文書バージョンはv1.3のまま据え置く | 6.31（本体） | 実装・検証完了・commit済み |
 | 2026-09-16 | Release 6.34 Architecture Design（`docs/design/scheduler_driver_duplicate_dispatch_safety_foundation.md`）がCodex `codex-readonly-review`独立read-only reviewを5ラウンド実施して`APPROVED`（Blocking 0／Major 0）に収束した。§26 Architecture Gate Checklist（9項目）をユーザーが個別にACCEPT（Gate 9のManual Recovery専用CLIは本Releaseから除外）。本行はRoadmap本文の変更を伴わないため、文書バージョンはv1.3のまま据え置く | 6.34（本体） | 承認済み（Human Gate承認 2026-09-16） |
 | 2026-09-16 | Release 6.34 実装完了。Independent Code Review（`src/scheduler_dispatch_ledger/scheduler_dispatch_ledger_store.py`を中心に6ラウンド）は`APPROVED`（Blocking 0／Major 0／Minor 1 cosmetic）。新規E2E 55/55 PASS。Invariant #35 closure oracle改訂後54/54 PASS。Formal Regression：正式Inventory37ファイル実測、32/37ファイルexit code 0（残る5ファイルは新設`scripts/run_scheduler_driver.py`のuncommitted状態にのみ起因する既知差分、`docs/CHANGELOG.md` `[KI-33]`参照、commit後に自然解消見込み）。本行もRoadmap本文の変更を伴わないため、文書バージョンはv1.3のまま据え置く | 6.34（本体） | 実装・検証完了（**commit/push未実施、Human Gate待ち**） |
+| 2026-09-21 | v1.4改訂：Release 6.35でMVP COMPLETEに到達した後、最初のPost-MVP Releaseとして6.36「Manual Recovery Diagnostic CLI Foundation」の個別節を新設した（本行がその変更本体）。Architecture Design（`docs/design/manual_recovery_diagnostic_cli_foundation.md`）はCodex `codex-readonly-review`独立read-only reviewを5ラウンド実施して`APPROVED`（Blocking 0／Major 0）に収束し、Architecture Gate Checklist（8項目）をユーザーが個別にACCEPT。private helper（`_sanitize_event_identity()`/`_entry_from_dict()`）の跨モジュールimportを本Release限定のArchitecture exceptionとして承認。MVP Definition of Done・Release 6.35のMVP COMPLETEという到達点は、いずれも本改訂で変更しない | 6.36（新設） | 承認済み（Human Gate承認 2026-09-21。Implementation Phase開始承認済み、commit/pushは未承認） |
 
 ---
 

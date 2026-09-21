@@ -131,6 +131,13 @@ NON_SIDE_EFFECT_CAPABLE_MANIFEST = {
     "scripts/show_execution_history.py",
     "scripts/show_retry_notification.py",
     "scripts/show_workflow_status.py",
+    # v6.36.0（Manual Recovery Diagnostic CLI Foundation）：新設
+    # scripts/show_scheduler_recovery.py。SchedulerDispatchLedger.list_recovery_required()
+    # のみを消費するstrict read-only CLIであり、WorkflowEngineManager.run()を含む
+    # sink A/B/Cのいずれにも到達しない（docs/design/manual_recovery_diagnostic_cli_foundation.md
+    # 8〜11章。claim()/confirm()/reconcile_stale_claims()/store.save()はいずれも
+    # importも呼び出しもしない）。11番目のNON_SIDE_EFFECT_CAPABLEエントリ。
+    "scripts/show_scheduler_recovery.py",
 }
 
 _AGENT_MANAGER_FANOUT_FILES = {
@@ -142,7 +149,7 @@ _AGENT_MANAGER_FANOUT_FILES = {
 
 assert set(SIDE_EFFECT_CAPABLE_MANIFEST) & NON_SIDE_EFFECT_CAPABLE_MANIFEST == set()
 assert len(SIDE_EFFECT_CAPABLE_MANIFEST) == 10
-assert len(NON_SIDE_EFFECT_CAPABLE_MANIFEST) == 10
+assert len(NON_SIDE_EFFECT_CAPABLE_MANIFEST) == 11
 
 FULL_MANIFEST = dict(SIDE_EFFECT_CAPABLE_MANIFEST)
 for rel in NON_SIDE_EFFECT_CAPABLE_MANIFEST:

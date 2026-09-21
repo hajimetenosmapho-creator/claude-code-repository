@@ -425,6 +425,54 @@
 - **対応状況**：解消済み。過去v6.26.0〜v6.34.0の`_TEST_CHANGE_CONTRIBUTIONS`registration先例（新規独立package・PROTECTED_PATHS対象外のReleaseであっても`tests/`への新規追加は必ず自己登録している先例＝v6.29.0・v6.31.0・v6.34.0等、および`zero_diff_guard_registry.py`自身を編集した回は例外なく自己を登録している先例＝v6.26.0〜v6.34.0の9件全て）と完全に同型で、`RELEASE_ORDER`末尾へ`"v6.35.0"`を追加し、`_TEST_CHANGE_CONTRIBUTIONS`へ19エントリ（Release 6.35の新規untrackedファイル18件＋registry自身の自己登録1件）を追記した。`PROTECTED_PATHS`・`_SOURCE_CHANGE_CONTRIBUTIONS`・`BASELINE_COMMITS`・Production・Test semanticsはいずれも無変更。修正後、影響5ファイルの再実行で5/5 PASS・FAIL 0・exit code全0を確認し、続けてFormal Regression本体（Inventory 37ファイル）を再実行し**37/37 PASS・FAIL 0・SKIP 0・全exit code 0**を確認した
 - **今後の対応**：不要（本エントリで解消済み、commit前に是正済み）。将来Release（v6.36以降）が`tests/`配下へ新規ファイルを追加する場合、本Releaseと同様に`tests/zero_diff_guard_registry.py`の`RELEASE_ORDER`・`_TEST_CHANGE_CONTRIBUTIONS`への自己登録（GR-9対応）を実装フェーズの一部として行うこと（本KIが記録する教訓）
 
+### [KI-35] Release 6.36（Manual Recovery Diagnostic CLI Foundation）実装フェーズ完了時点で新設`scripts/show_scheduler_recovery.py`・新規E2Eがuncommittedのため、複数の既存Architecture Guard（`test_e2e_v6_22_0`・`v6_23_0`・`v6_24_0`・`v6_26_0`・`v6_27_0`）が`"untracked集合が空である"`系チェックでFAILする（commitにより自然解消する既知差分、`[KI-33]`・`[KI-3]`系列と完全に同型）
+
+- **発見日**：2026-09-21（Release 6.36.0 Implementation Phase、Formal Regression実施時）
+- **対象**：`tests/test_e2e_v6_22_0_wordpress_media_upload_failure_reason_classification_foundation.py`・`tests/test_e2e_v6_23_0_openai_image_generation_api_rejection_reason_classification_foundation.py`・`tests/test_e2e_v6_24_0_openai_image_generation_unknown_and_invalid_response_reason_refinement_foundation.py`（いずれも`NOIMPACT-NO-UNTRACKED[scripts]`）・`tests/test_e2e_v6_26_0_zero_diff_guard_registry_foundation.py`（`SELF-SRC-NO-UNTRACKED[scripts]`＋上記3ファイルを子プロセスとして実行するRUNTIME-*系チェックの伝播）・`tests/test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py`（`ZERODIFF-2[scripts]`＋同型のRUNTIME-*系伝播）
+- **原因**：`[KI-33]`と完全に同一の根本原因。これらのguardが持つ`scripts`配下の「untracked集合が空である」系チェックは、`[KI-34]`が区別したとおりGR-9のallow-list（`_TEST_CHANGE_CONTRIBUTIONS`）を参照しない別種の恒久的チェックであり、`git status --porcelain --untracked-files=all -- scripts`の出力が空であることのみを要求する。新設`scripts/show_scheduler_recovery.py`が本Implementation Phase完了時点でuncommittedであるため、このチェックはallow-list登録の有無に関わらずFAILする（`_ZERODIFF1_ALLOWED_EXCEPTIONS["scripts"]`への`scripts/show_scheduler_recovery.py`の事前登録は`[KI-33]`と同型の予防措置として実施済みだが、これは`ZERODIFF-1`（baseline HEADからの追跡差分）を対象とし、`ZERODIFF-2`/`NOIMPACT-NO-UNTRACKED`/`SELF-SRC-NO-UNTRACKED`（untracked集合そのもの）は対象外である）
+- **対応状況**：未解消（`[KI-33]`と同様、commit自体が解消条件）。`tests/zero_diff_guard_registry.py`（`RELEASE_ORDER`への`"v6.36.0"`追記・`_SOURCE_CHANGE_CONTRIBUTIONS`への`scripts/show_scheduler_recovery.py`登録・`_TEST_CHANGE_CONTRIBUTIONS`への4エントリ登録）は実装済みであり、これにより`tests/`側のallow-list起因チェック（`SELF-TESTS-NO-UNTRACKED`等）は既に解消済みであることを確認した。残るのは`scripts`配下のuntracked集合そのものを検査する非allow-list系チェックのみ
+- **今後の対応**：本Release 6.36.0がcommitされた時点で、上記5ファイルの該当チェックは`[KI-33]`と同様に自然解消する見込み（`scripts/show_scheduler_recovery.py`・新規E2Eがtrackedファイルになるため）。commit後のFormal Regression再実行で0 FAILになることを確認すること。加えて、`[KI-33]`のpost-commit追記が記録したとおり、`test_e2e_v6_27_0`のみ`ZERODIFF-1[scripts]`（historical guard mapping）で別途FAILする可能性があるが、本Releaseでは`_ZERODIFF1_ALLOWED_EXCEPTIONS["scripts"]`への事前登録を実装フェーズ内で既に済ませているため、`[KI-33]`のときのような追加のpost-commit補正は不要と見込む（commit後に必ず再確認すること）
+
+---
+
+## [v6.36.0] - 2026-09-21 ★ Manual Recovery Diagnostic CLI Foundation（最初のPost-MVP Release）
+
+> Release 6.35でMVP COMPLETEに到達した後の、最初のPost-MVP Release。`SchedulerDispatchLedger.list_recovery_required()`（v6.34.0で実装済み）を消費する、人間が安全に使えるread-only診断CLIを新設し、`RECOVERY_REQUIRED`occurrenceを確認する手段が存在しないという既知のgap（6.34 Architecture Gate Checklist item 9・6.35 Out of Scopeで明示的に除外）を、既存contractを一切変更せずに埋めた。MVP Definition of Doneは変更・再オープンしない。
+>
+> Architecture DesignはCodex `codex-readonly-review`（Codex High）による独立read-only reviewを5ラウンド実施して収束した：Round 1（Blocking 1／Major 4／Minor 2）→Round 2（Blocking 1／Major 2／Minor 3）→Round 3（Blocking 1／Major 1／Minor 1）→Round 4（Blocking 1／Major 2／Minor 1）→Round 5（**APPROVED**、Blocking 0／Major 0／Minor 4）。20章のArchitecture Gate Checklist（8項目）はユーザーが個別にACCEPT/確認済み。private helper（`_sanitize_event_identity()`/`_entry_from_dict()`）の跨モジュールimportは本Release限定のArchitecture exceptionとして承認された。
+>
+> 実装完了後のIndependent Code Reviewは3ラウンド実施した：Round 1（Blocking 1：Manual Recovery Procedure案内文が運用者の判断を代替する文言を含んでいた／Major 2：非regular-file拒否テストのオラクル不足・AST静的チェックの対象範囲不足）→Round 2（Blocking 0、Major 1：非regular-fileテストが依然S_ISREG検査自体を証明できていなかった）→**Round 3（APPROVED、Blocking 0／Major 0／Minor 0）**。
+
+### Added
+
+- `scripts/show_scheduler_recovery.py` 新規CLIエントリスクリプト：`_ReadOnlyDispatchLedgerStore`（`SchedulerDispatchLedgerStore` ABCの新規実装、`JsonSchedulerDispatchLedgerStore`のconstructorが行う`mkdir()`を一切呼ばない）を用いてRECOVERY_REQUIRED occurrenceを診断する。`get()`/`list_all()`は`scheduler_dispatch_ledger_store`モジュールのmodule-level純粋関数（`_sanitize_event_identity()`・`_entry_from_dict()`）を直接importして再利用しつつ、ディレクトリ確認・列挙・個別ファイル読み取りという制御フローは新規実装（read-only APIのみで構成）。`save()`は`NotImplementedError`を送出する書き込み不能なdefensive実装。`--job-id`/`--event-identity`によるin-memory filter（AND条件）・`--limit`（正の整数契約）に対応。
+- `tests/test_e2e_v6_36_0_manual_recovery_diagnostic_cli_foundation.py` 新規作成（**54/54 PASS**）：RECOVERY_REQUIRED 0/N件表示・filter・limit契約・store_dir未初期化時のfail-closed終了とディレクトリ非作成の直接確認・破損record検出・lock非取得確認・save()のdefensive実装確認・claim/confirm/reconcile_stale_claims/save/peekの非呼び出しAST静的確認・custom `.env`相当のconfig override確認・非None付随フィールド表示・filename/event_identity cross-check（get()相当・list_all()相当）・非regular-file拒否（ディレクトリ・`os.lstat()`mockによるS_ISREG検査自体の直接証明の両方）を網羅する。
+
+### Changed
+
+- `tests/test_e2e_v6_32_7_invariant_35_closure_oracle.py`：`NON_SIDE_EFFECT_CAPABLE_MANIFEST`へ11番目のエントリとして`"scripts/show_scheduler_recovery.py"`を追記（`WorkflowEngineManager.run()`を含むsink A/B/Cのいずれにも到達しないことをAST closure解析で実測確認）。件数assertionを10→11へ更新。
+- `tests/test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py`：`_ZERODIFF1_ALLOWED_EXCEPTIONS["scripts"]`へ`"scripts/show_scheduler_recovery.py"`を事前登録（`[KI-33]`と同型、commit後の`ZERODIFF-1[scripts]`FAILを予防）。
+- `tests/zero_diff_guard_registry.py`：`RELEASE_ORDER`へ`"v6.36.0"`を追記。`_SOURCE_CHANGE_CONTRIBUTIONS`へ`("scripts", "v6.36.0", {"scripts/show_scheduler_recovery.py"})`を追記。`_TEST_CHANGE_CONTRIBUTIONS`へ新規E2E自身・本レジストリ自身・上記2ファイルの計4件を`"v6.36.0"`として登録した。
+- `docs/MVP_COMPLETION_ROADMAP.md`：v1.3→v1.4。6.36個別節を新設し、Change Recordへ承認記録を追記。MVP Definition of Done・Release 6.35のMVP COMPLETEという到達点はいずれも変更しない。
+
+### Zero-Diff対象（設計書17章、実装フェーズでも維持を確認）
+
+`src/scheduler_dispatch_ledger/`・`src/scheduler_driver/`・`src/scheduler_schedule_source/`・`scripts/show_execution_history.py`・`scripts/run_workflow_engine.py`・`scripts/run_scheduler_driver.py`・`.env.example`・`tests/formal_regression_inventory.py`・`tests/test_e2e_v6_35_8_t6_formal_regression_roster_validation.py`（37-file rosterは本Releaseでは凍結・変更しない、6.35自身の新規E2Eも同rosterに含まれていない先例に倣う）・Retry Runtime関連全パッケージはいずれも無改修。
+
+### Test Review・Regressionの実績
+
+新規targeted E2E（`test_e2e_v6_36_0_manual_recovery_diagnostic_cli_foundation.py`）は**54/54 PASS**。Invariant #35 closure oracle改訂後は**56/56 PASS**。Independent Code Review（Codex `codex-readonly-review`、read-only、3ラウンド）は**APPROVED**（Blocking 0／Major 0／Minor 0）。
+
+Formal Regression（既存37-fileの正式Inventory、本Releaseでは変更しない）は**32/37ファイルがexit code 0**。残る5ファイル（`test_e2e_v6_22_0`・`v6_23_0`・`v6_24_0`・`v6_26_0`・`v6_27_0`）は、本CHANGELOGの`[KI-35]`が記録する通り、**新設`scripts/show_scheduler_recovery.py`・新規E2Eが本Release完了時点でuncommittedであることのみに起因する既知差分**であり、commit後に自然解消する見込みである（`[KI-33]`・`[KI-3]`系列と完全に同型）。
+
+### Future Extension
+
+なし。本Releaseは既知gap 1件（Manual Recovery診断手段の不在）の解消のみを目的とした最小Releaseであり、新たなFuture Extensionを生まない。`release_claim()` Suggestion（`src/retry_engine/retry_executor.py`、6.32 Final Review由来）は本Releaseに含まれず、独立したFast Track候補として引き続き保留される。
+
+詳細は`docs/design/manual_recovery_diagnostic_cli_foundation.md`（Architecture Design、Codex Round 1〜5の記録を含む全22章）を参照。
+
+**重要：本Releaseは実装・Independent Code Review・Formal Regressionまで完了しているが、commit/pushは実施していない（Human Gate待ち、ユーザー指示による）。**
+
 ---
 
 ## [v6.34.0] - 2026-09-16 ★ Scheduler Driver & Duplicate Dispatch Safety

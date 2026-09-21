@@ -56,6 +56,7 @@ RELEASE_ORDER: tuple[str, ...] = (
     "v6.33.0",
     "v6.34.0",
     "v6.35.0",
+    "v6.36.0",
 )
 
 
@@ -213,6 +214,12 @@ _SOURCE_CHANGE_CONTRIBUTIONS: tuple[tuple[str, str, frozenset], ...] = (
     ("scripts", "v6.34.0", frozenset({
         "scripts/run_workflow_engine.py",
         "scripts/run_scheduler_driver.py",
+    })),
+    # v6.36.0（Manual Recovery Diagnostic CLI Foundation）：新設
+    # scripts/show_scheduler_recovery.py（read-only診断CLI、docs/design/
+    # manual_recovery_diagnostic_cli_foundation.md 6〜11章）。
+    ("scripts", "v6.36.0", frozenset({
+        "scripts/show_scheduler_recovery.py",
     })),
 )
 
@@ -627,6 +634,16 @@ _TEST_CHANGE_CONTRIBUTIONS: tuple[tuple[str, str], ...] = (
     ("scenario_d_worker.py", "v6.35.0"),
     ("scenario_f2_worker.py", "v6.35.0"),
     ("zero_diff_guard_registry.py", "v6.35.0"),
+    # v6.36.0（Manual Recovery Diagnostic CLI Foundation）自身。新規E2E追加と、
+    # その追加・上記scripts source contributionを許容するための本レジストリ
+    # 自身の編集（RELEASE_ORDERへの"v6.36.0"追記本体）に加え、Invariant #35
+    # closure oracle（新設scriptをNON_SIDE_EFFECT_CAPABLEの11番目のエントリとして
+    # 追加）・test_e2e_v6_27_0自身のstandalone guard（_ZERODIFF1_ALLOWED_EXCEPTIONS
+    # ["scripts"]への事前登録、[KI-33]と同型）への変更を登録する。
+    ("test_e2e_v6_36_0_manual_recovery_diagnostic_cli_foundation.py", "v6.36.0"),
+    ("zero_diff_guard_registry.py", "v6.36.0"),
+    ("test_e2e_v6_32_7_invariant_35_closure_oracle.py", "v6.36.0"),
+    ("test_e2e_v6_27_0_image_generation_gate_value_validation_foundation.py", "v6.36.0"),
 )
 
 

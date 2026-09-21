@@ -346,6 +346,13 @@ try:
             # Regressionで発見されたhistorical guard mapping漏れの補正
             # （docs/CHANGELOG.md [KI-33]参照、[KI-32]と同型の狭い例外追加）。
             "scripts/run_scheduler_driver.py",
+            # v6.36.0（Manual Recovery Diagnostic CLI Foundation）：新設
+            # scripts/show_scheduler_recovery.pyへの承認済み変更（zero_diff_guard_registry.py
+            # の_SOURCE_CHANGE_CONTRIBUTIONSにv6.36.0として登録予定）。[KI-33]と同型の
+            # 事前登録——commit前の現時点ではuntrackedのためZERODIFF-1[scripts]自体は
+            # 本エントリなしでも通過するが、commit後にZERODIFF-1[scripts]が同種のFAILを
+            # 起こさないよう、実装フェーズのうちに登録しておく。
+            "scripts/show_scheduler_recovery.py",
         },
     }
 
