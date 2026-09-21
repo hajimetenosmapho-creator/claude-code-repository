@@ -55,6 +55,7 @@ RELEASE_ORDER: tuple[str, ...] = (
     "v6.32.0",
     "v6.33.0",
     "v6.34.0",
+    "v6.35.0",
 )
 
 
@@ -600,6 +601,32 @@ _TEST_CHANGE_CONTRIBUTIONS: tuple[tuple[str, str], ...] = (
     # 確認した（docs/design/scheduler_driver_duplicate_dispatch_safety_foundation.md
     # 6.2章：新規のsink到達経路を一切追加しないという設計と整合する実測結果）。
     ("test_e2e_v6_32_7_invariant_35_closure_oracle.py", "v6.34.0"),
+    # v6.35.0（MVP End-to-End Hardening Validation：P1 RSS Feed URL Override +
+    # Scenario A〜F E2E）自身。P1のsrc変更（src/collector.py）はPROTECTED_PATHS
+    # 対象外のためsource contributionは不要（v6.29.0・v6.31.0・v6.34.0と同型の
+    # 扱い）。tests/への新規test-only追加（test_e2e_v6_35_0〜8の9ファイル、
+    # tests/e2e_support/配下のtest-only helper 8ファイル）と、その追加・
+    # 本レジストリ自身の編集（RELEASE_ORDERへの"v6.35.0"追記本体）を許容する
+    # ための、本レジストリ自身の再編集の計18+1件を登録する。
+    ("test_e2e_v6_35_0_p1_rss_feed_url_override.py", "v6.35.0"),
+    ("test_e2e_v6_35_1_scenario_a_normal_success.py", "v6.35.0"),
+    ("test_e2e_v6_35_2_scenario_b_retryable_failure.py", "v6.35.0"),
+    ("test_e2e_v6_35_3_scenario_c_human_review.py", "v6.35.0"),
+    ("test_e2e_v6_35_4_scenario_d_abandoned_timeout.py", "v6.35.0"),
+    ("test_e2e_v6_35_5_scenario_e_runtime_restart.py", "v6.35.0"),
+    ("test_e2e_v6_35_6_scenario_f1_lock_contention.py", "v6.35.0"),
+    ("test_e2e_v6_35_7_scenario_f2_deterministic_dispatch.py", "v6.35.0"),
+    ("test_e2e_v6_35_8_t6_formal_regression_roster_validation.py", "v6.35.0"),
+    ("formal_regression_inventory.py", "v6.35.0"),
+    ("__init__.py", "v6.35.0"),
+    ("disposable_copy.py", "v6.35.0"),
+    ("env_contract.py", "v6.35.0"),
+    ("local_stub.py", "v6.35.0"),
+    ("process_liveness.py", "v6.35.0"),
+    ("scenario_c_worker.py", "v6.35.0"),
+    ("scenario_d_worker.py", "v6.35.0"),
+    ("scenario_f2_worker.py", "v6.35.0"),
+    ("zero_diff_guard_registry.py", "v6.35.0"),
 )
 
 

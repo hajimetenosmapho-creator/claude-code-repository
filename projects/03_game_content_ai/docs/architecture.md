@@ -5927,3 +5927,21 @@ Architecture DesignはCodex `codex-readonly-review`によるRound 1〜5を経て
 Manual Recovery Procedure用の専用CLIスクリプト（Architecture Gate Checklist item 9でスコープ外と確定済み）。`RECOVERY_REQUIRED`occurrenceの自動復旧（Out of Scope）。Ownership-Integrity Self-Check / Lock Lifecycle ContractのTOCTOU残存window（Accepted Risk、25章R2）。`RetryRuntimeLock`等の`Retry`命名コンポーネントのリネーム（Open Issue、25章R4）。
 
 詳細は`docs/design/scheduler_driver_duplicate_dispatch_safety_foundation.md`（Architecture Design、Codex Round 1〜5の記録を含む全28章）を参照。
+
+## NEWS RSS Feed URL Override & Release 6.35 Scenario A〜F E2E Hardening（`NEWS_RSS_FEED_URLS_OVERRIDE`、v6.35.0 実装完了、Final Independent Codex Re-Review #2 APPROVED）
+
+> **本節は実装完了時点の記録であり、Release完了・Final Approvedを意味しない。** Production変更は`src/collector.py`（P1：`NEWS_RSS_FEED_URLS_OVERRIDE`環境変数によるRSS_FEEDS override、fail-closed検証）のみで、他はすべてtest-only（`tests/`・`tests/e2e_support/`）。targeted E2E（`test_e2e_v6_35_0`〜`_8`の9ファイル）は**163/163 PASS**。Release 6.35 implementation全体を対象としたFull Independent Review（`codex-readonly-review`、Codex High）は初回`NOT APPROVED`（Blocking 1／Major 2／Minor 2／Suggestion 1）だったが、全件対応済み（T6 roster新設含む）。その後のPre-Formal-Regression Closure Reviewは`APPROVED`（Blocking 0／Major 0／Minor 1、対応済み）。正式Formal Regression（Inventory 37ファイル実測）は初回32/37ファイルexit code 0（`docs/CHANGELOG.md` [KI-34]参照）、原因是正後は**37/37ファイルexit code 0**。Release全体を対象とするFinal Independent Codex Reviewは初回`NOT APPROVED`（Blocking 0／Major 2／Minor 1、文書記述整合性の指摘のみ）、文書整合修正後のFinal Re-Review #1も`NOT APPROVED`（Blocking 0／Major 1、§0/30章のstale current-state pointerの指摘のみ）だったが、いずれもProduction・test semantics・assertion・rosterへの疑義ではなかった。当該pointerを解消した後のFinal Independent Codex Re-Review #2は`APPROVED`（Blocking 0／Major 0／Minor 0）。**commit／pushは、本節執筆時点ではいずれも未実施（pending）である。**
+
+`src/collector.py`の`collect_all_news()`に、`NEWS_RSS_FEED_URLS_OVERRIDE`環境変数（JSON、`RSS_FEEDS`の全16キーと完全一致する場合のみ有効）によるRSS収集先の差し替えを追加した。fail-closed設計：JSON重複キー拒否（`object_pairs_hook`）、キー集合の完全一致、値ごとのhostname/port/percent-escape/制御文字検証、検証完了後のみネットワークアクセスを許可する順序を守る。既存の環境変数未設定時の挙動（ハードコードされた`RSS_FEEDS`を使用）は無変更。
+
+新規packageの追加はない。テスト基盤側に、MVP全体のend-to-endシナリオ（Scenario A：正常成功、B：retryable failure→実際のretry成功、C：部分失敗→Human Review、D：abandoned RUNNING→TIMEOUT、E：runtime再起動/reconcile、F1：Scheduler Driver lock contention、F2：deterministic dispatch）を検証するtest-only infrastructure（`tests/e2e_support/`：`LocalStub`・`DisposableProjectCopy`・`ExactEnv`・各種worker script）を新設した。
+
+### Formal Regression実施時の既知差分の是正（roster/registry）
+
+Formal Regression本体の実施にあたり、19.1節が定める37-fileのmachine-readable roster（`tests/formal_regression_inventory.py`、静的validation：`tests/test_e2e_v6_35_8_t6_formal_regression_roster_validation.py`）を新設した。初回実行（32/37 PASS）でFAILした5ファイル（`test_e2e_v6_22_0`・`v6_23_0`・`v6_24_0`・`v6_26_0`・`v6_27_0`）は、共有Zero-Diff Guard Registry（`tests/zero_diff_guard_registry.py`、DEF-6.23-9）へRelease 6.35自身の新規test-onlyファイル（19エントリ：新規untrackedファイル18件＋registry自身の自己登録1件）をGR-9既存conventionに従って登録していなかったことが原因（`docs/CHANGELOG.md` [KI-34]参照）。`RELEASE_ORDER`への`"v6.35.0"`追記と`_TEST_CHANGE_CONTRIBUTIONS`への19エントリ追記（先例：v6.29.0・v6.31.0・v6.34.0と同型）のみで是正し、`PROTECTED_PATHS`・`_SOURCE_CHANGE_CONTRIBUTIONS`・`BASELINE_COMMITS`・Production・Test semanticsは無変更のまま、Formal Regression 37/37 PASSへ到達した。
+
+### Release Acceptance未完了項目
+
+Release全体を対象とするFinal Independent Codex Review（Initial Review・文書整合修正後のRe-Review #1・stale pointer解消後のRe-Review #2）はいずれも実施済みであり、Re-Review #2は`APPROVED`（Blocking 0／Major 0／Minor 0）である。commit/pushのみ、本節の時点では未実施である。
+
+詳細は`docs/design/mvp_end_to_end_hardening_validation.md`（Architecture Design + 30章 Implementation Reconciliation Amendment、Codex delta review #1〜#4・Full Independent Review・Pre-Formal-Regression Closure Reviewの記録を含む）を参照。

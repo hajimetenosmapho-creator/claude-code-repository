@@ -2,6 +2,13 @@
 RSSフィードからゲームニュースを収集するモジュール。
 """
 
+import ipaddress
+import json
+import os
+import re
+import unicodedata
+from urllib.parse import urlsplit
+
 import feedparser
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
@@ -59,6 +66,107 @@ FEED_GROUPS = {
                  "VGC", "Insider Gaming", "PC Gamer"],
     "プラットフォーム特化": ["Nintendo Life", "Push Square", "Pure Xbox"],
 }
+
+NEWS_RSS_FEED_URLS_OVERRIDE_ENV = "NEWS_RSS_FEED_URLS_OVERRIDE"
+
+_IPV4_SHAPE_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+_DNS_HOSTNAME_RE = re.compile(
+    r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+)
+_NUMERIC_LABEL_RE = re.compile(r"^[0-9]+$")
+_HEX_LABEL_RE = re.compile(r"^0x[0-9a-f]+$")
+_BAD_PERCENT_RE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+
+
+def _reject_duplicate_keys(pairs: list) -> dict:
+    """JSONオブジェクトのキー重複をfail-closedに拒否するobject_pairs_hook。"""
+    seen: set = set()
+    for key, _ in pairs:
+        if key in seen:
+            raise ValueError(
+                f"NEWS_RSS_FEED_URLS_OVERRIDEに重複キーが含まれています: {key!r}"
+            )
+        seen.add(key)
+    return dict(pairs)
+
+
+def _validate_feed_url(value) -> str:
+    """1件のfeed URL値を検証し、trimmed値をcanonical resultとして返す。"""
+    if type(value) is not str:
+        raise ValueError("feed URLは文字列である必要があります")
+
+    trimmed = value.strip()
+    if trimmed == "":
+        raise ValueError("feed URLが空です")
+
+    for ch in trimmed:
+        if (
+            ch.isspace()
+            or ord(ch) < 0x20
+            or ord(ch) == 0x7F
+            or unicodedata.category(ch) in ("Cc", "Cf")
+        ):
+            raise ValueError("feed URLに空白または制御文字が含まれています")
+
+    if not (trimmed.startswith("http://") or trimmed.startswith("https://")):
+        raise ValueError("feed URLはhttp://またはhttps://で始まる必要があります")
+
+    parsed = urlsplit(trimmed)
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("feed URLにhostnameが含まれていません")
+
+    if _IPV4_SHAPE_RE.match(hostname):
+        try:
+            ipaddress.IPv4Address(hostname)
+        except ValueError:
+            raise ValueError("feed URLのhostnameが不正なIPv4アドレスです")
+    else:
+        if len(hostname) > 253 or not _DNS_HOSTNAME_RE.match(hostname):
+            raise ValueError("feed URLのhostnameが不正なDNSホスト名です")
+        for label in hostname.split("."):
+            if _NUMERIC_LABEL_RE.match(label) or _HEX_LABEL_RE.match(label):
+                raise ValueError(
+                    "feed URLのhostnameラベルがIPv4代替表記の疑いがあり拒否されました"
+                )
+
+    if _BAD_PERCENT_RE.search(trimmed):
+        raise ValueError("feed URLに不正なpercent-escapeが含まれています")
+
+    host_port = parsed.netloc.rpartition("@")[2]
+    if host_port.endswith(":"):
+        raise ValueError("feed URLのportが明示的に空です")
+
+    try:
+        port = parsed.port
+    except ValueError:
+        raise ValueError("feed URLのportが不正です")
+
+    if port is not None and port == 0:
+        raise ValueError("feed URLのportに0は使用できません")
+
+    return trimmed
+
+
+def _resolve_rss_feeds() -> dict:
+    """
+    NEWS_RSS_FEED_URLS_OVERRIDEが未設定ならRSS_FEEDSをそのまま返す。
+    設定されている場合はJSONとしてvalidationした上で置き換えたdictを返す（fail-closed）。
+    """
+    override = os.environ.get(NEWS_RSS_FEED_URLS_OVERRIDE_ENV)
+    if override is None:
+        return RSS_FEEDS
+
+    parsed = json.loads(override, object_pairs_hook=_reject_duplicate_keys)
+
+    if not isinstance(parsed, dict) or set(parsed.keys()) != set(RSS_FEEDS.keys()):
+        raise ValueError(
+            "NEWS_RSS_FEED_URLS_OVERRIDEはRSS_FEEDSと完全に一致する16キーを持つ"
+            "JSONオブジェクトである必要があります"
+        )
+
+    return {key: _validate_feed_url(value) for key, value in parsed.items()}
 
 
 def _parse_published(entry) -> str:
@@ -143,7 +251,8 @@ def collect_all_news(max_items_per_feed: int = 20) -> tuple[list[NewsItem], list
     all_items: list[NewsItem] = []
     all_stats: list[FeedStats] = []
 
-    for source_name, feed_url in RSS_FEEDS.items():
+    feeds = _resolve_rss_feeds()
+    for source_name, feed_url in feeds.items():
         items, stats = fetch_from_feed(source_name, feed_url, max_items_per_feed)
         all_items.extend(items)
         all_stats.append(stats)
