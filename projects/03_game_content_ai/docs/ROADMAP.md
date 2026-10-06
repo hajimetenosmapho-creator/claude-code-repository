@@ -1559,6 +1559,23 @@ MVP到達までのRelease計画（6.30以降）は `docs/MVP_COMPLETION_ROADMAP.
 - [x] Media Upload Retry／Idempotency Foundationは v6.28.0（Article Media Upload State
   Foundation）としてFoundation部分（state記録・照会Contract）を完了。main.pyへの実配線は
   HWP-1〜HWP-3が承認されるまで別途Deferred（上記v6.28.0エントリ参照）
+- [ ] **WordPress Server-Side Media Idempotency Foundation**（Release 6.38.0候補、
+  **Architecture Re-review Pending**、実装未着手）：WordPress側（PHP plugin、
+  `wordpress/gca-media-idempotency/`）にauthoritativeなserver-side duplicate suppression境界を作る
+  **Consumer-less Foundation**。v6.32でPython側のwrite-ahead／fail-closed／
+  `HUMAN_REVIEW_REQUIRED`が配線済みのため、自動retryによる重複は既に遮断されており、本候補が
+  解く問題はmanual recovery後を含むWordPress側のduplicate suppression不足である。
+  Python client integration・main.py／Retry／HRR配線・production deployment・orphan cleanup・
+  DB rollback／restore完全保証・外部epoch anchor・stable identity sourceの実装は本候補のOut of Scope。
+  Amendment A1（2026-10-06）で旧Draftの「APPROVED」を撤回し（旧Round／Codexレビュー記録はrepo内で
+  再現不能なhistorical self-recorded context）、idempotency identity・PROCESSING／CONFIRMED
+  状態機械・DB epoch保証範囲を改訂した。以降、各Amendment（A1〜A12）に対する独立レビュー
+  （Review #9〜#20）はいずれもNOT APPROVEDで、各指摘に対応してAmendment A13（同日）を適用済み
+  （指摘と対応の詳細は設計書19章・24章を参照。契約の内容は設計書が正本であり、本Roadmapは
+  再記述しない）。A13に対する独立再レビュー（Review #21）は未実施（Pending）。
+  Production code・testsは
+  未着手（`docs/design/wordpress_server_side_media_idempotency_foundation.md`、
+  `docs/MVP_COMPLETION_ROADMAP.md` 6.38節）
 - [ ] **WordPress Unused Media Cleanup Foundation**（次候補）：Upload成功後の記事投稿失敗時に残る
   未使用WordPress Mediaの検出・削除方針。`WordPressMediaUploader`に削除APIが現状存在しないことを
   踏まえ独立検討する
