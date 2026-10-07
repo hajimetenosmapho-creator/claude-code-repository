@@ -1579,7 +1579,8 @@ MVP到達までのRelease計画（6.30以降）は `docs/MVP_COMPLETION_ROADMAP.
   指摘に対応した（指摘と対応の詳細は設計書17.5節・17.6節・19章・24章を参照。契約の内容は
   設計書12章が正本であり、本Roadmapは再記述しない）。A18に対するReview #26は
   APPROVED（Blocking 0／Major 0／Minor 2。設計文書の内部整合性とsource上の事実の判定で、runtime項目は
-  未検証。Minor 2件は文書の同期のみで対応）。実装は開始しない。
+  未検証。Minor 2件は文書の同期のみで対応）。Architecture Human Gate（設計書21章の5論点）は、
+  ユーザーが個別にACCEPT済み（2026-10-07。設計書21章の「ACCEPT記録」）。実装は開始しない。
   Production code・testsは
   未着手（`docs/design/wordpress_server_side_media_idempotency_foundation.md`、
   `docs/MVP_COMPLETION_ROADMAP.md` 6.38節）

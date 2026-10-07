@@ -2,7 +2,7 @@
 
 ## 0. Status
 
-- **Status: ARCHITECTURE RE-REVIEW APPROVED（Amendment A18・Review #26：APPROVED、Blocking 0／Major 0／Minor 2。設計文書の内部整合性とsource上の事実の判定であり、runtime（実環境）の項目は未検証・実装未着手・Human Gate未実施）。**
+- **Status: ARCHITECTURE RE-REVIEW APPROVED（Amendment A18・Review #26：APPROVED、Blocking 0／Major 0／Minor 2。設計文書の内部整合性とsource上の事実の判定であり、runtime（実環境）の項目は未検証・実装未着手。Architecture Human Gate（21章の5論点）は、ユーザーが個別にACCEPT済み（2026-10-07）。Implementation Start Validation・Production実装・`git tag`は別のHuman Gate）。**
   - **経緯**：A13テキストに対するCodex High独立再レビュー（Review #21）は**APPROVED**で、commit `2513ae5`のdocs-only checkpointとして確定した。その後の**Implementation Start Validation（2026-10-06、WordPress 7.1.1 tag sourceのread-only確認）で、承認済みArchitectureの前提誤り（U-18・U-2・U-19。17.5節）が判明した**。**Review #21のAPPROVEDは、設計文書の内部整合性の判定であり、未検証前提を確認済みとするものではなかった**ため、承認は現行本文には及ばない。A14が12章を再設計し、A14に対するReview #22（NOT APPROVED、Blocking 1／Major 3／Minor 2）の指摘にA15が、A15に対するReview #23（NOT APPROVED、Blocking 1／Major 4／Minor 1）の指摘にA16が、A16に対するReview #24（NOT APPROVED、Blocking 0／Major 2／Minor 1）の指摘にA17が、A17に対するReview #25（NOT APPROVED、Blocking 0／Major 2／Minor 1）の指摘にA18が対応した。A18に対するReview #26は**APPROVED**（Blocking 0／Major 0／Minor 2）で、Minor 2件（V-16の記述、現在地表記）は文書の同期のみで対応した（契約・ID・scope・テスト・台帳の内容は変更していない）。このAPPROVEDは、設計文書の内部整合性と、canonical・auxiliary sourceのsource上の事実への照合の判定であり、runtime（実環境）の項目を確認済みとするものではない（17.6節。Review #21のAPPROVEDが後に前提誤りで覆された経緯と同じ限界）。**Release scope（Consumer-less Foundation、Python integration・production deploymentはOut of Scope）は変更していない**。MVP COMPLETE（v6.35）は再オープンしない。
   - A1テキストに対するCodex High独立レビュー（Review #9）は**NOT APPROVED**（Blocking 0／Major 7／Minor 1／Suggestion 1）であった。A2は同Findings（M1〜M7＋Minor＋Suggestion）への最小修正であり、A1の骨格は維持している。
   - A2テキストに対するCodex High独立再レビュー（Review #10）は**NOT APPROVED**（Blocking 2（B1・B2）／Major 3（M-A〜M-C）／Minor 3（N1〜N3）／Suggestion 0）であった。Review #10は、Review #9のM1・M2・M6・M7・Minorを閉じたと判定し、M3・M4・M5・Suggestionを部分的closureとした。A3はReview #10のFindingsへの最小修正であり、A2の骨格は維持している。
@@ -92,7 +92,7 @@
 - **Amendment A16（2026-10-06）**：Review #23（A15、NOT APPROVED）のB-01／M-01〜M-04／N-01への修正。変更点は**24章（24.16節）**。**scope変更なし**。`permission_callback`をmarkerから切り離し、side-effect safetyと投影を分離した。契約の正本は**12章**（SP・CS・B・BT・X）。
 - **Amendment A17（2026-10-07）**：Review #24（A16、NOT APPROVED、Blocking 0／Major 2（M-A16-01・M-A16-02）／Minor 1（N-A16-01））への修正。変更点は**24章（24.17節）**。**scope変更なし。WordPress source evidenceの追加・取得・repo保存は行っていない**。method境界（effective method基準）を**12.1節 MO-1〜MO-4**として12章に正本化し、テスト節・索引・リスクの再記述を12章の識別子による参照のみへ整理し、台帳・見出しをA17現在へ同期した。Review #24で独立に照合できなかったsource依存の主張は**verifiedに格上げせず、validation-required（17.6節）**としてImplementation Start Validation（18章）に残す。契約の正本は**12章**。
 - **Amendment A18（2026-10-07）**：Review #25（A17、NOT APPROVED、Blocking 0／Major 2（M-25-01・M-25-02）／Minor 1（N-25-01））への修正。変更点は**24章（24.18節）**。**scope変更なし**。Review #25でCLOSEDとなったA17の項目（M-A16-01・M-A16-02・N-A16-01）は再変更していない。`rest_post_dispatch`の**4つのcall-site（12.1節 RD-1〜RD-7）**の分類と、**`status_header`filter（12.3節 X-11）**のtopology・契約を12章に正本化し、`status_header()`の本体が供給sourceに存在することへ訂正し（V-16）、dispatch文脈別のテスト（T-37）を拡張した。**source確認だけでruntimeの項目をPASSにしない**（17.6節）。契約の正本は**12章**。
-- Baseline（A18時点。HEAD・origin/mainはA14時点から不変）: branch `main`, HEAD=origin/main=`2513ae557ca3169ad61906e2cfcba9849a1d8a3c`（A13のdocs-only checkpoint。その親はRelease 6.37.0完了時点の`5974caf86d09e5e6c306a0b4e7f2002eb97ebb4b`）。Working Treeは**A14〜A18の変更により、本書・`docs/ROADMAP.md`・`docs/MVP_COMPLETION_ROADMAP.md`が未commit**（いずれもdocs変更のみ、commit/pushはHuman Gate待ち）。`src/`・`tests/`・`scripts/`・`wordpress/`は変更していない。
+- Baseline（Architecture checkpoint `f719908`時点。ACCEPT記録（21章）の追記前）: branch `main`, HEAD=origin/main=`f7199083308672c24c7b2595ced251be53376f3c`（**Architecture checkpoint**：A14〜A18・Review #26 APPROVED・post-review docs syncをdocs-onlyで含み、**commit・push済み**）。その親は`2513ae557ca3169ad61906e2cfcba9849a1d8a3c`（A13のdocs-only checkpoint。さらにその親はRelease 6.37.0完了時点の`5974caf86d09e5e6c306a0b4e7f2002eb97ebb4b`）。**A14〜A18の変更（本書・`docs/ROADMAP.md`・`docs/MVP_COMPLETION_ROADMAP.md`）は、`f719908`でcommit・push済み**。`src/`・`tests/`・`scripts/`・`wordpress/`は変更していない。
 - **旧レビュー履歴の扱い（Historical self-recorded context）**：
 
   | # | 対象累積Round | 記録されたVerdict | Blocking | Major | Minor |
@@ -1293,9 +1293,9 @@ Review #24（Codex High）は、**ローカルにWordPress 7.1.1のsourceが存�
 ## 20. Definition of Done
 
 Architecture Gate（実装開始前）：
-- [ ] 最新のArchitecture Design（本書の現行版）が、独立Architecture Reviewで`APPROVED`（Blocking 0／Major 0）に到達する（特定のAmendment番号には依存しない。Amendmentを重ねた場合は、その時点の最新版が対象）
+- [x] 最新のArchitecture Design（本書の現行版）が、独立Architecture Reviewで`APPROVED`（Blocking 0／Major 0）に到達する（特定のAmendment番号には依存しない。Amendmentを重ねた場合は、その時点の最新版が対象）**（Review #26で到達、2026-10-07。以降のdocs syncは契約不変）**
 - [ ] 18章のImplementation Start Validation Checklistを完了し、結果をpinする
-- [ ] Human Gate（21章）の承認を得る
+- [x] Human Gate（21章）の承認を得る**（5論点を個別にACCEPT、2026-10-07。21章の「ACCEPT記録」）**
 
 実装フェーズ：
 - [ ] `wordpress/gca-media-idempotency/`を新設し、本書の設計に基づき実装する（**repoへの配置のみ。本番deployは含まない**）
@@ -1319,7 +1319,19 @@ Architecture Gate（実装開始前）：
   3. `PROCESSING`の自動reclaim禁止と、Core拒否・曖昧障害でidentityが消費されるコストの受容（10章）
   4. DB rollback／restore／lossy failoverを保証しないこと、外部epoch anchorをOut of Scopeとすること（6章）
   5. L2／L3 evidenceが得られるまで完了を主張しないこと（15.1節・20章）
-- `docs/ROADMAP.md`・`docs/MVP_COMPLETION_ROADMAP.md`の本Amendmentに伴う変更は未commit。commit/pushは別途承認を要する。
+**Architecture Human Gate ACCEPT記録（2026-10-07）**：ユーザーが、上記の5論点を**個別にACCEPT**した。ACCEPT時点の設計書は、Amendment A18・Review #26 APPROVED・Architecture checkpoint `f719908`である。
+
+| # | ACCEPTした内容（ユーザーの文言の要旨） | 正本 |
+|---|---|---|
+| 1 | Release 6.38.0を**Consumer-less Foundation**とし、Python integrationとproduction deploymentを別Releaseへ分離する | 2章 |
+| 2 | logical identityを`article_identity + media_role + content_revision`とし、image bytes・attempt・runを使用しない。stable identity sourceは後続Integration Releaseの**必須precondition**とし、6.38では実装しない | 7.4・7.7節 |
+| 3 | `PROCESSING`の**自動reclaimを行わず**、Core拒否や曖昧な障害でidentityが消費されたままになる運用コストを受容する | 10章 |
+| 4 | DB rollback／restore／lossy failoverを**保証せず**、外部epoch anchorをOut of Scopeとする | 6章 |
+| 5 | L2／L3 evidenceが得られるまで、Release 6.38.0の**完全な完了を主張しない** | 15.1節・20章 |
+
+- **ACCEPTの範囲**：上記は設計判断の承認であり、**設計の内容（契約・scope・ID・テスト・台帳）は変更しない**。Review #26は設計の内部整合性とsource上の事実の判定であり、本ACCEPTはそれとは別のHuman Gateである。20章の「Human Gate（21章）の承認を得る」に対応する。
+- **ACCEPTしていないもの（別のHuman Gateとして残る）**：**Implementation Start Validation（18章）の完了と結果のpin**、**Production codeの実装開始**、`git tag`、production deployment。**本ACCEPTは、Implementation Start Validationのruntime項目をPASSにするものではなく、実装開始の許可でもない**。
+- **Git操作の位置づけ**：Architecture checkpoint（A14〜A18・Review #26 APPROVED・post-review docs sync）は、commit `f719908`としてcommit・push済みである。**本ACCEPT記録は、その`f719908`の後に追加された記録である。** 今後のGit操作（`git commit`・`git push`・`git tag`等）は、Global Development Gatesに従い、**必要なHuman Gateを個別に経る**（本ACCEPTは、それらの承認を含まない）。
 
 ---
 
@@ -1598,6 +1610,8 @@ A11の骨格（12章がFinalizerの適用runtime failureの唯一の正本、T-0
 | 台帳 | **V-16を新設**（provenance、evidence 14ファイルとtagアーカイブのbyte一致、`src/`全体の走査によるcall-site・hookの網羅確認とその限界）。17.6節に、Review #25の結果とruntime未検証の明記を追加。D-30・R-5・R-21・26章の見出しを同期。**U-1〜U-21（U-22は廃止済み）・T-01〜T-38の範囲は変更していない** |
 
 **補記（Review #26 APPROVED後のdocs sync。2026-10-07）**：Review #26（APPROVED、Minor 2）への対応は**文書の同期のみ**で、**契約・ID・scope・テスト・台帳の内容は変更していない**。(1)**V-16(4)**を、canonical evidence（14ファイル）に`connectors.php`が含まれないこと、auxiliary evidenceが供給して検証済みであること、Review #26でCodexが両evidence rootをreadして(3)をsource照合したこと、に同期。(2)**現在地表記**：17.5節の見出しを「A18現在」へ、MVP Roadmapのcurrent statusの日付を2026-10-07へ同期。0章のStatus・Review表・19章・両Roadmapのstatusを「Review #26 APPROVED」へ同期（履歴としてのA14〜A17の記述は維持）。**このAPPROVEDは、設計文書の内部整合性とsource上の事実の判定であり、runtime項目は未検証**（17.6節）。
+
+**補記（Architecture Human Gate ACCEPT記録。2026-10-07）**：ユーザーが21章の5論点を個別にACCEPTした。記録は**21章の「ACCEPT記録」**、0章のStatus、20章のArchitecture Gate（「Human Gate（21章）の承認を得る」と、Review #26で到達した「APPROVED」の2項目をチェック）、両Roadmapのstatusに反映した。あわせて、**`f719908`でcommit・push済みとなった現在地**に合わせ、**0章のBaseline**と**21章末尾**の「未commit」という現在地表記を同期した（履歴としての旧記述は変更していない）。**設計の契約・scope・ID・テスト・台帳の内容は変更していない**。ACCEPTは、Implementation Start Validationのruntime項目のPASSでも、実装開始の許可でもない。
 
 ---
 
