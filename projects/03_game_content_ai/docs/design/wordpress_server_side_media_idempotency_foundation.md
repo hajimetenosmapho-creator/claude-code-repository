@@ -2,7 +2,8 @@
 
 ## 0. Status
 
-- **Status: ARCHITECTURE RE-REVIEW REQUIRED（Amendment A13 適用済み・A13に対する独立再レビュー未実施・実装未着手）。**
+- **Status: ARCHITECTURE RE-REVIEW APPROVED（Amendment A18・Review #26：APPROVED、Blocking 0／Major 0／Minor 2。設計文書の内部整合性とsource上の事実の判定であり、runtime（実環境）の項目は未検証・実装未着手・Human Gate未実施）。**
+  - **経緯**：A13テキストに対するCodex High独立再レビュー（Review #21）は**APPROVED**で、commit `2513ae5`のdocs-only checkpointとして確定した。その後の**Implementation Start Validation（2026-10-06、WordPress 7.1.1 tag sourceのread-only確認）で、承認済みArchitectureの前提誤り（U-18・U-2・U-19。17.5節）が判明した**。**Review #21のAPPROVEDは、設計文書の内部整合性の判定であり、未検証前提を確認済みとするものではなかった**ため、承認は現行本文には及ばない。A14が12章を再設計し、A14に対するReview #22（NOT APPROVED、Blocking 1／Major 3／Minor 2）の指摘にA15が、A15に対するReview #23（NOT APPROVED、Blocking 1／Major 4／Minor 1）の指摘にA16が、A16に対するReview #24（NOT APPROVED、Blocking 0／Major 2／Minor 1）の指摘にA17が、A17に対するReview #25（NOT APPROVED、Blocking 0／Major 2／Minor 1）の指摘にA18が対応した。A18に対するReview #26は**APPROVED**（Blocking 0／Major 0／Minor 2）で、Minor 2件（V-16の記述、現在地表記）は文書の同期のみで対応した（契約・ID・scope・テスト・台帳の内容は変更していない）。このAPPROVEDは、設計文書の内部整合性と、canonical・auxiliary sourceのsource上の事実への照合の判定であり、runtime（実環境）の項目を確認済みとするものではない（17.6節。Review #21のAPPROVEDが後に前提誤りで覆された経緯と同じ限界）。**Release scope（Consumer-less Foundation、Python integration・production deploymentはOut of Scope）は変更していない**。MVP COMPLETE（v6.35）は再オープンしない。
   - A1テキストに対するCodex High独立レビュー（Review #9）は**NOT APPROVED**（Blocking 0／Major 7／Minor 1／Suggestion 1）であった。A2は同Findings（M1〜M7＋Minor＋Suggestion）への最小修正であり、A1の骨格は維持している。
   - A2テキストに対するCodex High独立再レビュー（Review #10）は**NOT APPROVED**（Blocking 2（B1・B2）／Major 3（M-A〜M-C）／Minor 3（N1〜N3）／Suggestion 0）であった。Review #10は、Review #9のM1・M2・M6・M7・Minorを閉じたと判定し、M3・M4・M5・Suggestionを部分的closureとした。A3はReview #10のFindingsへの最小修正であり、A2の骨格は維持している。
   - A3テキストに対するCodex High独立再レビュー（Review #11）は**NOT APPROVED**（Blocking 0／Major 5（M1〜M5）／Minor 2／Suggestion 0）であった。A4はReview #11のFindingsへの最小修正であり、A3の骨格は維持している。
@@ -52,7 +53,7 @@
   - M5：旧25章のメタ記述を削除し、設計判断・検証の対応表へ置き換え
   - N1：8.1節の`claim_state`表記を`gca_claim_state`へ統一／N2：現行filename生成contractから最大長（65文字）を算出し、「未確認」の記述を削除（8.1節、V-8）
 - **Amendment A5（2026-10-06）**：Review #12のFindingsへの最小修正。変更点は**24章（24.5節）**に集約する。
-  - A4-B1：finalizationの所有者と順序を統一。**route callbackが**Core成功→4項目検証→snapshot保存→`CONFIRMED`化（durable ACK確認）→success responseを担い、**`rest_pre_echo_response`のFinalizerは、state変更・検証・DB保存・DB読取りを一切せず、永続化済みsnapshotからcanonical 5-field payloadへ全置換するだけ**（10.4・12章、T-16・T-34。**A6で、置換の対象をdataに加えHTTP statusにも拡張し、request-local contextの束縛を追加**）。Core成功後のsnapshot validation failure（`source_url`欠落・不正等）を8.3節の応答表・crash table（C10）に追加（T-33）
+  - A4-B1：finalizationの所有者と順序を統一。**route callbackが**Core成功→4項目検証→snapshot保存→`CONFIRMED`化（durable ACK確認）→success responseを担い、**`rest_pre_echo_response`のFinalizerは、state変更・検証・DB保存・DB読取りを一切せず、永続化済みsnapshotからcanonical 5-field payloadへ全置換するだけ**（10.4・12章、T-16・T-34。**A6で、置換の対象をdataに加えHTTP statusにも拡張し、request-local contextの束縛を追加**）**（A14で、投影hookは`rest_pre_echo_response`から`rest_post_dispatch`へ変更。当時の「`rest_pre_echo_response`でstatusを置換する」前提は偽と判明し撤回。現行は12.1節）**。Core成功後のsnapshot validation failure（`source_url`欠落・不正等）を8.3節の応答表・crash table（C10）に追加（T-33）
   - A4-M1：Goal G2を修正し、「Python側にidempotency結果・claim stateを持たせない」と「stable identityのdurable保持（Integration Release）」を明確に分離（3章）
   - A4-M2：T-23eを、R1・R2通過後のR3でのBinding mismatch fault injectionとして到達可能に修正。静的な別schema構成はT-23f（R1で503 `none`・claim 0）として分離（15章）
   - Minor：用語集の`gca_claim_state`への統一（4章）／23章の503 `confirmed`にC9を追加／T-29 L3の前提条件（下位層body上限を上限+1バイトより大きく設定できたことのevidence）（15章、U-16）
@@ -66,7 +67,7 @@
   - N1：全canonical errorについて、固定message文字列を8.3節に正本化。status・error code・message・`gca_claim_state`の組合せを閉集合（E1〜E9）として定義し、T-22で完全一致を検証。自由文・Core由来messageは外部へ透過しない
   - **（A8で置換）上記のB1のresponse class分岐（class A／B／C）は、A8で廃止され、authoritative outcome marker方式に置き換えられた**。現行の規範は12章・8.3節であり、A7の分岐の記述は履歴としてのみ残る
 - **Amendment A8（2026-10-06）**：Review #15のFindingsへの修正。変更点は**24章（24.8節）**に集約する。
-  - B1：**A7のresponse-class 3-way dispatchを廃止**。plugin control path（ラップしたpermission_callbackとroute callback）が、各GCA requestについて**plugin-private・write-once・request-localのauthoritative outcome marker**（`SUCCESS_FIRST`／`SUCCESS_REPLAY`／`E1`〜`E9`）を確定し、**Finalizerはpre-Finalizerの応答のstatus・data・種別を判断材料にせず、markerだけから最終response（statusとdata）を新規構築・完全置換**する。`SUCCESS_FIRST`はdurable ACK後のみ、`SUCCESS_REPLAY`はVerification成功後のみ設定。markerはexact request instanceに束縛し、二重設定・欠落・不正・別request markerはE5へfail-closed。pre-Finalizerのcallbackがsuccess↔error・1xx／3xx・任意bodyへ変更しても、valid markerから復元（12章・8.3節・10.4節・C5／C5b・T-07・T-16・T-22・T-34）
+  - B1：**A7のresponse-class 3-way dispatchを廃止**。plugin control path（ラップしたpermission_callbackとroute callback。**A16で、permission_callbackは置換せずmarkerに関与させない方式へ変更。control pathはroute callbackだけ**）が、各GCA requestについて**plugin-private・write-once・request-localのauthoritative outcome marker**（`SUCCESS_FIRST`／`SUCCESS_REPLAY`／`E1`〜`E9`）を確定し、**Finalizerはpre-Finalizerの応答のstatus・data・種別を判断材料にせず、markerだけから最終response（statusとdata）を新規構築・完全置換**する。`SUCCESS_FIRST`はdurable ACK後のみ、`SUCCESS_REPLAY`はVerification成功後のみ設定。markerはexact request instanceに束縛し、二重設定・欠落・不正・別request markerはE5へfail-closed。pre-Finalizerのcallbackがsuccess↔error・1xx／3xx・任意bodyへ変更しても、valid markerから復元（12章・8.3節・10.4節・C5／C5b・T-07・T-16・T-22・T-34）
   - M1：`X-GCA-Identity-Schema`のclient供給値の不一致を**E1／400に統一**。server内部のschema／DB／epoch／configurationの不一致は**E4／503**として区別（6.5・7.4・8.2・8.3節、T-09・T-18）
   - M2：Finalizerが**markerからresponseを新規構築**し、成功＝ちょうど5 key、error＝ちょうど3 key（`data`はちょうど2 key）の**exact key setだけ**を出力する契約とした。incoming responseのkey集合の判定に依存しない。余分なfieldが最終responseに残らないことをT-22(11)・T-34(d5)で検証
   - N1：1xx／3xxを含むpre-Finalizer statusの改変をT-34(d)で検証（valid markerあり→markerのcanonical outcomeへ復元、marker無し・不正→E5）
@@ -86,7 +87,12 @@
 - **Amendment A13（2026-10-06）**：Review #20のM1・Minorだけへの修正（新しい設計判断・scope変更なし）。変更点は**24章（24.13節）**に集約する。
   - M1：R-10の「claim後の失敗は一律409 `processing`」という旧一般化を削除し、claim確立後のHTTP outcomeは8.3節の正本matrixに従う（Finalizerの適用runtime failureは12章の保証境界に従う）という参照のみとした。全文で、claim後を409へ一般化する同義表現・古い版表記・8.3節／12章と競合する再記述を確認した
   - Minor：26章の見出しを現行Amendmentへ更新
-- Baseline: branch `main`, HEAD=`5974caf86d09e5e6c306a0b4e7f2002eb97ebb4b`（Release 6.37.0完了時点）。Working Treeは**clean ではない**：`docs/ROADMAP.md`（modified）・本書（untracked）・`docs/MVP_COMPLETION_ROADMAP.md`（Amendment A1で追記、modified）が未commit（いずれもdocs変更のみ、commit/pushはHuman Gate待ち）。旧Draftが記していた「Working Tree clean」は事実ではなかったため訂正する。
+- **Amendment A14（2026-10-06）**：Implementation Start Validationで判明した設計前提の誤り（U-18・U-2・U-19）の訂正。変更点は**24章（24.14節）**。**scope変更なし**。契約の正本は**12章**（12.1〜12.5節）。
+- **Amendment A15（2026-10-06）**：Review #22（A14、NOT APPROVED）のB1／M1〜M3／N1・N2への修正。変更点は**24章（24.15節）**。**scope変更なし**。**（A16で、A15のpermission phase（PP）とPE-3は廃止）**。
+- **Amendment A16（2026-10-06）**：Review #23（A15、NOT APPROVED）のB-01／M-01〜M-04／N-01への修正。変更点は**24章（24.16節）**。**scope変更なし**。`permission_callback`をmarkerから切り離し、side-effect safetyと投影を分離した。契約の正本は**12章**（SP・CS・B・BT・X）。
+- **Amendment A17（2026-10-07）**：Review #24（A16、NOT APPROVED、Blocking 0／Major 2（M-A16-01・M-A16-02）／Minor 1（N-A16-01））への修正。変更点は**24章（24.17節）**。**scope変更なし。WordPress source evidenceの追加・取得・repo保存は行っていない**。method境界（effective method基準）を**12.1節 MO-1〜MO-4**として12章に正本化し、テスト節・索引・リスクの再記述を12章の識別子による参照のみへ整理し、台帳・見出しをA17現在へ同期した。Review #24で独立に照合できなかったsource依存の主張は**verifiedに格上げせず、validation-required（17.6節）**としてImplementation Start Validation（18章）に残す。契約の正本は**12章**。
+- **Amendment A18（2026-10-07）**：Review #25（A17、NOT APPROVED、Blocking 0／Major 2（M-25-01・M-25-02）／Minor 1（N-25-01））への修正。変更点は**24章（24.18節）**。**scope変更なし**。Review #25でCLOSEDとなったA17の項目（M-A16-01・M-A16-02・N-A16-01）は再変更していない。`rest_post_dispatch`の**4つのcall-site（12.1節 RD-1〜RD-7）**の分類と、**`status_header`filter（12.3節 X-11）**のtopology・契約を12章に正本化し、`status_header()`の本体が供給sourceに存在することへ訂正し（V-16）、dispatch文脈別のテスト（T-37）を拡張した。**source確認だけでruntimeの項目をPASSにしない**（17.6節）。契約の正本は**12章**。
+- Baseline（A18時点。HEAD・origin/mainはA14時点から不変）: branch `main`, HEAD=origin/main=`2513ae557ca3169ad61906e2cfcba9849a1d8a3c`（A13のdocs-only checkpoint。その親はRelease 6.37.0完了時点の`5974caf86d09e5e6c306a0b4e7f2002eb97ebb4b`）。Working Treeは**A14〜A18の変更により、本書・`docs/ROADMAP.md`・`docs/MVP_COMPLETION_ROADMAP.md`が未commit**（いずれもdocs変更のみ、commit/pushはHuman Gate待ち）。`src/`・`tests/`・`scripts/`・`wordpress/`は変更していない。
 - **旧レビュー履歴の扱い（Historical self-recorded context）**：
 
   | # | 対象累積Round | 記録されたVerdict | Blocking | Major | Minor |
@@ -118,9 +124,15 @@
   | 18 | Amendment A10テキスト | NOT APPROVED | **0** | 2（M1・M2） | 2（N1・N2） | 0 |
   | 19 | Amendment A11テキスト | NOT APPROVED | **0** | 1（M1） | 0 | 0 |
   | 20 | Amendment A12テキスト | NOT APPROVED | **0** | 1（M1） | 1 | 0 |
-  | 21 | Amendment A13テキスト | **未実施（Pending）** | — | — | — | — |
+  | 21 | Amendment A13テキスト | **APPROVED**（設計文書の内部整合性。Implementation Start Validationで前提誤りが判明、下記） | 0 | 0 | 0 | 0 |
+  | — | Implementation Start Validation（2026-10-06、7.1.1 tag source） | **前提誤りを検出（U-18・U-2・U-19がFAIL）** | — | — | — | — |
+  | 22 | Amendment A14テキスト | NOT APPROVED | **1（B1）** | 3（M1〜M3） | 2（N1・N2） | 0 |
+  | 23 | Amendment A15テキスト | NOT APPROVED | **1（B-01）** | 4（M-01〜M-04） | 1（N-01） | 0 |
+  | 24 | Amendment A16テキスト | NOT APPROVED | **0** | 2（M-A16-01・M-A16-02） | 1（N-A16-01） | 0 |
+  | 25 | Amendment A17テキスト | NOT APPROVED | **0** | 2（M-25-01・M-25-02） | 1（N-25-01） | 0 |
+  | 26 | Amendment A18テキスト | **APPROVED**（設計文書の内部整合性とsource上の事実。runtime項目は未検証） | **0** | **0** | 2（文書の同期のみ。docs syncで対応） | 0 |
 
-  Review #9〜#20の出力はwrapper実行時のセッション出力であり、repo内には保存されていない（historical contextとして要旨のみ19章に記録する）。
+  Review #9〜#26の出力はwrapper実行時のセッション出力であり、repo内には保存されていない（historical contextとして要旨のみ19章に記録する）。
 - 本書は**設計書であり実装物ではない**。18章「Implementation Start Validation Checklist」および20章のGateを満たさない限り、実装フェーズには進めない契約とする。
 - 本Releaseに先立ち、クライアント側にローカル耐久状態を持たせる方式（Draft v8〜v18）、続いて「Simplification Pivot」（Named Mutex + resolver-first）を検討したが保留・棄却した。この経緯は22章に要約する（historical self-recorded）。
 
@@ -229,8 +241,8 @@
 | **PROCESSING** | claimがwinnerとして確立した状態（durable、不可逆）。Core media executionの唯一の認可。 |
 | **CONFIRMED / CONFIRMED snapshot** | Provenance検証（5-way ID equality含む）を経て、当該claimに対応するattachmentが永続化されたと確定した状態、およびそのimmutableスナップショット（id／source_url／mime_type／slug）。 |
 | **Provenance（補助証跡）** | `rest_after_insert_attachment`の発火。偽造不能な証跡ではなく補助的corroboration（§11.1）。 |
-| **GCA Final Response Finalizer** | 承認済みの最後の`rest_pre_echo_response`callback。**全GCA outcome（`SUCCESS_FIRST`／`SUCCESS_REPLAY`／`E1`〜`E9`）について、authoritative outcome markerからcanonical HTTP response（statusとdata）を構築し、HTTP responseへ適用する、最終の投影層**（12章）。**durable stateの変更・DB I/Oは行わない**。markerが欠落・不正ならE5を構築する。 |
-| **authoritative outcome marker** | plugin control path（ラップした`permission_callback`とroute callback）が各GCA requestについて出口でちょうど1回確定する、plugin-private・write-once・request-localの状態。outcomeは`SUCCESS_FIRST`／`SUCCESS_REPLAY`／`E1`〜`E9`。exact request instanceに束縛し、成功系はidempotency_keyとdurable snapshotを保持する（12章）。 |
+| **GCA Final Response Finalizer** | authoritative outcome markerからcanonical responseを構築して返す、最終の投影層。**投影位置・対象・構築・header・投影後の境界は12章が正本**（A14で`rest_post_dispatch`へ変更）。durable stateの変更・DB I/Oは行わない。 |
+| **authoritative outcome marker** | plugin control path（12.4節。GCA requestの全経路を網羅しない）が、到達した各GCA requestについて出口でちょうど1回確定する、plugin-private・write-once・request-localの状態。outcomeは`SUCCESS_FIRST`／`SUCCESS_REPLAY`／`E1`〜`E9`。exact request instanceに束縛し、成功系はidempotency_keyとdurable snapshotを保持する（12章）。 |
 | **attempt-scoped identity** | Python側`SideEffectOperationIdentity`（`root_run_id:attempt_ordinal:...`）、およびその`as_store_key()`値（`ArticleMediaUploadRecord.article_identity`として渡される値を含む）。**server-side identityとは別物**であり、そこから導出してはならない（7.5・7.7節）。 |
 | **stable identity source** | 再試行・再起動をまたいで不変なdurable article/content identityの供給元。**現行Pythonには存在せず、後続Integration Releaseが定義・永続化する**（7.7節）。 |
 | **gca_claim_state** | GCA応答に付与する、このrequestが確立・観測したclaimの状態を示す診断field（`none`／`processing`／`unknown`／`confirmed`／`confirmed_inconsistent`、8.3節）。 |
@@ -262,9 +274,9 @@
 
 1. WordPress Core version（固定・pinned）
 2. approved plugin set（固定）
-3. `/wp/v2/media` route handlerのfingerprint（wrapされたCore callbackであることの確認）
-4. pre-callback filter topology：`rest_pre_dispatch` / `rest_request_before_callbacks` / `rest_dispatch_request`
-5. post-callback filter topology：`rest_request_after_callbacks` / `rest_post_dispatch` / `rest_pre_serve_request` / `rest_pre_echo_response`
+3. `/wp/v2/media` route handlerのfingerprint（wrapされたCore callbackであることの確認。`allow_batch`の値を含む、12.5節 BT-3）
+4. pre-callback filter topology：`rest_pre_dispatch` / `rest_request_before_callbacks` / `rest_dispatch_request` /（A18）`rest_request_from_url`（扱いは**12.1節 RD-6**が正本）
+5. post-callback filter topology：一覧と扱いは**12.1節 P-4・12.3節 X-***が正本（`rest_request_after_callbacks` / `rest_post_dispatch` / `rest_pre_serve_request` / `rest_pre_echo_response` / `rest_json_encode_options` / `rest_envelope_response` /（A18）`status_header`（**12.3節 X-11**））
 6. **DB continuity anchor（6章）の検出可能な不一致が存在しないこと**
 7. **Authoritative Binding（9.3節）が成立していること**（3接続が同一のwriter・DB/schema・site・table prefix・Epochを指す）
 8. **single-siteであることの積極的な確認（5.5節）**
@@ -365,7 +377,7 @@ Claims Tableと同じDB内に置いたmarker（`store_generation_id`、dual-loca
 
 ### 7.3 Dedicated Endpoint Authorization
 
-- GCA用capability（例：`gca_media_idempotency_upload`）を新設し、Phase 1 authorizationをこのcapabilityの有無で判定する。権限不足は403、claimを作らない。
+- GCA用capability（例：`gca_media_idempotency_upload`）を新設し、Phase 1 authorizationをこのcapabilityの有無で判定する。権限不足は403、claimを作らない。**（A16）判定の位置は、route callbackの先頭（claimより前）。Coreの`permission_callback`は置換せず、markerに関与しない（12.4節）。**
 
 ### 7.4 Logical Identity Contract（Amendment A1で全面置換）
 
@@ -449,6 +461,7 @@ requested_slug = "gca-media-v1-" + idempotency_key      // 64桁hex全体、切�
 - `/wp/v2/media`のNative Core Route（`WP_REST_Attachments_Controller::create_item`）を、**composable filterによる傍受ではなく、route callback自体の置換**（`rest_endpoints` filter経由の既存登録route callbackの差し替え）によってラップする。
 - wrapされたcallbackはCore自身の`create_item`へ処理を委譲する（Core media executionを代替・再実装しない）。
 - handler fingerprint（実際に呼び出される関数が承認済みCore実装であること）はEpoch preconditionの一部（5.3節#3）。
+- **（A14・A15・A16）** route callbackの置換時の`allow_batch`の扱いは12.5節 BT-3、control path（route callbackだけ）の網羅範囲と`permission_callback`の分離は12.4節（B-*）が正本。`permission_callback`・Core `args`は6.38では変更しない。
 
 ### 8.1 GCA Request Closed Allowlist（Amendment A2で設計時点に確定。**実装時の追加・変更・解釈による拡張を禁止**）
 
@@ -458,14 +471,14 @@ GCA-tagged `POST /wp/v2/media`は、下表の**許可集合に完全に含まれ
 
 | 要素 | 許可（これ以外はすべて拒否） | 拒否対象の例（網羅ではない） |
 |---|---|---|
-| HTTP method | `POST`のみ | `PUT`／`PATCH`／`DELETE`、およびmethod override |
+| HTTP method | `POST`のみ（**effective method**基準。12.1節 MO-1） | なし（effective methodがPOSTでないrequestは、本allowlistの判定対象ではなく、wrapped CREATABLE callbackに到達しない。12.1節 MO-2・12.4節 B-4） |
 | route | `/wp/v2/media`（`/wp-json/`経由）の**完全一致** | `?rest_route=`によるroute指定、`/wp/v2/media/<id>`等の他route（これらはそもそも本wrapperの対象外で、本pluginは関与しない） |
 | **query parameter** | **空集合**（1つも許可しない） | `_method`／`_envelope`／`_embed`／`_fields`／`_jsonp`／`_wpnonce`／`context`／`force`／`url`／`slug`／`title`／`alt_text`／`caption`／`description`／`status`／`date`／`date_gmt`／`author`／`post`／`meta`／`template`／`comment_status`／`ping_status` 等 |
 | **body形式・サイズ** | **raw binary**（direct upload）のみ。bodyは**非空**、かつ**1バイト以上33,554,432バイト（32 MiB）以下**、かつ下記`Content-Type`のいずれか（上限の導出は下記「body size contract」） | `multipart/form-data`／`application/x-www-form-urlencoded`／`application/json`、body parameterとして渡される上記の全parameter |
 | `Content-Type` | **完全一致**で`image/png`／`image/jpeg`／`image/webp`のいずれか（parameter付き不可） | 上記以外のすべて |
 | `Content-Disposition` | 必須。`attachment; filename="<name>"`の形式のみ。`<name>`は`^[A-Za-z0-9][A-Za-z0-9._-]*$`に完全一致し、かつ**255文字以下**（この長さ上限は**本pluginが独自に課すv1 contract**。現行`WordPressMediaUploader`は文字種の正規表現のみを検証し、長さ制限を持たない。下記「filename contract」） | `filename*=`等の拡張記法、パス区切り、制御文字、複数のfilename |
 | `X-GCA-*` header | **8.2節の5種のみ**（`X-GCA-Identity-Schema`／`X-GCA-Article-Identity`／`X-GCA-Media-Role`／`X-GCA-Content-Revision`／`X-GCA-Content-Diagnostic-Digest`。最後のみ任意） | 上記以外の`X-GCA-`で始まるheader、同一headerの重複 |
-| method override header | **禁止**：`X-HTTP-Method-Override`が存在すれば拒否 | `X-HTTP-Method-Override`（`_method`と同等の効果を持ちうるため） |
+| method override control | **禁止**：`X-HTTP-Method-Override` headerおよびquery parameter `_method`は許可集合に含まれない。**effective POSTでwrapped CREATABLE callbackに到達したrequestに存在すればE1**（境界は12.1節 MO-3。effective methodがPOSTでないrequestは対象外、MO-2） | `X-HTTP-Method-Override`、`_method`（`_method`は上のquery parameter行にも含まれる） |
 | 認証header等のその他のheader | Application Password等の認証、`Content-Length`、`Host`、`User-Agent`、`Accept`、proxy由来のheader等は**検査対象外**（通過させる） | — |
 
 **body size contract（A3で確定、A4で保証の範囲を訂正。実装時決定への先送りを禁止）**
@@ -493,6 +506,7 @@ GCA-tagged `POST /wp/v2/media`は、下表の**許可集合に完全に含まれ
 - **`url`パラメータ・`create_item_from_url()`経路は、query parameter空集合のため構造的に拒否される**（個別の特例は設けない）。
 - 本ルールは**安全側の保守的規則であり、「WordPress 7.1.0で`create_item_from_url()`が新設された」という過去記録（17章 S-1）の真偽に依存しない**。
 - **サーバーがslugを指定する機構**：`slug`はclient供給を許可しない（上表）。server側が導出した`requested_slug`をCoreへ渡す機構（request parameterへの注入等）は設計上の前提であり、Coreが`slug`を尊重するかは**未検証**（17章 U-14）。尊重されない場合はCONFIRM条件（9.2節の`post_name`完全一致）が常に不成立となり、**fail-closedに倒れる**（実装開始前のValidationで確認、18章）。
+- **（A14・A15・A17）** 本allowlistのE1が返る範囲は、**effective methodの境界（12.1節 MO-1〜MO-4）**と、Core自身の引数検証が先に失敗するrequest（12.4節 B-6）を含めて、**12章が正本**。claim・Core `create_item`呼出に関する安全性は12.1節 SP-1・12.4節に従う（検証はT-17・T-36）。
 - **未検証の前提（17章 U-13）**：上記「検査対象外」のheaderが`create_item`の挙動を変えないこと。実装開始前に対象Core versionで確認し、変えうるheaderが見つかった場合は本表を改訂する（実装時の判断で拡張しない）。
 
 ### 8.2 GCA Wire Contract（Amendment A1で追加。8.1・8.3節と整合。形式の確定は21章のArchitecture Gateによる）
@@ -523,18 +537,20 @@ Python integrationが存在しない6.38では、serverが受理するwire contr
 - `confirmed_inconsistent`：`CONFIRMED` rowを観測したが、attachmentの存在・slug照合が取れない。
 
 **応答の形（A3で一義化、A4で成功payloadを確定）**
+
+**適用範囲（A16）**：本節の形（成功payload・error body・exact key・status）の保証範囲は、**12.1節 CS-1に限る**。投影に到達しない・投影の対象でない・投影後の保証外の応答については、本節の形・閉集合を主張しない。
 - **成功（201 first success／200 confirmed replay）**：**初回成功とreplayで、同一のcanonical payloadを返す**。
   ```
   {"id": <int>, "source_url": <string>, "mime_type": <string>, "slug": <string>, "gca_claim_state": "confirmed"}
   ```
-  - **この5つのfieldのみ**とし、他のfieldは含めない。**HTTP statusは、first success＝201、confirmed replay＝200**であり、201と200の区別はHTTP statusのみ。**dataとstatusの両方を、最終的にFinalizerが置換・確定する**（12章。pre-Finalizerのcallbackが変更していても上書きする）。
-  - **Core responseの全文は、初回成功時も透過しない**。Coreが返したJSON（`link`／`guid`／`media_details`／`_links`／`title`／`caption`等の全field）は、Finalizerが破棄する。**full Core media JSONは永続化せず、replayもしない**。
-  - **payloadの生成元は、永続化されたsnapshot（`id`／`source_url`／`mime_type`／`slug`の4項目のみ）**である。初回成功時は、**route callbackが**4項目を検証し（10.4節 手順3）、`CONFIRMED`への`UPDATE`でsnapshotを保存してdurable ACKを確認した（手順4）**後**、**そのsnapshotから**このpayloadを構築する（Core responseから直接構築しない）。**Finalizerは検証も保存も行わず、永続化済みsnapshotからの全置換のみを行う**（12章）。replayは保存済みsnapshotから同じ構築を行う。よって初回とreplayは、同一の入力から同一の形・値になる。
+  - **この5つのfieldのみ**とし、他のfieldは含めない。**HTTP statusは、first success＝201、confirmed replay＝200**であり、201と200の区別はHTTP statusのみ。**statusとdataの確定（投影）は12章が正本**（P-3・CS-1）。
+  - **Core responseの全文は、初回成功時も透過しない**。**full Core media JSONは永続化せず、replayもしない**。
+  - **payloadの生成元は、永続化されたsnapshot（`id`／`source_url`／`mime_type`／`slug`の4項目のみ）**である（Core responseから直接構築しない）。snapshotの検証・保存・`CONFIRMED`化の順序は10.4節、Finalizerの責務は12章が正本。replayは保存済みsnapshotから同じ構築を行う。よって初回とreplayは、同一の入力から同一の形・値になる。
   - **現行`WordPressMediaUploader`との互換根拠**（`wordpress_media_uploader.py:245-293`）：応答はdictであること、`id`が正のint（boolは不可）、`source_url`と`mime_type`の**キーが存在**し、各値がstrまたはNoneであることのみを検証し、`MediaUploadResult(media_id, source_url, mime_type)`を返す。canonical payloadはこの3項目をすべて満たし、`slug`と`gca_claim_state`は無視される。したがって現行clientは変更なしでこのpayloadを受理できる。**GCA成功応答はCore Nativeの形ではない**（意図的。GCA-taggedリクエストにのみ適用され、非GCAはZero-Diff）。他のCore fieldに依存するclientは本contractの対象外（R-15）。
   - **限界**：`source_url`は、初回成功時にCore responseの値を検証のうえsnapshotへ保存した値であり、replayは**その時点の値**を返す（現在のURLを再計算しない）。DBでの`source_url`の独立検証は6.38では行わない（17章 U-17）。
 - **error（4xx／5xx）**：**WP_Error形式**のJSON `{"code": <error code>, "message": <下記canonical error表の固定message>, "data": {"status": <HTTP status>, "gca_claim_state": <値>}}`。`confirmed_inconsistent`（409 `gca_idempotency_media_missing`）・`E9` markerの`confirmed`（503）・`unknown`・`processing`・`none`のいずれもこの形で、`gca_claim_state`は`data`配下に置く。**成功応答とerror応答で`gca_claim_state`の位置が異なる**（成功＝top-level、error＝`data`配下）ことを契約とする。
 
-**応答表（網羅。これ以外の応答を返さない）**
+**応答表（eligible GCA POST（12.1節 P-2）が12章の投影に到達した場合の網羅。この表の範囲は12.1節 CS-1に従い、範囲外の応答（投影前の終了、eligibleでないrequest、投影後のCore／serverの作用）については、本表の閉集合を主張しない）**
 
 | 時点 | 条件 | HTTP | error code | `gca_claim_state` |
 |---|---|---|---|---|
@@ -555,20 +571,20 @@ Python integrationが存在しない6.38では、serverが受理するwire contr
 | **duplicate**（A4追加） | row=`CONFIRMED`、Binding再確認OKだが、**Media Verification自体が完遂できない**（DB／I/O／接続の障害、timeout等）。attachmentの有無を**確定できない**。**Coreは呼ばない（再実行禁止）** | 503 | `gca_idempotency_unavailable` | `confirmed` |
 | **duplicate** | row読取り失敗、epoch invalid、binding不一致、duplicate-key直後にrowが不在 | 503 | `gca_idempotency_unavailable` | `unknown`（rowの有無を確認できないため） |
 | **初回成功** | 10.4節の手順1〜4がすべて成功（snapshot保存・`CONFIRMED`化のdurable ACK確認済み）し、**marker＝SUCCESS_FIRST**が設定され、Finalizerがmarkerから構築・置換に成功 | 201 | — | `confirmed` |
-| **marker欠落・不正等**（A8、A9で整理） | **markerが欠落・不正・二重設定・別requestのmarker・束縛不一致**。**plugin control pathに到達しなかったGCA request**（Core認証エラー、他pluginの短絡等）を含む。Finalizerはこの503（E5）で応答のstatusとdataの両方を置換する。**identity未消費を意味せず、retry authorizationでもない** | 503 | `gca_idempotency_unavailable`（E5） | `unknown` |
+| **marker欠落・不正等**（A8、A9で整理） | **markerが欠落・不正・二重設定・別requestのmarker・束縛不一致**（適用範囲は12.1節 P-2・12.4節 B-*、構築は12.1節 P-3が正本）。**identity未消費を意味せず、retry authorizationでもない** | 503 | `gca_idempotency_unavailable`（E5） | `unknown` |
 | **Finalizerの適用runtime failure** | Finalizerの適用runtime failureの保証境界は12章に従う（本表では定義しない） | （定義しない） | （定義しない） | （定義しない） |
 
-**最終responseの決定規則（A8）**：**最終responseは、12章のauthoritative outcome markerからFinalizerが新規に構築**する。上記の各行の「HTTP／error code／`gca_claim_state`」は、**marker outcomeに対応するcanonical responseの内容**であり、pre-Finalizerの応答の内容・statusによって変わらない（A7のresponse classによる分岐は廃止）。
+**最終responseの決定規則**：投影の規則（構築・対象・範囲）は**12章が正本**（A7のresponse classによる分岐は廃止）。上記の各行の「HTTP／error code／`gca_claim_state`」は、marker outcomeに対応するcanonical responseの**内容**を示す（CS-1の範囲内）。
 
 **canonical error表（Amendment A7で正本化。status・error code・message・`gca_claim_state`の組合せの閉集合）**
 
-errorとして返してよい組合せは、**次の表のE1〜E9のみ**である。messageは**固定のASCII文字列**で、**表と完全一致**でなければならない。**自由文・Core由来のmessage・内部情報・動的な値（ID、path、例外文）を含めてはならず、外部へ透過しない**。`data.status`は`HTTP`列と同じ値、`data`に含めるのは`status`と`gca_claim_state`のみ。
+**CS-1（12.1節）の範囲内で**、errorとして返してよい組合せは、**次の表のE1〜E9のみ**である。messageは**固定のASCII文字列**で、**表と完全一致**でなければならない。**自由文・Core由来のmessage・内部情報・動的な値（ID、path、例外文）を含めてはならず、外部へ透過しない**。`data.status`は`HTTP`列と同じ値、`data`に含めるのは`status`と`gca_claim_state`のみ。
 
 | ID | HTTP | error code | message（完全一致） | `gca_claim_state` | 該当する応答表の行 |
 |---|---|---|---|---|---|
 | E1 | 400 | `gca_idempotency_invalid_request` | `The idempotent media request is invalid.` | `none` | claim前の要求不正（**client供給の`X-GCA-Identity-Schema`値が対応schemaと不一致の場合を含む**） |
 | E2 | 413 | `gca_idempotency_payload_too_large` | `The media payload exceeds the idempotent upload size limit.` | `none` | claim前のbodyサイズ超過 |
-| E3 | 403 | `gca_idempotency_forbidden` | `The idempotent media upload is not permitted.` | `none` | claim前のcapability不足 |
+| E3 | 403 | `gca_idempotency_forbidden` | `The idempotent media upload is not permitted.` | `none` | claim前の**GCA capability不足**（route callback先頭で確定、12.4節。Coreの権限拒否はE3でなくE5、B-9） |
 | E4 | 503 | `gca_idempotency_unavailable` | `The idempotency service is unavailable.` | `none` | claim前の**server内部の**schema／DB／epoch／configuration不一致、Epoch／Binding／multisite／接続契約／CSPRNG／`INSERT`発行前の基盤障害 |
 | E5 | 503 | `gca_idempotency_unavailable` | `The idempotency service is unavailable.` | `unknown` | claim境界のACK曖昧・非duplicateのerror、claim後の`UPDATE`のACK曖昧、duplicate経路のrow読取り失敗等、**およびFinalizerのmarker欠落・不正・二重設定・別request・束縛不一致（12章）** |
 | E6 | 503 | `gca_idempotency_claim_indeterminate` | `The idempotency claim state could not be determined.` | `unknown` | `INSERT`がACK済みでaffected rows≠1かつduplicate-keyでない |
@@ -576,9 +592,9 @@ errorとして返してよい組合せは、**次の表のE1〜E9のみ**であ�
 | E8 | 409 | `gca_idempotency_media_missing` | `The confirmed media could not be verified.` | `confirmed_inconsistent` | `CONFIRMED` duplicateでattachment欠落・不一致が確定 |
 | E9 | 503 | `gca_idempotency_unavailable` | `The idempotency service is unavailable.` | `confirmed` | **E9は、plugin control pathが`E9` markerを明示的に設定する場合に限る**：`CONFIRMED` duplicateでMedia Verificationが完遂不能（DB／I/O障害等、10.3節・C9）。（Finalizerの適用runtime failureの保証境界は12章に従う） |
 
-- 応答表の各errorの行は、上記E1〜E9のいずれかに**ちょうど1つ**対応する。表に無い組合せ（例：409と`none`、400と`processing`、503・`unavailable`と`confirmed_inconsistent`）は存在しない。
+- 応答表の各errorの行は、上記E1〜E9のいずれかに**ちょうど1つ**対応する。**CS-1の範囲内では**、表に無い組合せ（例：409と`none`、400と`processing`、503・`unavailable`と`confirmed_inconsistent`）は存在しない。
 - 同一のerror code・messageが複数のstateで使われる（E4・E5・E9は同一のcodeとmessageで、`gca_claim_state`のみが異なる）。stateは`data.gca_claim_state`で区別し、messageでは区別しない。
-- **Finalizerは、この表のE1〜E9を、marker outcomeからresponseを新規構築するための正本として用いる**（12章）。**incoming responseがE1〜E9に一致するか否かの判定（A7のclass B判定）は行わない**（廃止）。構築するresponseは、**errorは`code`／`message`／`data`のちょうど3 key、`data`は`status`／`gca_claim_state`のちょうど2 key**（exact-key contract、12章）。
+- 本表のE1〜E9は、12章の投影がmarker outcomeから構築するresponseの**内容の正本**である（構築の規則・exact-keyは12章。CS-1の範囲内）。
 
 **契約（規範）**
 1. **claim後のCore非success（`WP_Error`含む、4xx・5xxを問わず）は、Coreのstatus・code・message・dataを一切応答へ転記せず、一律に409 `gca_idempotency_in_progress`（`processing`）へ正規化する。** Core由来の400／413／415等が「要求不正（再送で直る）」と誤認されることを防ぐ。Coreの元のerror情報は、secret・claim_token・内部pathを含まない範囲でserver側ログにのみ記録してよい。**この規則は「Coreの非successの扱い」に限る。claim確立後の失敗が常に409になるという意味ではない**（claim後でも、ACK曖昧の503 `unknown`、`E9` markerによる`CONFIRMED` duplicateのVerification不能の503 `confirmed`、confirmed inconsistencyの409 `confirmed_inconsistent`等がある。**応答の正本は上記の応答表とcanonical error表**）。
@@ -683,14 +699,14 @@ duplicate-key（一意制約違反）の場合のみ、既存rowを読み取っ�
 
 | 既存row状態 | 動作 |
 |---|---|
-| `CONFIRMED` | CONFIRMED snapshotをreplayする。replay前にBinding再確認（9.3節。**失敗・確認不能の場合は503 `unknown`**、Coreは呼ばない）を行い、Media Verification Connectionでattachmentの存在と`post_name == requested_slug`を再確認する。一致すれば、**marker＝`SUCCESS_REPLAY`を設定**（**`CONFIRMED` rowの読取り・Binding再確認・Media Verificationのすべてが成功した後のみ**。保存済みsnapshotの4項目を保持、12章）し、Finalizerがmarkerから200＋canonical payload（8.3節、`gca_claim_state = confirmed`）を構築、Verificationが完遂し不一致・欠落と**確定**した場合は409 `gca_idempotency_media_missing`（`confirmed_inconsistent`、新規作成しない）、**Verification自体が完遂できない場合（DB／I/O障害等）は503 `gca_idempotency_unavailable`（`confirmed`）**。いずれの場合もCoreは呼ばない。**画像bytes・mime・filename・診断digestが初回と異なっていても既存mediaを返し、再生成・再uploadを要求しない**。 |
+| `CONFIRMED` | CONFIRMED snapshotをreplayする。replay前にBinding再確認（9.3節。**失敗・確認不能の場合は503 `unknown`**、Coreは呼ばない）を行い、Media Verification Connectionでattachmentの存在と`post_name == requested_slug`を再確認する。一致すれば、**marker＝`SUCCESS_REPLAY`を設定**（設定条件・保持物は12章 marker表）し（responseの構築は12章、内容は8.3節）、Verificationが完遂し不一致・欠落と**確定**した場合は409 `gca_idempotency_media_missing`（`confirmed_inconsistent`、新規作成しない）、**Verification自体が完遂できない場合（DB／I/O障害等）は503 `gca_idempotency_unavailable`（`confirmed`）**。いずれの場合もCoreは呼ばない。**画像bytes・mime・filename・診断digestが初回と異なっていても既存mediaを返し、再生成・再uploadを要求しない**。 |
 | `PROCESSING` | **新規mediaを作らずfail-closed**：409 `gca_idempotency_in_progress`（`processing`）。待機・polling・自動promoteは行わない（同時実行中の勝者か、crash後のstale `PROCESSING`かを区別しない）。 |
 | row読取り失敗／epoch invalid／binding不一致／row不在（duplicate-key直後に消えた等） | 503 `gca_idempotency_unavailable`（`unknown`、rowの有無を確認できないため）。再`INSERT`しない。 |
 ### 10.4 勝者の完了処理（`PROCESSING → CONFIRMED`）
 
 **finalizationの所有者と順序（Amendment A5で統一。ここが正本）**
 
-**所有者**：状態の検証・保存・`CONFIRMED`化は、**route callback（wrapper）が単独で行う**。`rest_pre_echo_response`のFinalizer（12章）は、state変更・検証・DB保存・DB読取りのいずれも行わない。
+**所有者**：状態の検証・保存・`CONFIRMED`化は、**route callback（wrapper）が単独で行う**（SP-1）。Finalizerの責務は12章が正本。
 
 **route callbackの順序（この順序でのみ成功応答を返せる）**
 
@@ -698,11 +714,11 @@ duplicate-key（一意制約違反）の場合のみ、既存rowを読み取っ�
 2. **Provenance・Verification**：Provenance（11.1節：同一Requestオブジェクト・`creating === true`・exactly-once）と、Media Verification（9.2節。直前にR3、9.3節）で、**Core response ID＝provenance ID＝Verification ID**を確認し、永続化済みの`post_name`／`post_mime_type`を読み取る。
 3. **snapshot 4項目の検証**：`id`（上記の一致した正のint）、`slug`（Verificationで読み取った`post_name`が`requested_slug`と完全一致）、`mime_type`（Verificationで読み取った`post_mime_type`が8.1節の許可3種のいずれか）、`source_url`（Core responseの値で非空のstr）。**1項目でも満たされなければ、snapshotを保存せず`CONFIRMED`にせず**、`PROCESSING`を保持して**409 `processing`**（8.3節「claim後・snapshot検証失敗」行、C10）。
 4. **snapshot保存と`CONFIRMED`化**：`UPDATE … SET state='CONFIRMED', media_id=?, snapshot=?(4項目) WHERE idempotency_key=? AND state='PROCESSING' AND claim_token=?`を**1回のUPDATE**で行い、affected rowsが厳密に1であり、かつ**durable ACKを確認**する。確定的な失敗は409 `processing`（C7）、ACK曖昧は503 `unknown`（C8）。
-5. **marker＝SUCCESS_FIRSTの設定と、success responseの返却**：手順1〜4がすべて成功した場合**のみ**、control pathは**authoritative outcome marker＝`SUCCESS_FIRST`**（plugin-private・write-once・request-local。exact requestのinstanceに束縛し、idempotency_keyと、手順4でdurable ACK済みのsnapshotを保持、12章）を設定する。**`SUCCESS_FIRST`は、手順4のdurable ACK確認前には設定できない**。**最終的なcanonical success response（初回＝canonical 5-field payload＋HTTP 201）は、12章のFinalizerが、このmarkerのみから新規に構築する**（Core responseやpre-Finalizerの応答ではなく）。
+5. **marker＝SUCCESS_FIRSTの設定**：手順1〜4がすべて成功した場合**のみ**、route callbackは`SUCCESS_FIRST`のmarkerを設定する（設定条件・内容・規則は12章 marker表・marker確定規則(4)）。最終responseの構築は12章（P-3）。
 
 **途中失敗の扱い**：手順1〜4のいずれかが失敗した場合は、`PROCESSING`を保持したまま、8.3節の表に従い**409 `processing`**（ACK曖昧のみ503 `unknown`）で応答する。**success扱い（2xxの返却、またはcanonical payloadの構築）を禁止**する。Core由来のstatus・messageは透過しない。
 
-**`rest_pre_echo_response`のFinalizer（12章）の役割**：**authoritative outcome marker**（`SUCCESS_FIRST`／`SUCCESS_REPLAY`／`E1`〜`E9`）**だけから**最終responseを新規に構築し、応答の**dataとHTTP statusの両方を完全置換する**（成功時はmarkerが保持する**永続化済み`CONFIRMED` snapshot**から、canonical 5-field payload＋初回201／replay 200）。pre-Finalizerの応答の内容・status・種別は判断材料にしない。post-callback filterによる応答の改変を打ち消すための、最後の機械的な構築であり、snapshotの意味検証・state変更・DB I/Oを持たない（markerの束縛・整合の確認のみ行う、12章）。
+**Finalizerの役割**：12章が正本（本節は再定義しない）。
 
 ### 10.5 Stale `PROCESSING`のautomatic reclaim禁止
 
@@ -721,7 +737,7 @@ duplicate-key（一意制約違反）の場合のみ、既存rowを読み取っ�
 | C3 | Core成功後〜`CONFIRMED`確定前（**crash/timeout after side effect before CONFIRMED**） | `PROCESSING` | **存在** | 同上。duplicateは409（自動promoteしない） | manual |
 | C4 | `CONFIRMED`確定後〜応答返却前（ACK喪失含む） | `CONFIRMED` | 存在 | duplicateはreplay（200、`confirmed`） | 自動（duplicate replay） |
 | C5 | Finalizerの適用runtime failure。**保証境界は12章に従う（本表では定義しない）** | （12章に従う） | （12章に従う） | （12章に従う） | （12章に従う） |
-| **C5b**（A8追加） | **marker欠落・不正・二重設定・別requestのmarker・束縛不一致**（plugin control pathに到達しなかったGCA request（Core認証エラー、他pluginの短絡等）を含む）。**`CONFIRMED`の有無はmarkerからは確認できない** | 不明（claimを確立していた場合は`PROCESSING`／`CONFIRMED`のいずれもありうる） | 不明 | 当該requestは503 `unknown`（E5）。**canonical successを返さない**。pre-Finalizerの応答がsuccess（2xx）に見えても、markerが無ければE5へ置換する（Finalizerの適用runtime failureの保証境界は12章に従う） | 後続duplicateの観測で確定（identity消費の有無は示さない） |
+| **C5b**（A8追加、A14で参照を更新） | **marker欠落・不正・二重設定・別requestのmarker・束縛不一致**（route callbackに到達しなかったGCA request（12.4節 B-*）を含む）。**`CONFIRMED`の有無はmarkerからは確認できない** | 不明（claimを確立していた場合は`PROCESSING`／`CONFIRMED`のいずれもありうる） | 不明 | 当該requestは503 `unknown`（E5）。**canonical successを返さない**。pre-Finalizerの応答がsuccess（2xx）に見えても、markerが無ければE5へ置換する（Finalizerの適用runtime failureの保証境界は12章に従う） | 後続duplicateの観測で確定（identity消費の有無は示さない） |
 | **C6a** | **original request**のclaim `INSERT`のACKが曖昧（接続断・timeout・発行後の結果不明） | **不明**（commit済み／rollback済み／遅延commitのいずれもありうる。一意制約により**高々1行**） | 無し（当該requestはCoreを**呼ばない**） | 当該requestは503 `unknown`。当該requestは**再`INSERT`もCore実行もしない** | 後続requestの観測（C6b／C6c）で確定 |
 | **C6b** | C6aの**後続request**：rowが**commit済み**（`PROCESSING`） | `PROCESSING`（mediaは無し） | 無し | 後続requestは409 `processing`（duplicate、rowを観測したため）。**C6aのoriginal requestはCoreを実行していないが、identityは消費されたまま**（manualを要する） | manual（Future）。at-most-onceのコストとして受容 |
 | **C6c** | C6aの**後続request**：rowが**存在しない**（rollback済み／未commit） | row無し | 無し | 後続requestは**新規claimに正当に勝てる**（C0と同じ通常経路）。**遅延commitの可能性**：後続requestのclaimの**後**にoriginalの`INSERT`が遅れて到達しても、一意制約により後者は失敗し行は高々1つで、original側のPHPは既にCoreを実行しない（ACK不明でfail-closed済み）ため、二重実行は起きない | 自動（後続requestが通常処理） |
@@ -757,21 +773,23 @@ client-visible ID = response ID = provenance ID = Media Verification ID = CONFIR
 
 いずれか1つでも不一致の場合、CONFIRMは失敗する（fail-closed）。
 
-**検証の位置（A5）**：`CONFIRMED`化の**前**（10.4節 手順2）に確認できるのは、`response ID`（Core response）・`provenance ID`・`Media Verification ID`・（保存する）`CONFIRMED snapshot ID`の一致である。**`client-visible ID`は、Finalizer（12章）が、authoritative outcome marker（`SUCCESS_FIRST`／`SUCCESS_REPLAY`。durable ACK済み・読取り済みのsnapshotを保持）**だけから**最終responseを新規構築し、statusとdataを完全置換することで、構成上snapshot IDと一致する**。Finalizerはsnapshotの意味検証を行わないが、置換の前に**markerの束縛（exact requestのinstance identity、outcome、successの場合はidempotency_keyとsnapshot）を確認**し、**不一致・欠落・不正・二重設定ならcanonical successを返さずE5へfail-closed**とする（偶発的な応答改変・混入・取り違えの防止。co-resident malicious codeは脅威モデルに加えない、12章）。この構成上の一致は、post-callbackでの応答改変（dataとstatusの双方、success↔error、1xx／3xxを含む）と、marker不整合を注入するL3（T-16・T-34）、および最終的なclient-visible JSONとHTTP statusの照合（T-30）で確認する。
+**検証の位置（A5）**：`CONFIRMED`化の**前**（10.4節 手順2）に確認できるのは、`response ID`（Core response）・`provenance ID`・`Media Verification ID`・（保存する）`CONFIRMED snapshot ID`の一致である。**`client-visible ID`は、12章の投影が、markerのsnapshotだけから構築することで、構成上snapshot IDと一致する**（構築・markerの確認・fail-closedの規則は12章が正本。保証の範囲はCS-1）。この構成上の一致は、post-callbackでの応答改変とmarker不整合を注入するL3（T-16・T-34）、および最終的なclient-visible JSONとHTTP statusの照合（T-30）で確認する。
 
 ---
 
 ## 12. GCA Final Response Finalizer（post-callback応答保全）
 
-pre-callback filter topologyだけでなく、Core callback**返却後**の応答改変（`rest_request_after_callbacks` / `rest_post_dispatch` / `rest_pre_serve_request` / `rest_pre_echo_response`）が11.2節のID equalityを事後的に破りうるため、次を要件とする：
+pre-callback filter topologyだけでなく、Core callback**返却後**の応答改変が11.2節のID equalityを事後的に破りうるため、次を要件とする。**本章が、応答の投影（status・data・response headersの確定）、投影後の改変点、control pathの網羅範囲、batchの扱いの唯一の正本である**（Amendment A14）。他の章・表・テスト・Roadmapは、本章の識別子（O-*・P-*・MO-*・RD-*・CS-1・SP-*・H-*・X-*・B-*・BT-*・F-*）で参照するのみで、内容を再記述しない。**marker・control path・投影・method境界・call-site・投影後のtopology・nested／batchの境界の唯一の正本は本章**（A16・A17・A18）。
 
-1. **post-callback filter topologyもEpochへbind**（5.3節#5）。
-2. **GCAリクエストではmanual serving（`rest_pre_serve_request`による短絡）を禁止**。
-3. **GCAリクエストでは`_envelope` / `_embed` / `_fields`等のresponse-shapingパラメータを禁止**（8.1節のallowlistで拒否）。
-4. **GCA Final Response Finalizer と authoritative outcome marker（Amendment A8で全面改訂。A7のresponse-class 3-way dispatchは廃止）**：承認済みの最後の`rest_pre_echo_response`callbackとして新設する。
-   - **原則**：**最終応答の唯一の根拠は、plugin-private・write-onceの authoritative outcome marker である**。Finalizerは、pre-Finalizerの応答（Coreまたは他のcallbackが作った応答）の**status・data・種別を判断材料にせず、透過も分類もしない**。**markerだけから最終responseを新規に構築し、HTTP statusとdataを完全置換する**。
-   - **対象**：`POST /wp/v2/media`で、`X-GCA-`で始まるheaderを持つrequest（GCA-tagged、8.2節）。それ以外（非GCA、他route）には作用しない（Zero-Diff）。
-   - **plugin control path（markerの設定主体）**：本pluginが所有する、(a)ラップした**`permission_callback`**（capability判定、7.3節）、(b)ラップした**route callback**（`rest_endpoints`による置換、8章。validation・allowlist・body size・Epoch／Binding／multisite・claim・Core呼出・Verification・snapshot保存・`CONFIRMED`化のすべて）。**各GCA requestについて、このcontrol pathが、その出口でmarkerをちょうど1回確定する**。route到達前のvalidation／capability／environmentの失敗も、このcontrol pathがmarkerを設定する（E1〜E4等）。
+**A14の訂正（Implementation Start Validation、2026-10-06）**：A13までの前提（`rest_pre_echo_response`でのstatus置換、Finalizer後の改変点ゼロ、control pathによるGCA requestの網羅）は、WordPress 7.1.1のsourceで**偽と判明し撤回**した（V-11〜V-13。現行契約は12.1〜12.5節）。
+
+1. **post-callback filter topologyもEpochへbind**（5.3節#5。対象は12.3節 X-4・X-6・X-7、およびP-4）。
+2. **GCAリクエストではmanual serving（`rest_pre_serve_request`による短絡）を禁止**（12.3節 X-4）。
+3. **GCAリクエストでは`_envelope` / `_embed` / `_fields` / `_jsonp`等のresponse-shapingパラメータを禁止**（8.1節のallowlist。Coreがplugin後に作用する範囲の扱いは12.3節 X-1・X-5・X-8）。
+4. **GCA Final Response Finalizer と authoritative outcome marker（Amendment A8で全面改訂。A7のresponse-class 3-way dispatchは廃止。A14で投影hookを`rest_post_dispatch`へ変更）**：承認済みの`rest_post_dispatch`filterの**最後のcallback**（priorityは最大、P-4）として新設する。
+   - **原則**：**最終応答の唯一の根拠は、plugin-private・write-onceの authoritative outcome marker である**。Finalizerは、pre-Finalizerの応答（Coreまたは他のcallbackが作った応答）の**status・data・種別を判断材料にせず、透過も分類もしない**。**markerだけから最終responseを新規に構築し、新しい`WP_REST_Response`を返すことで、HTTP status・data・response headersを完全置換する**（P-3）。
+   - **対象**：**投影eligibility（12.1節 P-2、PE-1〜PE-3）を満たすrequestだけ**。それ以外（非GCA、他route、effective methodがPOST以外のrequest（MO-2）等）には作用しない（Zero-Diff）。
+   - **plugin control path（markerの設定主体。A16で単純化）**：本pluginが`rest_endpoints`で置換した**route callbackだけ**（8章。GCA capability判定（7.3節）・validation・allowlist・body size・Epoch／Binding／multisite・claim・Core呼出・Verification・snapshot保存・`CONFIRMED`化のすべて）。**`permission_callback`は置換せず（Coreのまま）、markerに一切関与しない**（12.4節）。route callbackに到達した各GCA POSTについて、markerをその出口でちょうど1回確定する。**route callbackに到達しない経路の一覧と扱いは12.4節 B-*が正本**。**side-effect safetyと投影の分離は12.1節 SP-1〜SP-3が正本**。
    - **marker（A8）**：次を持つ、**request-local**（新しいdurable stateではない）・**plugin-private**・**write-once**の状態。(a)**exact `WP_REST_Request`オブジェクトのinstance identity**（同一instanceへの束縛。値の等価ではない）、(b)**outcome**、(c)outcomeがsuccessの場合のみ、**idempotency_key**と**durable snapshot**（`id`／`source_url`／`mime_type`／`slug`の4項目のみ）。
 
      | outcome | 設定する時点（これより前には設定しない） | marker内の保持物 | Finalizerが構築する最終response |
@@ -780,17 +798,17 @@ pre-callback filter topologyだけでなく、Core callback**返却後**の応�
      | **SUCCESS_REPLAY** | 10.3節の**`CONFIRMED` rowの読取り・Binding再確認・Media Verificationがすべて成功した後のみ** | idempotency_key、**durable snapshot**（読取り済み） | **canonical 5-field payload＋HTTP 200** |
      | **E1〜E9** | そのerrorを決定した**decision point**（8.3節の応答表の各行の判定点） | outcome（E-id）のみ | **canonical error表（8.3節）の該当行**を、固定のHTTP status・error code・message・`gca_claim_state`で構築 |
 
-   - **markerの確定規則**：(1)**単一の出口で、ちょうど1回**設定する。(2)**二重設定・欠落・不正（outcomeが許可集合外、束縛requestが異なる、success outcomeでidempotency_key・snapshotが欠落または型不正、等）・別requestのmarker**は、いずれも**E5（503 `gca_idempotency_unavailable`／`unknown`）へfail-closed**する。(3)markerの設定後に、controlの内部で別のoutcomeを設定しようとした場合も、(2)の二重設定として扱う。(4)**SUCCESS_FIRSTは、10.4節 手順4のdurable ACK確認前には設定できない**（success responseを返せる経路の下限）。
-   - **Finalizerの確認と構築（DB I/Oなし）**：置換の前に、(1)markerが存在する、(2)`rest_pre_echo_response`に渡されたrequestが、markerに束縛されたinstanceと**同一**である、(3)outcomeが`SUCCESS_FIRST`／`SUCCESS_REPLAY`／`E1`〜`E9`のいずれかである、(4)successの場合、markerのidempotency_keyが、そのrequestの`X-GCA-*` header（8.2節）から**再導出した**keyと一致し、snapshotが4項目を持ち型が正しい（`id`が正のint、他は非空のstr。**型の確認のみで、DB照合・許可集合の判定は行わない**）、を確認する。満たされなければ**E5へfail-closed**。確認後、**markerからresponseを新規に構築**し、`WP_REST_Response`のstatusとdataを**完全置換**する。
+   - **markerの確定規則**：(1)**単一の出口で、ちょうど1回**設定する。(2)**二重設定・欠落・不正（outcomeが許可集合外、束縛requestが異なる、success outcomeでidempotency_key・snapshotが欠落または型不正、等）・別requestのmarker**は、いずれも**E5（503 `gca_idempotency_unavailable`／`unknown`）へfail-closed**する。(3)markerの設定後に、controlの内部で別のoutcomeを設定しようとした場合も、(2)の二重設定として扱う。(4)**SUCCESS_FIRSTは、10.4節 手順4のdurable ACK確認前には設定できない**（success responseを返せる経路の下限）。**(5)（A16）`permission_callback`は、markerを作成・変更しない。** markerを確定するのは、route callbackだけである（12.4節）。
+   - **Finalizerの確認と構築（DB I/Oなし）**：置換の前に、(1)markerが存在する、(2)`rest_post_dispatch`に渡された**第3引数のrequest**が、markerに束縛されたinstanceと**同一**である（P-5）、(3)outcomeが`SUCCESS_FIRST`／`SUCCESS_REPLAY`／`E1`〜`E9`のいずれかである、(4)successの場合、markerのidempotency_keyが、そのrequestの`X-GCA-*` header（8.2節）から**再導出した**keyと一致し、snapshotが4項目を持ち型が正しい（`id`が正のint、他は非空のstr。**型の確認のみで、DB照合・許可集合の判定は行わない**）、を確認する。満たされなければ**E5へfail-closed**。確認後、**markerからresponseを新規に構築**し、**新しい`WP_REST_Response`をfilterの戻り値として返す**ことで、HTTP status・data・response headersを**完全置換**する（受け取ったresponse objectは変更・再利用しない。P-3）。
    - **exact-key contract（A8、Review #15 M2）**：Finalizerが出力するresponseは、**許可されたexact key setだけ**を持つ。**success**＝top-levelが`id`／`source_url`／`mime_type`／`slug`／`gca_claim_state`の**ちょうど5 key**。**error**＝top-levelが`code`／`message`／`data`の**ちょうど3 key**で、`data`は`status`／`gca_claim_state`の**ちょうど2 key**。pre-Finalizerの応答に**余分なtop-level fieldや`data`のfieldがあっても、最終responseには残らない**（既存responseを引き継がず、新規構築するため）。**incoming responseのkey集合の判定には依存しない**。
    - **pre-Finalizerの応答の改変に対する復元（A8、Review #15 B1・N1）**：pre-Finalizerのcallbackが、応答を**success→error、error→success、1xx／3xx、任意のbody・status**へ変更していても、**valid markerがあれば、markerのcanonical outcomeへ復元する**。**marker無し・不正ならE5へfail-closed**する。この復元は、応答の内容・statusにも、2xxであることにも依存しない。
    - **markerの性質と脅威モデル**：markerは**新しいdurable stateではなく、request-local**である。plugin内部にのみ保持し、filter・action・global・他pluginから読み書きできる経路を設けない。**暗号署名や新規の永続状態は設けない**。**偶発的な応答の改変・混入・取り違え（承認済みpluginやcallbackによる応答の書き換えを含む）への耐性が目的**であり、**co-resident malicious codeを脅威モデルへ追加しない**（5.2節は不変）。
-   - **plugin control pathに到達しないGCA request**（Core認証エラー、`rest_pre_dispatch`等による他pluginの短絡、routeの不一致など、control pathより前に終了したもの）は、**markerが無い**ため、**E5へfail-closed**する（R-19）。
+   - **route callbackに到達しないGCA request**（12.4節 B-*）のうち、**投影eligibility（P-2）を満たし、投影に到達するもの**は、**markerが無い**ため、**推測でE1／E3等へ分類せず、E5へfail-closed**する（R-19）。投影eligibilityを満たさないものは、投影されない（B-*）。
    - **Finalizerは、state変更・snapshotの意味検証（DB照合・許可集合の判定）・DB保存・DB読取り（I/O）のいずれも行わない**。snapshotの4項目の検証、snapshotの保存、`CONFIRMED`への更新は、**すべてroute callback（plugin control path）が、marker設定の前に完了させる**（10.4節。順序と所有者の正本）。
    - **valid markerからのcanonical response選択・構築は、totalかつ一意（A9）**：**valid marker（確認(1)〜(4)を満たす）に対しては、`SUCCESS_FIRST`→canonical 5-field payload＋201、`SUCCESS_REPLAY`→canonical 5-field payload＋200、`E1`〜`E9`→canonical error表の該当行、という1つのcanonical responseが、失敗なく一意に選択・構築される**（入力はmarkerのみの純粋な関数で、DB I/Oも外部状態も参照しない）。**markerは、Finalizerの動作によって変更されない**（write-once。Finalizer failureによるmarker outcomeの遷移は存在しない）。
    - **marker不正の場合**：markerが欠落・不正・不一致・二重設定の場合は、**E5（503 `unknown`）**とし、statusとdataの両方を置換する（上記の確認(1)〜(4)の不成立）。**この場合にのみ、Finalizerは、marker以外の根拠でE5を出す**（E5は、markerを持たない固定のcanonical responseである）。
    - **Finalizerの適用runtime失敗の保証境界（Amendment A10。本項が唯一の正本であり、他の章・表・テスト・リスク・Roadmapは、ここを参照するのみで、この挙動を再定義しない。A6〜A8の「Finalizer failure→E9／confirmed」、およびA9の「`gca_claim_state`を欠く応答として扱う」という記述は、A10で廃止）**：
-     - **定義**：valid markerからのcanonical response（またはE5）の選択・構築は成功しているが、それを`WP_REST_Response`／HTTP responseへ**適用すること自体が、runtime上失敗した場合**（response objectを置換できない、status設定が反映されない、Finalizer内で例外が発生する、等）。
+     - **定義**：valid markerからのcanonical response（またはE5）の選択・構築は成功しているが、それを**投影として返す（P-3）こと、または投影後のCore／serverによる送出（12.3節のX-*のうち、境界と定めたもの）が、runtime上失敗した場合**（投影用の`WP_REST_Response`を構築・返却できない、返却したresponseがstatus・headersとして送出されない、Finalizer内で例外が発生する、JSON encodeが失敗する（X-7）、等）。
      - **保証しないこと（すべて）**：適用失敗の後に**実際にclientへ送られるresponseの内容は未定義**である。**canonicalであること、non-canonicalであること、`gca_claim_state`を含む／含まないこと、pre-Finalizerの元のresponse（部分的に適用されたものを含む）が残ること**のいずれも保証しない。
      - **clientの扱い**：**clientは、そのresponseだけから、claim state・identityの消費有無・retry可否を判断してはならない**。
      - **E9へのfallbackを試みない**。**markerおよびdurable stateは、Finalizerの失敗によって変更しない**。
@@ -806,9 +824,124 @@ pre-callback filter topologyだけでなく、Core callback**返却後**の応�
        | **F-6** | `E1`〜`E4` | **この requestが新しいclaimを作らなかった**、というだけの経路。**既存のclaimは、なし／`PROCESSING`／`CONFIRMED`のいずれもありうる**（過去のrequestのclaimの有無は、この outcomeからは分からない） | **既存のdurable stateが、適用失敗の前後で変化しない**。後続のrequestは、**その既存の状態に応じた通常の処理**になる（なし→新規claim、`PROCESSING`→409 `processing`、`CONFIRMED`→replayまたはE8／E9） |
 
      - **検証・記録（A12）**：T-07が、上記の表の**F-1〜F-6ごとに**検証する（検証の方法と層はT-07が定める）。**他の章・表・テスト・Roadmapは、本章の識別子（F-1〜F-6）で参照するのみで、表の内容（state・recovery・応答）を再記述しない**。**応答の内容についてはoracleを持たない**（canonical E1〜E9 oracle（T-22）の対象外）。
-     - **前提と位置づけ**：「適用の能力」（response objectの置換、status設定の反映、request instanceの同一性）は、**U-18として、実装開始前のValidation（18章）で確認する前提**とする。確認できない場合は、本書を改訂する（実装時に束縛を緩めない）。前提が成立する環境での実行時の適用失敗は、**欠陥・障害**として扱う（R-20）。
+     - **前提と位置づけ**：「適用の能力」（返したresponse objectによるstatus・headersの確定、request instanceの同一性、直接送出headerの除去）は、**U-18・U-20として、実装開始前のValidation（18章）で確認する前提**とする。**A13までの前提（`rest_pre_echo_response`でのstatus置換）は、sourceで偽と判明し撤回した（V-11）**。確認できない場合は、本書を改訂する（実装時に束縛を緩めない）。前提が成立する環境での実行時の適用失敗は、**欠陥・障害**として扱う（R-20）。
    - **`gca_claim_state = confirmed`（E9）の根拠（A9）**：**E9は、plugin control pathが`E9` markerを明示的に設定する場合にのみ**返る（例：`CONFIRMED` duplicateでMedia Verificationが完遂不能、10.3節・C9）。Finalizerが独自にE9を選ぶことは無い。A7の「GCA-taggedの2xx応答はdurableなconfirmed successを意味する」という前提は**A8で廃止**済み（R-18を解消）。
-   - Finalizer後にresponseを変更可能な承認済みcallbackが存在しないこと（Coreがそれ以降JSON encode／echoのみであること）を、exact deployment versionで検証・bindする（18章。未確認）。
+   - **Finalizer（投影）の後にも改変点が存在する**（**「Coreがそれ以降JSON encode／echoのみ」「改変点ゼロ」という旧前提は、7.1.1 sourceで偽と判明し撤回**）。どれを禁止・検証・許容・保証外とするかは**12.3節（X-*）が正本**。approved plugin setの登録状況に依存する項目は、exact deployment versionで検証・bindする（18章。未確認、U-2）。
+
+### 12.1 WordPress Coreの実行順序と、投影の位置（Amendment A14、正本）
+
+**根拠**：WordPress **7.1.1 tag**の公開source（`class-wp-rest-server.php`等の行番号。V-11）。**規範の前提とするのは、本節が引用する7.1.1のcall-site（行）の事実だけ**である（他versionとの同一性は前提としない）。**デプロイ先のWordPress versionは未pin（U-11）であり、本節はsource上の事実であって、実環境（実行時）で検証したものではない**。**`status_header()`の本体は、canonical source（provenanceはV-16。commit `a940fbc1…`）の`functions.php:1463-1492`に存在する**（A18で訂正。call-siteは`set_status()`内の`:1910`。status line段階のfilterはX-11）。**ただしこれもsource上の事実であり、実行時（PHP／SAPI）は未検証**（U-20）。
+
+| ID | Coreの処理（`serve_request`・`dispatch`・`respond_to_request`の順） | 本設計での位置づけ |
+|---|---|---|
+| **O-1** | `serve_request`冒頭：他のdispatch中なら`false`で終了（`:288-290`）。`rest_jsonp_enabled`・`_jsonp`の判定、transport header（`Content-Type`・`X-Robots-Tag`・`Link`・`X-Content-Type-Options`）の送出（`:316-337`）。`_jsonp`が無効・不正なら`rest_callback_disabled`／`rest_callback_invalid`（400）を出力して**終了**（`:360-370`） | **`rest_post_dispatch`に到達しない**（B-1） |
+| **O-2** | `$request`を生成（`:376`）。以降、`dispatch`・各filterに**同じ変数**が渡る。`_method`／`X-HTTP-Method-Override`によるmethod変更（`:386-393`） | marker束縛の対象instance（P-5） |
+| **O-3** | `check_authentication`（`rest_authentication_errors`、`:438-441`）。エラーなら`dispatch`しない | B-2 |
+| **O-4** | `dispatch`：`rest_pre_dispatch`（`:1079`、非空で短絡）→ route・method照合（`:1096`、不一致は`rest_no_route`）→ handler呼出可否（`:1106`）→ **Core自身の引数検証・sanitize**（`has_valid_params`／`sanitize_params`、`:1115-1123`）。失敗は`$error`として`respond_to_request`へ渡る | B-3・B-4・B-5・B-6 |
+| **O-5** | `respond_to_request`：`rest_request_before_callbacks`（`:1256`）→ **`permission_callback`**（`:1259-1260`。**それ以前にWP_Errorがあれば呼ばれない**）→ `rest_dispatch_request`（`:1287`、非nullで短絡）→ **route callback**（`:1293`）→ `rest_request_after_callbacks`（`:1318`） | **plugin control path＝route callbackだけ**。`permission_callback`はCore標準で、markerに関与しない（12.4節）。短絡・error時はroute callbackに到達しない（B-5〜B-9） |
+| **O-6** | **`rest_post_dispatch`**（`:464`。top-levelのcall-site＝RD-1。**このhookの適用箇所は4つあり、他はRD-2〜RD-4**）。既定callback：`rest_send_allow_header`・`rest_filter_response_fields`（`rest-api.php:253-254`、priority 10）、および`_wp_connectors_rest_settings_dispatch`（`connectors.php:753`、priority 10。`/wp/v2/settings`のみに作用。**A18で追記**。V-16）。`rest_send_allow_header`は、responseのmatched route（`:1326`で設定）の全handlerの`permission_callback`を呼ぶ（`rest-api.php:883-916`）。**filterの戻り値（`WP_HTTP_Response`）が、以降のresponseとして使われる** | **本設計の投影位置（Finalizer）** |
+| **O-7** | `_envelope`（`$_GET['_envelope']`）なら、responseをenvelopeで包む（`:467-470`、`envelope_response`は`body`／`status`／`headers`を持つ新responseを作る） | X-1 |
+| **O-8** | **`send_headers($result->get_headers())`**（`:473-474`）と、**`set_status($code)`**（`:476-477`。`set_status()`は`status_header($code)`を呼ぶ。**`status_header()`の呼出は`:1910`、本体は`functions.php:1463-1492`で、status line文字列に作用する`status_header`filterを含む（`:1486`）**）：**HTTP statusとresponse objectのheadersの送出（確定）** | P-1。X-2・**X-11** |
+| **O-9** | `rest_send_nocache_headers`（`:487`）、no-cache header（`:493-501`） | X-3（transport） |
+| **O-10** | `rest_pre_serve_request`（`:516`。既定callback：`rest_send_cors_headers`・`_oembed_rest_pre_serve_request`）。`true`なら「配信済み」としてbodyを出力しない。`HEAD`はここで終了（`:519-521`） | X-4 |
+| **O-11** | `response_to_data`（`:525`）：`_embed`の展開、**responseに`links`があれば`_links`をdataへ追加** | X-5 |
+| **O-12** | **`rest_pre_echo_response`**（`:539`）。**引数は`response_to_data`後のdata「配列」であり、`WP_REST_Response`ではない。statusはO-8で送出済み** | X-6。**本設計はここにFinalizerを置かない** |
+| **O-13** | `wp_json_encode`（`rest_json_encode_options`、`:266`・`:546`）。失敗時は`set_status(500)`＋`rest_encode_error`（`:550-559`）。`_jsonp`ならwrapして`echo`（`:562-565`） | X-7・X-8 |
+
+- **P-1（投影の位置）**：応答の**status・data・response headersを確定する投影**は、**O-6（`rest_post_dispatch`）**で行う。理由：O-6のfilterは`WP_HTTP_Response`を受け取り、**返したobjectがO-8でstatus・headersとして送出される**（`:464`→`:473-477`。status送出の実体は`set_status()`経由の`status_header()`、`:1910`）。O-12（`rest_pre_echo_response`）はdata配列しか受け取らず、statusはO-8で送出済みのため、**status・response headersを確定する位置ではない**。A13までの「`rest_pre_echo_response`でstatusを置換する」方式は**撤回**した。
+- **P-2（投影eligibility。A15で定義、A16で改訂）**：次の**すべて**を満たすrequestだけが、投影の対象（**eligible GCA POST**）である。**(PE-1)** `$request->get_route()`が`/wp/v2/media`に**完全一致**する。**(PE-2)** `X-GCA-`で始まるheaderを**1つ以上**持つ（8.2節）。**(PE-3)** **effective methodが`POST`**（判定の基準はMO-1）。**PE-1〜PE-3のいずれかを満たさないrequestには、Finalizerは作用しない**（Zero-Diff）。**top-level originの判定には依存しない**：A15の「`is_dispatching()`によるtop-levelの識別」は**廃止**した（`is_dispatching()`は、dispatch stackが空でないことしか示さず、top-level originやside-effect safetyの可否の証明にならないため。U-22は廃止）。投影の入力は、PE-1〜PE-3とmarkerだけである。
+- **MO-1（method判定の基準。A17で定義）**：本pluginのwrapped CREATABLE callbackと投影（P-2）の対象になるか否かは、**effective method**（`$request->get_method()`。O-2の`_method`・`X-HTTP-Method-Override`によるmethod変更の**結果**を含む）だけで判定する。元のHTTP methodや、overrideの有無そのものでは判定しない。
+- **MO-2（effective methodがPOSTでないrequest）**：effective methodがPOSTでないrequest（POSTがGET等へoverrideされた場合を含む。GET／HEAD／OPTIONS／PUT／PATCH／DELETE）は、**wrapped CREATABLE callbackにも投影にも入らず、Core Nativeのpath**（12.4節 B-4）として扱う。**claim・marker・canonical E1〜E9・wire closed-set（CS-1）を保証しない**。**side-effect create pathには入らない**（claim・Core `create_item`呼出は発生しない。SP-1）。
+- **MO-3（effective POSTでoverride controlを伴うrequest）**：effective methodがPOSTで、wrapped CREATABLE callbackに到達したGCA-tagged requestに、`_method`（query parameter）または`X-HTTP-Method-Override`（header）が存在する場合は、**plugin allowlist violation（8.1節）としてE1**とする（route callbackが、claimより前に判定する。E1の内容は8.3節）。overrideの値がPOSTを指す場合も同じである。
+- **MO-4（一般化の禁止）**：「method overrideを伴うrequestは常にE1」とは規定しない。overrideの結果がPOSTでないrequestはMO-2であり、E1にならない。MO-3のE1は、effective POSTでwrapped CREATABLE callbackに到達したrequestに限る。
+- **CS-1（canonical保証の範囲。A15で定義、A16で改訂）**：**(a)投影の出力**：**eligible GCA POST（P-2）が`rest_post_dispatch`に到達し、P-3が成功した場合に限り**、Finalizerが返すresponseは、8.3節の応答表・canonical error表（E1〜E9）・exact key setに一致する。**(b)HTTP wire**：clientが受信するHTTP status・headers・bodyが(a)と一致するのは、そのresponseがO-6→O-8の主経路で、**そのrequestのHTTP応答として直接送出される場合**に限り、かつX-*の【保証外】【境界】を除く（本設計は、dispatchがtop-levelであることを**判定せず、証明もしない**。nested（`/batch/v1`の子request等）のresponseは外側のresponseの一部であり、wire保証外）。**(c)範囲外**で閉集合・exact keyを主張しない：投影の前に終了するrequest（B-1）、投影eligibilityを満たさないrequest（effective methodがPOSTでないrequest（MO-2・B-4）、RD-2・RD-4のstock request等）、投影が行われない文脈（内部`rest_do_request()`等、SP-3）、投影後のCore／serverの作用（X-1・X-8・X-9）、投影の適用runtime失敗（F-*）。範囲外でも、claim・Core呼出に関する安全性（SP-1）とF-*のdurable stateの境界は、それぞれの節に従う。
+- **SP-1（side-effect safetyの帰属。A16で定義）**：**claim・`PROCESSING`・Core `create_item`呼出・`CONFIRMED`化のidempotency safetyは、route callbackだけが適用し、dispatchの文脈（top-level、内部`rest_do_request()`、`/batch/v1`の子request）に依存しない**。route callbackに到達したGCA POSTには、常に同じ安全性が適用される。`is_dispatching()`その他のdispatch文脈の判定を、claim・Core実行の可否に用いない。
+- **SP-2（投影の帰属）**：`rest_post_dispatch`の投影は**HTTP応答の正準化専用**であり、side-effect safetyの条件ではない。
+- **SP-3（投影が行われない文脈）**：**内部の`rest_do_request()`**（`dispatch()`を直接呼び、`rest_post_dispatch`を通らない。`rest-api.php:603-616`。**RD-4のpreloadは、`rest_do_request()`の後に`rest_post_dispatch`を明示的に適用する別のcall-site**）等、`rest_post_dispatch`に到達しないrequestでは、**canonical HTTP投影を保証しない**が、**SP-1のidempotency safetyは保証する**。route callbackの戻り値の内容は、投影が行われない文脈では保証外（canonicalでない）。
+- **P-3（構築）**：Finalizerは、markerからcanonical response（`SUCCESS_FIRST`／`SUCCESS_REPLAY`／`E1`〜`E9`）を**新しい`WP_REST_Response`**として構築して**返す**。(a)dataはcanonical payload（exact 5 key）またはcanonical error body（exact 3 key・`data`は2 key）、(b)statusは固定値、(c)**response headersを持たせない**（H-1・H-3）、(d)**linksを持たせない**（O-11で`_links`が追加されず、key setがexactになる）。**返す値は`WP_HTTP_Response`でなければならない**（O-8が`get_headers()`・`get_status()`を呼ぶ）。受け取った`$result`は変更・再利用しない。O-6の既定callback（`rest_send_allow_header`・`rest_filter_response_fields`・`_wp_connectors_rest_settings_dispatch`）は、投影の前に旧responseへ作用するだけで、投影後のresponseには作用しない。
+- **P-4（priority）**：Finalizerは`rest_post_dispatch`の**最大priority**で登録する。同hookで、Finalizerより**後に実行され、応答を変更しうる**callback（同priorityで後に登録されたもの、またはより大きいpriorityのもの）が存在しないことを、Epoch topology（5.3節#5）とapproved plugin set（U-10）で検証する。**この検証は、同一hookであるため、全call-site（RD-1〜RD-4）に共通**（A18）。
+- **P-5（instance束縛）**：O-6の**第3引数**`$request`が、O-2で生成されcontrol pathへ渡されたrequestと**同一instance**であること。source上、通常の単発requestでは同一変数が`:376`→`:441`→`:464`と渡る。cloneは`/batch/v1`の`rest_pre_dispatch`用（`:1860`）のみ。**他のcall-site（RD-2〜RD-4）の同一変数の経路はRD-*の表**（A18）。**実行時の成立は未検証**（U-18）。
+- **成立しない場合**：U-18・U-20が実環境で成立しない場合は、**別方式を実装時に選ばず**、本書を改訂する（Architecture Review＋Human Gate）。
+
+**`rest_post_dispatch`の全call-site（RD-1〜RD-4。Amendment A18、正本）**：7.1.1における`rest_post_dispatch`の**適用箇所は次の4つ**であり、**同一のhook・同一のFinalizer（P-4）が4箇所すべてで呼ばれる**（Coreの既定登録は、`rest-api.php:253-254`の2つと、`connectors.php:753`の1つ（`_wp_connectors_rest_settings_dispatch`。routeが`/wp/v2/settings`のrequestにだけ作用し、それ以外は何もしない。`connectors.php:698-700`）。4箇所以外にないことの確認はV-16）。**行番号はcanonical sourceのもの**（provenanceはV-16）。
+
+| ID | call-site | requestの構築・method・instance | 呼出条件 | eligibility・投影・保証 |
+|---|---|---|---|---|
+| **RD-1** | `class-wp-rest-server.php:464`（`serve_request`。top-level。O-6） | `$request`は`:376`で生成。methodは`REQUEST_METHOD`。**`_method`（`$_GET`）・`X-HTTP-Method-Override`のoverrideを解釈するのは`serve_request()`だけ**（`:386-395`）。`:376`→`:441`→`:464`で同一変数（P-5） | top-levelのHTTP request（B-1の早期終了を除く） | **本章の既存のcontractどおり**（P-2・P-3・CS-1・MO-*・B-*）。投影の対象はeligible GCA POSTのみ |
+| **RD-2** | `class-wp-rest-server.php:824`（`embed_links`内） | `WP_REST_Request::from_url($item['href'])`（`:803`）。**構築methodは常に`GET`**（`class-wp-rest-request.php:1083`）。**`rest_request_from_url`filter（同`:1096`）が返す値が、falsy以外ならそのままrequestとして使われる**（server`:804`）。`context=embed`が付く（`:809-812`）。`$this->dispatch($request)`（`:821`）→`:824`で同一変数 | `_embed`が有効で、responseの`links`に`embeddable`なitemがあるとき（`response_to_data`、`:598-606`）のみ。**当該responseの一部（`_embedded`）になり、独立したHTTP応答ではない** | stockではPE-3を満たさない（MO-2）→**RD-5のno-op**。embeddedのresponseはnestedで、CS-1(b)の保証外。GCA POSTは`_embed`をallowlistで拒否し（8.1節）、投影後のresponseはlinksを持たない（P-3、X-5）ため、GCA responseからのembedは生じない。`rest_request_from_url`のcallbackがroute・header・method・型を変えうる点は**RD-6** |
+| **RD-3** | `class-wp-rest-server.php:1894`（`serve_batch_request_v1`） | `$single_request`は`:1753`で生成。methodは`$args['method'] ?? 'POST'`。**batch子ではoverrideを解釈しない**。`rest_pre_dispatch`にはcloneを渡す（`:1860-1866`）が、`respond_to_request`（`:1889`）と`:1894`には**同一の`$single_request`** | `/batch/v1`の子request（`allow_batch`検証の失敗も、`$error`として`respond_to_request`を経て`:1894`に至る） | **BT-1〜BT-4に従う**。子responseは外側の207の一部で、CS-1(b)の保証外。route callbackに到達する構成はBT-3によりEpoch invalid。到達した場合もSP-1 |
+| **RD-4** | `rest-api.php:3033`（`rest_preload_api_request`） | `new WP_REST_Request($method, …)`（`:3023`）。**methodは`GET`または`OPTIONS`のみ**（`:2994-3002`）。`rest_do_request($request)`（`:3029`。`rest_post_dispatch`を通らない。SP-3）の後に、**`200 === $response->status`のときだけ**`rest_post_dispatch`を明示的に適用（`:3030-3033`）。`:3023`→`:3029`→`:3033`で同一変数 | ページへのREST preload（管理画面等）の内部request | PE-3を満たさない（MO-2）→**RD-5のno-op**。CS-1の範囲外。claim・Core `create_item`呼出は発生しない（GET／OPTIONSのCore Native） |
+
+- **RD-5（全call-site共通のFinalizerの安全なno-op。A18）**：`rest_post_dispatch`は**globalなfilter**であり、**RD-2・RD-4でもFinalizerは呼ばれる**。これらを「存在しない経路」としては扱わない。Finalizerは、**最初に**eligibility（P-2のPE-1〜PE-3）だけを判定し、**満たさなければ、受け取った`$result`をそのまま返す**（変更・再利用・marker参照・DB I/Oのいずれも行わない。Zero-Diff）。**第3引数が`WP_REST_Request`のinstanceでない場合も、eligibleでないものとして同様に何もしない**（`rest_request_from_url`filterは任意の値を返しうるため）。eligibleと判定された場合は、call-siteを問わず、markerの確認（P-3・P-5、12.4節の「marker無し→E5」）に進む。**eligibilityは、filter呼出時点のrequestの状態に対して判定する**。
+- **RD-6（request-affecting hookのtopology検証。A18）**：approved plugin set・Epoch topology（5.3節#4・#5）で、次を検証対象にする：`rest_request_from_url`（RD-2のrequestのroute・header・method・型を変えうる）、既存の`rest_pre_dispatch`・`rest_request_before_callbacks`・`rest_dispatch_request`、および各call-siteで、dispatch中にrequest objectを変更しうるcallback（requestは同一instanceで渡る）。**登録の有無・priority・callbackを確認し、GCA対象でないrequestをeligibleな形（PE-1〜PE-3）へ変えうるcallbackが存在する構成、および確認不能の構成は、unsupported topologyとしてEpoch invalid（production enable禁止）**とする（fail-closed）。conditional callbackは静的に検出できない可能性がある（5.3節の既知の限界、T-14と同じ）。**実行時の実際の挙動はruntime-only**（U-2・U-18）。
+- **RD-7（call-siteの網羅）**：RD-1〜RD-4以外の適用箇所が7.1.1にないことはV-16。**他versionでの同一性は前提としない**。**新しいcall-siteが現れた場合（version差・plugin）は、本書を改訂する**（実装時にFinalizerの条件を変えない）。
+
+### 12.2 Response header契約（A14）
+
+投影後に**clientが受信するresponse header**は、次の3区分に分ける。区分の判断は、**そのheaderを誰がどの時点で送出するか**による。
+
+| ID | 区分 | 契約 |
+|---|---|---|
+| **H-1** | **Core media responseに由来するheader**：(a)`WP_REST_Response`のheadersとして保持されるもの（例：`Location`。`create_item`が付与、`attachments-controller:637`）、(b)Coreが`create_item`の**実行中に`header()`で直接送出**するもの（7.1.1では`X-WP-Upload-Attachment-ID`、`:619`。`wp_is_serving_rest_request()`のときのみ） | **最終responseに含めない（禁止）**。(a)は、投影が**headersを持たない新しい`WP_REST_Response`**を返すこと（P-3）で除去される。(b)は**response objectに載らず、投影の置換では除去されない**ため、**Finalizerが、直接送出されたheaderを除去する**（`header_remove`相当）。除去の対象は、**route callbackがCore呼出の前後で`headers_list()`の差分を記録し、Coreの実行中に追加された直接送出header名**とする（既知の該当は`X-WP-Upload-Attachment-ID`のみ）。**全outcomeに適用**する（`SUCCESS_FIRST`も含む。canonical payloadの`id`と別経路でattachment IDを運ばせない）。成立の前提は**U-20**（実行時の除去可否は未検証） |
+| **H-2** | **transport／server／CORS／no-cache header**：Core／serverが、応答の内容とは別に送出するもの（`Content-Type`・`X-Robots-Tag`・`Link`（API root）・`X-Content-Type-Options`（O-1）、no-cache（O-9）、`Access-Control-*`・`Vary`（O-10の`rest_send_cors_headers`）、web server・proxy由来のheader） | **本契約の対象外**：pluginは**追加・除去・存在の保証をしない**。ただし、**attachment ID・claim・outcomeの情報を運ばない**こと（approved plugin setのhook登録で検証、P-4・X-4・U-10）。`Allow`（`rest_send_allow_header`）は、O-6でresponse objectへ付くため、**投影で置換され存在しない**（保証対象外） |
+| **H-3** | **本pluginが付与するresponse header** | **v1では付与しない（空集合）**。outcomeは**bodyだけ**で表す |
+
+- **header契約の検証**：T-35。
+- **現行Python clientとの互換**：現行Uploaderはbodyの`id`／`source_url`／`mime_type`のみをparseし（V-1・V-10）、headerを参照しない。
+
+### 12.3 投影後の改変点と、その扱い（Amendment A14、正本）
+
+投影（O-6）の**後**にも、応答に作用する点が存在する。区分：**【禁止】**＝requestの段階で拒否（8.1節allowlist、E1・claim前）またはEpoch invalid。**【検証】**＝approved plugin set・Epoch topology・Validation（18章）・L3で確認（未検証の前提を含む）。**【許容】**＝transportであり、outcomeの意味を変えない。**【境界】**＝12章 F-*の保証境界に従う。**【保証外】**＝canonical shape・statusを保証しない（ただしclaim・Core呼出を伴わないことは別に示す）。
+
+| ID | 改変・作用点（O-*） | 区分 | 契約 |
+|---|---|---|---|
+| **X-1** | `_envelope`（O-7）、および`envelope_response()`内の**`rest_envelope_response`filter**（`:861-885`、filter適用は`:882`。投影の後に、envelope化された値を変更しうる） | 【禁止】＋【検証】＋【保証外】 | 8.1節のallowlist（query parameter空集合）でE1・`none`・**claim前**に拒否する。ただし、**Coreが投影後の応答をenvelopeで包む**ため、当該requestの最終bodyはcanonicalでない（保証外、CS-1(b)）。**`rest_envelope_response`はenvelope経路でのみ作用し**、approved plugin setに、GCA対象でこのfilterを登録するcallbackが存在しないことをtopologyで検証する（`_envelope`を伴わないrequestには作用しない）。**claim・Core呼出は無い**。**canonical 5-field payload（`gca_claim_state="confirmed"`を含む）を持たない2xx応答を、Integration Releaseは成功として扱ってはならない**（23章はこの規則を参照するのみ） |
+| **X-2** | status・response object headersの送出（O-8） | 【許容】 | 投影objectのstatus・headers（空、H-1・H-3）が送出される（P-1。**status lineの文字列は、この中でX-11のfilterを経る**）。ここが**保証の確定点**（numericなstatus codeについて） |
+| **X-3** | no-cache header（O-9）・CORS／transport header（O-1・O-10） | 【許容】 | H-2。outcomeの意味を変えない |
+| **X-4** | `rest_pre_serve_request`（O-10） | 【検証】 | **approved plugin setに、GCA対象で`true`を返す（bodyの配信を代替する）callbackが存在しない**こと（12章 要件2）。Core既定の`rest_send_cors_headers`は【許容】（H-2）。`_oembed_rest_pre_serve_request`は**route `/oembed/1.0/embed`かつGET**にのみ作用する（`embed.php`、7.1.1）ため、対象（`/wp/v2/media`）には作用しない。HEADはbodyを出力しない（【保証外】、非POST） |
+| **X-5** | `response_to_data`・`_embed`・`_links`の追加（O-11） | 【禁止】＋構造 | `_embed`はallowlistでE1。**投影objectがlinksを持たない**ため、`_links`は追加されず、key setはexactのまま（P-3） |
+| **X-6** | `rest_pre_echo_response`（O-12） | 【検証】 | **approved plugin setに、GCA対象のdata配列を変更するcallbackが存在しない**こと。**本pluginは、このhookにFinalizerを置かない**。このhookはstatus・response headersを変更できない（O-8で送出済み）。data改変の有無は、topology検証とT-35・T-38（承認済みset上のL3）で確認する |
+| **X-7** | JSON encode（`rest_json_encode_options`、O-13）・encode失敗 | 【検証】＋【境界】 | `rest_json_encode_options`にGCA対象へ作用するcallbackが存在しないこと（topology）。**`_pretty`等のquery parameterはallowlistで禁止**（空白のみ変更しうるが、claim前に拒否）。**encode失敗（`:550-559`、`set_status(500)`＋`rest_encode_error`）は、12章 F-*の「適用runtime失敗」に含める【境界】**（応答の内容は未定義、marker・durable stateは不変） |
+| **X-8** | JSONP（`_jsonp`・`rest_jsonp_enabled`、O-1・O-13） | 【禁止】＋【保証外】 | `_jsonp`はallowlistでE1・claim前に拒否。ただしCoreがJSONP wrapで包むため、最終bodyはcanonicalでない（保証外、X-1と同様）。`_jsonp`が無効・不正な場合はO-1で**早期終了**（B-1） |
+| **X-9** | HEAD（O-10）・204（`:542`） | 【保証外】 | HEADは投影対象外（PE-3）で、bodyを出力しない。204は、投影が204を構築しないため該当しない |
+| **X-10** | PHPのfatal・`exit`・出力バッファ・接続断・web serverの打切り | 【境界】 | 応答を返せない場合は10.6節 C4・C11（transport error）。投影の後に起きた場合は、12章 F-*の境界 |
+| **X-11**（A18） | **`status_header`filter**（`functions.php:1486`）。O-8の`set_status($code)`（`:477`）→`status_header($code)`（`:1910`→`functions.php:1463-1492`）の**中で、status line文字列に作用する**。流れ：`get_status_header_desc($code)`（`:1373-1449`、`global $wp_header_to_desc`。8.3節のcanonical status（200／201／400／403／409／413／503）はすべて記述を持つ）→`wp_get_server_protocol()`（`load.php:15`）→`$status_header = "$protocol $code $description"`（`:1473`）→**`apply_filters('status_header', $status_header, $code, $description, $protocol)`（`:1486`）**→`!headers_sent()`なら`header($status_header, true, $code)`（`:1489-1490`）。記述が空なら何も送出せず返る（`:1468-1470`） | 【検証】＋【保証外】＋【境界】 | **numericなstatus codeとstatus line文字列を区別する**：投影が確定するのは**numericなstatus code**（P-3(b)。`$result->get_status()`、`:476`）で、これは`header()`の**第3引数**として別に渡される（`:1490`）。filterが変えうるのは**status line文字列**（`$status_header`）である。このfilterは**requestもresponseも受け取らない**global filterで、GCA対象だけに限定できない。**approved plugin setに、`status_header`filterを登録するcallbackが存在しない**（7.1.1の`src/`には、Core既定の登録はない。V-16）ことを、登録の有無・priority・callbackとして検証する（RD-6と同じtopology検証）。**登録のあるplugin、および確認不能の構成は、unsupported topologyとしてEpoch invalid（5.3節#5、production enable禁止）**とする（fail-closed）。本pluginは、status lineの書換えを検出も補正もしない。実行時にstatus lineが書き換わった場合、**wire上のstatus line文字列は保証外**（canonicalなnumeric statusが実際に反映されるかは、`header()`の第3引数・PHP／SAPIの挙動に依存し、**runtime-only**＝U-20）。`headers_sent()`が真の場合はstatusが送出されない（X-10の【境界】）。**source上の確認だけで、runtimeの成立とはしない** |
+
+- **approved plugin／hook topologyとの関係**：X-1（`rest_envelope_response`）・X-4・X-6・X-7・**X-11（`status_header`）**、P-4、**RD-6（`rest_request_from_url`等）**は、**approved plugin set（U-10）のhook登録状況に依存**する。co-resident pluginは敵対的主体としない（5.2節）。登録callbackの静的照合は、conditional callbackを検出できない（5.3節の既知の限界、T-14）。したがって、**最終的な実HTTP status・headers・bodyは、承認済みset上でL3（T-35・T-38）で確認する**（未検証）。
+- **投影より前の改変**（O-5の`rest_request_after_callbacks`等、およびO-6の既定callback）は、**valid markerからの新規構築で打ち消される**（上記4。T-34(d)）。
+
+### 12.4 plugin control pathの網羅範囲（Amendment A14・A15・A16、正本）
+
+**control path（markerを確定する主体）は、本pluginが置換したroute callbackだけ**である（A16。A15までの「ラップした`permission_callback`」は廃止）。**`permission_callback`は置換せず、Coreのまま**（Coreの権限判定が、認証・Core標準の権限を評価する）。**`permission_callback`は純粋な判定であり、markerの作成・変更・phaseの管理を一切行わない**。したがって、`rest_send_allow_header`（O-6）等によるpermission_callbackの呼出回数・契機は、markerに影響しない。**A15のPP-1〜PP-6（permission phase）は廃止**した（Review #23 B-01：filter chainの途中の値と最終値の差、例外時のdisarm漏れ等、callbackの実行順序に依存する識別は、他pluginの登録状況で崩れるため）。
+
+**GCA capability判定（7.3節）の位置（A16）**：route callbackの**先頭**（claim・Core呼出より前）で行い、不足は**E3**（403・`none`）のmarkerを確定する（claim 0・Core 0）。**E3は、Coreの`permission_callback`を通過したrequest（認証済みでCore標準の権限を持つ）が、GCA capabilityだけを欠く場合にのみ到達しうる**。Coreの`permission_callback`が拒否するrequestは、route callbackに到達せず（B-9）、E3にならない。
+
+7.1.1 sourceでは、route callbackは**GCA requestの全経路から到達されるわけではない**（V-13）。次の経路は、**route callbackに到達せず、plugin自身がmarkerを確定できない**。
+
+| ID | route callbackに到達しない経路 | source（7.1.1） | 投影（eligible GCA POST＝P-2のPE-1〜PE-3のときのみ） |
+|---|---|---|---|
+| **B-1** | `serve_request`の早期終了（`_jsonp`が無効・不正、他のdispatch中） | `:288-290`・`:360-370` | **`rest_post_dispatch`に到達しない**（応答はCore自身のもの） |
+| **B-2** | `check_authentication`のエラー（認証失敗等） | `:438-441` | 到達する。eligibleならmarker無し→E5 |
+| **B-3** | `rest_pre_dispatch`による短絡（他plugin、およびCore既定の`rest_handle_options_request`によるOPTIONS） | `:1079-1093` | 到達する。eligibleならmarker無し→E5（OPTIONSはPE-3を満たさず投影対象外） |
+| **B-4** | **effective methodがPOSTでない**（MO-1・MO-2）：(a)handlerが無いmethod（PUT／PATCH／DELETE等）→`rest_no_route`、(b)**GET／HEAD**（HEADはGET handlerへfallback）、およびPOSTが`_method`・`X-HTTP-Method-Override`でGETへoverrideされた場合 → **`/wp/v2/media`のREADABLE handler（Core標準の読取りcallback）が実行される**。route`/wp/v2/media`はREADABLEとCREATABLEの両handlerを持つ。**effective POSTのままwrapped CREATABLE callbackに到達するoverride付きrequestはB-4ではなく、MO-3** | `:386-394`・`:1096-1102`・`:1153-1223`、`posts-controller:73-93` | **PE-3を満たさず、投影対象外**（MO-2。Core Native path） |
+| **B-5** | handlerが呼出不能（`rest_invalid_handler`） | `:1106-1112` | 到達する。eligibleならmarker無し→E5 |
+| **B-6** | **Core自身の引数検証・sanitizeの失敗**（routeの`args`に対する`has_valid_params`／`sanitize_params`）。`$error`が`respond_to_request`へ渡され、`permission_callback`も route callbackも呼ばれない | `:1115-1123`・`:1259` | 到達する。eligibleならmarker無し→E5（**plugin自身のallowlistのE1には到達しない**） |
+| **B-7** | `rest_request_before_callbacks`が`WP_Error`を返す | `:1256-1259` | 到達する。eligibleならmarker無し→E5 |
+| **B-8** | `rest_dispatch_request`が非nullを返す（route callbackは実行されない） | `:1287-1291` | 到達する。eligibleならmarker無し→E5 |
+| **B-9** | **Coreの`permission_callback`が拒否**（未認証、Core標準の権限不足。`rest_forbidden`） | `:1259-1270` | 到達する。eligibleならmarker無し→E5（**E3ではない**） |
+
+- **契約**：eligible GCA POSTがB-2・B-3・B-5〜B-9で投影に到達した場合は、**markerが無く、E5（503 `unknown`）へfail-closed**する。**plugin自身がauthoritative markerを確定できなかった経路を、推測でE1／E3等のcanonical errorへ分類しない**。B-1・B-4・B-3のOPTIONSは、投影の対象外である。
+- **claim・Core呼出との関係**：claimの生成とCore呼出は**route callbackだけ**が行う（10.2節、SP-1）。B-1〜B-9ではroute callbackが実行されないため、**当該requestはclaimを確立せず、Coreの`create_item`も呼んでいない**。ただしE5は`unknown`であり、**identity未消費・再送許可を意味しない**（8.3節 原則(1)・(2)）。
+- **帰結（R-19）**：認証失敗（B-2）、Core権限の拒否（B-9）、Coreの引数検証の失敗（B-6）は、Core Nativeの401／403／400ではなく**E5**になる。Core `args`は6.38では**変更しない**。**E1になるのは、route callbackに到達した後のallowlist・validation違反に限る**。
+- **検証**：U-19、T-36。
+
+### 12.5 `/batch/v1`と内部dispatchの扱い（Amendment A14・A15・A16、正本）
+
+- **BT-1（保証の分離。A16で改訂）**：**idempotency safety（SP-1）は、route callbackに到達したGCA POSTのすべてに適用する**（dispatch文脈を問わない）。**canonical HTTP投影の保証（CS-1）は、そのresponseが直接HTTP応答として送出される場合に限る**。`/batch/v1`の子request、内部`rest_do_request()`等のnested／非投影の文脈は、**HTTP投影の保証対象外**（SP-3）。**dispatch文脈の判定（`is_dispatching()`等）は、claim・Core実行の可否にも投影の可否にも用いない**。
+- **BT-2（Core上の可否）**：7.1.1では、`WP_REST_Attachments_Controller`が`protected $allow_batch = false;`（`attachments-controller:35`）とし、親の`WP_REST_Posts_Controller`の既定`array('v1' => true)`（`posts-controller:48`）を上書きする。`serve_batch_request_v1`は`allow_batch['v1']`が真でないrouteを`rest_batch_not_allowed`（400）で拒否する（`:1795-1808`）。したがって、**Core登録のままの`POST /wp/v2/media`は、batchでdispatchされない**（source上の事実。実行時は未検証、U-21）。
+- **BT-3（置換時の維持）**：本pluginは、route callbackを置換する際に、**`allow_batch`を設定・変更しない（Coreの値＝偽を維持）**。handler fingerprint（5.3節#3）は`allow_batch`が偽であることを含み、変化した場合はEpoch invalid（claim前に拒否、T-09）。
+- **BT-4（子request・内部dispatchの扱い。A16で改訂）**：(a)**batchの子request**は、`allow_batch`検証が失敗した場合も`respond_to_request`を経て`rest_post_dispatch`（`:1889-1894`）を通り、P-2のPE-1〜PE-3を満たせば投影されうる。**ただしそのresponseは外側のresponse（207）の一部であり、HTTP wire保証外**（CS-1(b)）。子requestがroute callbackに到達しうるのは`allow_batch`が有効化された構成のみで、BT-3によりEpoch invalid（claim前に拒否）。到達した場合も**SP-1が適用される**（call-site分類はRD-3）。(b)**内部`rest_do_request()`**：SP-3。
+- **検証**：U-21、T-37。
 
 ---
 
@@ -862,7 +995,7 @@ pre-callback filter topologyだけでなく、Core callback**返却後**の応�
 | T-04 | **PROCESSING duplicate** | L2, L3 | 409 `gca_idempotency_in_progress`。Core呼出0、attachment増加なし。待機・自動promoteなし |
 | T-05 | **crash before side effect**（claim確立後・Core前）：(a)PHP異常終了（C1b）、(b)捕捉可能な内部障害の注入（C1a、T-28） | L2（fault）, L3（PHP kill） | `PROCESSING`が残りmediaなし。(a)は応答なし、(b)は409 `processing`。duplicateは409。自動reclaimされない |
 | T-06 | **crash/timeout after side effect before CONFIRMED** | L2（fault）, L3 | `PROCESSING`＋mediaあり。duplicateは409。自動promote・新規作成なし |
-| T-07 | **Finalizerの適用runtime failureの検証（F-*ごと）**。**契約の内容は、12章のF-1〜F-6が唯一の正本であり、本行は再掲しない。本行が定めるのは、検証の手順と層のみ**。**手順（12章のF-1〜F-6の各行について）**：(1)当該F-*が対象とするmarker outcomeに必要な**事前状態**を用意する。**F-6（E1〜E4）では、既存claimを、なし／`PROCESSING`／`CONFIRMED`の3通りに分けて用意する**。(2)Finalizerの**適用runtime failureを注入**する（response objectを置換できない・status設定が反映されない・Finalizer内の例外）。(3)**観測結果が、当該F-*の記述と一致する**ことを検証する。**別に**：marker欠落・不正等の注入はT-34(c)、valid markerからの選択・構築が総和かつ一意であること（12章）の確認はL1／L2で行う | 下記の**層分離（T-07固有の責務）**のとおり | **oracleは、12章のF-*との一致のみ**。**応答の内容についてはoracleを持たない**（T-22の対象外）。**層分離（T-07固有の責務）**：**【L1／L2】** request-local・非公開のmarker内部状態（適用失敗の前後での不変・write-once・Finalizerがmarkerを変更しないこと）。**【L3】** durable DB state、および後続のrequestの挙動のみ。**L3から、非公開のprivate markerを直接観測することは前提にしない（禁止）** |
+| T-07 | **Finalizerの適用runtime failureの検証（F-*ごと）**。**契約の内容は、12章のF-1〜F-6が唯一の正本であり、本行は再掲しない。本行が定めるのは、検証の手順と層のみ**。**手順（12章のF-1〜F-6の各行について）**：(1)当該F-*が対象とするmarker outcomeに必要な**事前状態**を用意する。**F-6（E1〜E4）では、既存claimを、なし／`PROCESSING`／`CONFIRMED`の3通りに分けて用意する**。(2)Finalizerの**適用runtime failureを注入**する（注入する失敗の種類は、12章の「適用runtime失敗」の定義による）。(3)**観測結果が、当該F-*の記述と一致する**ことを検証する。**別に**：marker欠落・不正等の注入はT-34(c)、valid markerからの選択・構築が総和かつ一意であること（12章）の確認はL1／L2で行う | 下記の**層分離（T-07固有の責務）**のとおり | **oracleは、12章のF-*との一致のみ**。**応答の内容についてはoracleを持たない**（T-22の対象外）。**層分離（T-07固有の責務）**：**【L1／L2】** request-local・非公開のmarker内部状態（適用失敗の前後での不変・write-once・Finalizerがmarkerを変更しないこと）。**【L3】** durable DB state、および後続のrequestの挙動のみ。**L3から、非公開のprivate markerを直接観測することは前提にしない（禁止）** |
 | T-08 | **DB unavailable**（claim時／Verification時／`UPDATE`時） | L2（fault）, L3 | `INSERT`発行前：Core 0・503 `none`。`INSERT` ACK曖昧：Core 0・503 `unknown`（C6a）。Core後のVerification失敗／`UPDATE`確定失敗：`PROCESSING`のまま409 `processing`（C7）。`UPDATE` ACK曖昧：503 `unknown`（C8）。いずれも再`INSERT`しない |
 | T-09 | **detectable epoch mismatch**（**server内部の**schema version（claims schema version）／anchor不一致／`server_uuid`不一致／durability**設定値**の前提不一致／topology drift。Binding・multisiteはT-23・T-24、durabilityの**実証**はT-25） | L2, L3 | **claim確立前に検出**した場合は、claim・replayとも行わず503 `none`。row・mediaを作らない。（claim確立後に検出した場合は`PROCESSING`保持・409 `processing`、T-23b／T-23c） |
 | T-10 | **regenerated／different image bytes with same logical key** | L2, L3 | `CONFIRMED`なら既存mediaをreplay（再生成・再upload要求なし）。`PROCESSING`なら409。診断digest差異は結果に影響しない |
@@ -871,13 +1004,13 @@ pre-callback filter topologyだけでなく、Core callback**返却後**の応�
 | T-13 | 旧Draftの継続項目：Media Verificationの`READ UNCOMMITTED`下dirty read fault注入／Core側rollback後に`CONFIRMED`が残存しない | L2（fault）, L3 | 9.1節の接続契約により拒否／`PROCESSING`のまま |
 | T-14 | conditional short-circuit構成（常時登録・条件付き発火）をEpoch invalidと判定できるか | L3 | 5.3節の既知限界の確認（検出不能ならその旨を記録） |
 | T-15 | `rest_after_insert_attachment`の0回／複数回発火、5-way ID mismatch注入 | L2, L3 | CONFIRM失敗（`PROCESSING`のまま） |
-| T-16 | post-callback改変（`rest_request_after_callbacks`／`rest_post_dispatch`／`rest_pre_echo_response`より前のfilter）による、**応答dataの改変（ID含む）と、HTTP statusの改変（例：201→200、200→201、2xx→他）の両方**、manual serving試行 | L3 | **Finalizerが、authoritative outcome marker（`SUCCESS_FIRST`はdurable ACK後、`SUCCESS_REPLAY`はVerification通過後にのみ設定）だけから、応答のdataとHTTP statusの両方を、5-field canonical payload＋first success＝201／confirmed replay＝200へ全置換して復元する**（Finalizer自身はsnapshotの意味検証・保存・DB I/Oをせず、pre-Finalizerの応答を判断材料にしない、12章）。client-visible JSONの`id`がsnapshotの`id`と一致し、statusがmodeに対応する。GCAでのmanual servingは拒否 |
-| T-17 | `url`／allowlist外のquery parameter・body形式・`Content-Type`・method override header・未定義の`X-GCA-*`（8.1節の表の各行） | L1（allowlist定数が8.1節の表と一致することの検査）, L2, L3 | 400 `none`・claim 0・Core 0・`create_item_from_url()`到達0 |
+| T-16 | post-callback改変（`rest_request_after_callbacks`、および`rest_post_dispatch`でFinalizerより前に実行されるfilter）による、**応答dataの改変（ID含む）と、HTTP statusの改変（例：201→200、200→201、2xx→他）の両方**、manual serving試行（Finalizerより後の作用点は12.3節 X-*、T-38） | L3 | **oracleは12.1節 P-1・P-3・CS-1、12.3節 X-4、11.2節の5-way ID equality（client-visible ID＝snapshot ID）のみ**（復元の規則・期待されるresponseの内容は12章が正本であり、本行は再記述しない）。実際に受信するHTTP status・headersの確認はT-35 |
+| T-17（A17で改訂） | `url`／allowlist外のquery parameter・body形式・`Content-Type`・未定義の`X-GCA-*`（8.1節の表の各行）。**method override control（8.1節の該当行）は、次の2つの入力に分けて検証する**：**(a)** effective POSTのまま、`_method`または`X-HTTP-Method-Override`を伴うGCA-tagged request、**(b)** override後のeffective methodがPOSTでないrequest（POST→GET等） | L1（allowlist定数が8.1節の表と一致することの検査。method override controlの行を含む）, L2, L3 | oracleは**8.1節・8.3節の該当contract**（E1の内容は8.3節）のみ。**(a)は12.1節 MO-3、(b)は12.1節 MO-2・12.4節 B-4・12.1節 CS-1**に従う（本行は期待結果を再記述しない）。`create_item_from_url()`到達0（8.1節）。Coreの引数検証が先に失敗する入力は12.4節 B-6（E1とB-6の分岐はT-36で確認）。claim・Core呼出に関する安全性は12.1節 SP-1・12.4節に従う |
 | T-18 | GCAヘッダ欠落・不正（部分的な`X-GCA-*`）、**および`X-GCA-Identity-Schema`のclient供給値が対応schemaと不一致（A8）** | L1, L2, L3 | **400・E1（`gca_idempotency_invalid_request`）・`none`**（Epoch invalid・E4ではない）。非GCAへfallbackしない。claim 0。**server内部のschema／DB／epoch／configurationの不一致（T-09）はE4（503・`none`）であり、E1と区別される** |
 | T-19 | planned break／unplanned break手順の実地確認 | L3 | 13章どおり |
 | T-20 | 非GCAリクエストのbehavioral equivalence（Zero-Diff） | L3 | Core Nativeと一致 |
 | T-21 | key導出golden vector／禁止入力不在／reclaim経路不在（static） | L1 | 7.4・7.1・10.5節の静的契約が成立 |
-| T-22 | **HTTP matrix test（A6で、旧「claim後はすべて409」という一般化を削除し、8.3節の正本応答表に従うmatrix testへ変更）**：8.3節の応答表の**全行**を、行ごとに(条件を注入 → HTTP status・error code・`gca_claim_state`・Core呼出回数)で検証する。少なくとも次を含む。(1)**PROCESSING系**（claim確立後・Core呼出前の捕捉可能な内部障害、Coreの4xx／5xx／例外／`WP_Error`、response・provenance・Verification IDの不一致、R2／R3の失敗、snapshot検証失敗、`UPDATE`の確定的失敗、既存`PROCESSING` rowのduplicate）→ **409 `gca_idempotency_in_progress`・`processing`**。(2)**ACK曖昧**（claim `INSERT`のACK曖昧、`CONFIRMED`への`UPDATE`のACK曖昧）→ **503 `gca_idempotency_unavailable`・`unknown`**。(3)**`INSERT`がACK済みでaffected rows≠1かつduplicate-keyでない** → 503 `gca_idempotency_claim_indeterminate`・`unknown`。(4)**marker欠落・不正・二重設定・別request・束縛不一致（A9で訂正）**→ **503 `gca_idempotency_unavailable`・`unknown`（E5）**。**valid `E9` marker（`CONFIRMED` duplicateのVerification不能）→ 503・`confirmed`（E9）**。**valid markerからのcanonical response（`SUCCESS_*`・E1〜E9）の選択・構築は、失敗なく一意に行われる**。**Finalizerの適用runtime failureは、本テスト（T-22）の対象外**で、**12章 F-\*の保証境界に従い、T-07で検証する**。(5)**`CONFIRMED` duplicateでMedia Verificationが完遂不能** → **503 `gca_idempotency_unavailable`・`confirmed`**。(6)**confirmed inconsistency**（Verificationが完遂し欠落・不一致と確定）→ **409 `gca_idempotency_media_missing`・`confirmed_inconsistent`**。(7)claim前の拒否（400／403／413／503 `none`）。(8)first success＝201・confirmed replay＝200（`confirmed`）。(9)**canonical error表（E1〜E9）の全9組**について、返された応答の**HTTP status・error code・message・`gca_claim_state`・`data.status`が表と完全一致**（messageは固定ASCII文字列の完全一致）。(10)**Finalizerのmarker駆動の構築（A8。A7のresponse class分岐は廃止）**：marker outcome（`SUCCESS_FIRST`→canonical 5-field payload＋201、`SUCCESS_REPLAY`→＋200、`E1`〜`E9`→canonical error表の該当行）ごとに、pre-Finalizerの応答の内容・statusに**依存せず**、markerだけから最終responseが構築されること。marker欠落・不正・二重設定・別request→E5。(11)**exact-key contract（A8）**：成功＝top-levelがちょうど5 key、error＝top-levelがちょうど`code`／`message`／`data`の3 key・`data`がちょうど`status`／`gca_claim_state`の2 key | L1（応答表の閉集合・Core error転記コード不在・表の行と定数の一致）, L2（行ごとの条件注入）, L3 | **各行が、8.3節の表の指定どおり**。Coreのstatus・code・messageが応答に現れない。**400／403／413は`none`でありclaim確立前にのみ返り、claim確立後に`none`・400・403・413が返る経路が存在しない**。応答bodyに`claim_token`・`idempotency_key`が含まれない。**表に無い応答の組合せが返らない**（閉集合）。**自由文・Core由来のmessageが応答に現れない** |
+| T-22 | **HTTP matrix test（A6で、旧「claim後はすべて409」という一般化を削除し、8.3節の正本応答表に従うmatrix testへ変更。A15・A16：対象は、eligible GCA POST（12.1節 P-2）が投影に到達する場合＝CS-1の範囲に限る）**：8.3節の応答表の**全行**を、行ごとに(条件を注入 → HTTP status・error code・`gca_claim_state`・Core呼出回数)で検証する。少なくとも次を含む。(1)**PROCESSING系**（claim確立後・Core呼出前の捕捉可能な内部障害、Coreの4xx／5xx／例外／`WP_Error`、response・provenance・Verification IDの不一致、R2／R3の失敗、snapshot検証失敗、`UPDATE`の確定的失敗、既存`PROCESSING` rowのduplicate）→ **409 `gca_idempotency_in_progress`・`processing`**。(2)**ACK曖昧**（claim `INSERT`のACK曖昧、`CONFIRMED`への`UPDATE`のACK曖昧）→ **503 `gca_idempotency_unavailable`・`unknown`**。(3)**`INSERT`がACK済みでaffected rows≠1かつduplicate-keyでない** → 503 `gca_idempotency_claim_indeterminate`・`unknown`。(4)**marker関連の行（A17で参照へ整理）**：8.3節の応答表の「marker欠落・不正等」行とE9行（応答の内容は8.3節。marker確定規則・構築は12章が正本であり、本行は再記述しない）。**Finalizerの適用runtime failureは、本テスト（T-22）の対象外**で、**12章 F-\*の保証境界に従い、T-07で検証する**。(5)**`CONFIRMED` duplicateでMedia Verificationが完遂不能** → **503 `gca_idempotency_unavailable`・`confirmed`**。(6)**confirmed inconsistency**（Verificationが完遂し欠落・不一致と確定）→ **409 `gca_idempotency_media_missing`・`confirmed_inconsistent`**。(7)claim前の拒否（400／403／413／503 `none`）。(8)first success＝201・confirmed replay＝200（`confirmed`）。(9)**canonical error表（E1〜E9）の全9組**について、返された応答の**HTTP status・error code・message・`gca_claim_state`・`data.status`が表と完全一致**（messageは固定ASCII文字列の完全一致）。(10)**Finalizerのmarker駆動の構築（A8。A7のresponse class分岐は廃止）**：marker outcomeごとに、12章 marker表・12.1節 P-3に従い最終responseが構築されること（期待値は12章が正本であり、本行は再記述しない）。(11)**exact-key contract（A8）**：12章のexact-key contractに従う（CS-1の範囲内） | L1（応答表の閉集合・Core error転記コード不在・表の行と定数の一致）, L2（行ごとの条件注入）, L3 | **各行が、8.3節の表の指定どおり**。Coreのstatus・code・messageが応答に現れない。**400／403／413は`none`でありclaim確立前にのみ返り、claim確立後に`none`・400・403・413が返る経路が存在しない**。応答bodyに`claim_token`・`idempotency_key`が含まれない。**表に無い応答の組合せが返らない**（閉集合。**CS-1の範囲内に限る**。範囲外の応答は、T-36・T-37・T-38が扱い、本テストの閉集合の対象ではない）。**自由文・Core由来のmessageが応答に現れない** |
 | T-23 | **Authoritative Binding**（9.3節、A3で確認点ごとに分割）：3接続のFingerprint（writer・`server_uuid`・DB/schema・table prefix・site・Epoch）を項目ごとに不一致／取得不能にする | L2（fake）, L3 | 下記T-23a〜T-23fのとおり。**claim確立後は`none`へ戻らない** |
 | T-23a | **R1（pre-claim）**失敗 | L2, L3 | 503 `gca_idempotency_unavailable`・`gca_claim_state = none`・claim 0（`INSERT`未発行）・Core 0 |
 | T-23b | **R2（post-claim・pre-Core）**失敗（claim確立後にFingerprintを食い違わせる） | L2, L3 | `PROCESSING` rowが残る・Core 0・409 `gca_idempotency_in_progress`（`processing`）。`none`・503を返さない |
@@ -891,11 +1024,15 @@ pre-callback filter topologyだけでなく、Core callback**返却後**の応�
 | T-27 | **C6の分離**（10.6節）：(a)original requestの`INSERT` ACK曖昧→503 `unknown`・Core 0・再`INSERT`なし、(b)後続requestでrowがcommit済み→409 `processing`、(c)後続requestでrowが不在→新規claimに勝つ、(d)originalの`INSERT`が後続のclaimの**後**に遅延到達→一意制約により失敗、行は高々1、二重Core実行なし | L2（fault・遅延commitのfake）, L3（接続断を注入） | 各ケースで規定どおり。Core呼出総数≦1、attachment≦1（T-12） |
 | T-28 | **claim後・Core呼出前の捕捉可能な内部障害**（10.2節、8.3節、C1a）：claim確立のACK後、Core呼出前に、例外・メモリ不足相当・応答構築失敗・R2失敗を注入する | L2（fault注入）, L3（可能な範囲） | **Core呼出0**、`PROCESSING` rowが保持され（削除・取消されない）、応答は409 `gca_idempotency_in_progress`（`processing`）。`none`・503 `none`・400・403・413ではない。同一identityのduplicateは409 `processing` |
 | T-29 | **body size contract**（8.1節）：空body、上限ちょうど（33,554,432バイト）、上限+1バイト、`Content-Length`と受信長の不一致 | L1（上限定数・検査位置がclaim `INSERT`より前）, L2, L3 | 空bodyは400 `none`。上限ちょうどは受理経路へ進む。上限+1は**413 `gca_idempotency_payload_too_large`・`none`・claim 0・Core 0**。不一致は400。いずれもClaims Tableに行が作られずattachmentが増えない。**32 MiBを超える正当な画像が413で拒否されうることは仕様であり、受理保証が無いことの確認として期待結果に含める**（8.1節）。**L3の前提条件（A5）**：下位層のbody上限（WordPress／PHPの`upload_max_filesize`・`post_max_size`・`memory_limit`、web serverの`client_max_body_size`等）を、**テストに使う上限+1バイト（33,554,433バイト）のbodyよりも大きく**設定でき、その設定が有効であることを**evidenceとして記録**する（U-16）。**下位層がそのbodyを先にrejectする構成（pluginに到達しない構成）は、plugin 413の証明として扱わない**（`gca_claim_state`を欠く応答であり、その場合はL3 evidenceとして不成立で、下位層の設定を修正して再実施する） |
-| T-30 | **応答の形とclaim_stateの意味**（8.3節）：(a)**HTTP statusが初回201・replay 200である**こと（post-callbackでstatusを変更しても、Finalizerが上書きして維持する）、および201（初回）と200（replay）の成功JSONが**同一のcanonical payload（`id`／`source_url`／`mime_type`／`slug`／`gca_claim_state="confirmed"`の5 fieldのみ）**であり、Core responseの他field（`link`／`guid`／`media_details`／`_links`等）が**含まれない**こと、snapshotが4項目のみで構築元であること、現行`WordPressMediaUploader`のparse契約（`id`が正のint、`source_url`／`mime_type`のキー存在）を満たすこと（Python側の既存parse関数に対するL1契約検査）、(b)error応答がWP_Error形式で`data.gca_claim_state`を持つ（`processing`・`unknown`・`confirmed`・`confirmed_inconsistent`・`none`の各行）、(c)**既存の`CONFIRMED` claimがあるidentityのduplicateが、claim確立前の検査（R1・capability・body size等）で失敗した場合に`none`を返しうること**（`none`が「identity未消費」を意味しないことの確認） | L1（応答表の閉集合・shape定数）, L2, L3 | (a)(b)は規定どおり。(c)は`none`でも`CONFIRMED` rowが不変であることを確認し、`none`をretry authorizationとして扱うコードがplugin側にも契約文書にも存在しない（L1：設計書・応答定数に「`none`＝未消費」と読める記述がない） |
+| T-30 | **応答の形とclaim_stateの意味**（8.3節。**検証の対象は、12.1節 CS-1の範囲に限る**。範囲外の応答の形・閉集合は、本テストの対象外）：(a)初回201・replay 200のstatusと、成功JSONの形（8.3節のcanonical payload）、Core responseの他fieldが含まれないこと、snapshotが構築元であること、現行`WordPressMediaUploader`のparse契約を満たすこと（Python側の既存parse関数に対するL1契約検査）、(b)error応答がWP_Error形式で`data.gca_claim_state`を持つこと（8.3節の各行）、(c)**既存の`CONFIRMED` claimがあるidentityのduplicateが、claim確立前の検査（R1・capability・body size等）で失敗した場合に`none`を返しうること**（`none`が「identity未消費」を意味しないことの確認） | L1（応答表の閉集合・shape定数）, L2, L3 | (a)(b)は規定どおり。(c)は`none`でも`CONFIRMED` rowが不変であることを確認し、`none`をretry authorizationとして扱うコードがplugin側にも契約文書にも存在しない（L1：設計書・応答定数に「`none`＝未消費」と読める記述がない） |
 | T-31 | **`INSERT`がACK済みだがaffected rowsが1でなく、duplicate-keyでもない**（8.3節、10.2節(c)、C6e）：affected rowsが0・2・取得不能の各注入 | L2（fault注入）, L3（可能な範囲） | **Core呼出0**、再`INSERT`なし、503 `gca_idempotency_claim_indeterminate`・`gca_claim_state = unknown`。**claim成立を断定する応答（`processing`・`confirmed`）を返さない**。後続requestはrowが存在すれば409 `processing`、不在なら新規claimに勝てる。Core呼出総数≦1（T-12） |
 | T-32 | **`CONFIRMED` duplicateのMedia Verification**（8.3節、10.3節、C9）：(a)attachmentが欠落／`post_name`不一致と**確定**、(b)Verification自体がDB／I/O／接続障害・timeoutで**完遂できない**、(c)claim読取り成功後のBinding再確認失敗 | L2（fault注入）, L3 | (a)409 `gca_idempotency_media_missing`・`confirmed_inconsistent`。(b)503 `gca_idempotency_unavailable`・`confirmed`。(c)503・`unknown`。**いずれも`create_item`呼出0・新規attachment 0・`CONFIRMED` rowは不変**。**回復後の挙動は分岐ごとに異なる（A11）**：(b)Verification環境の回復後は、attachmentが整合していれば200 replay（欠落・不一致が確定すれば(a)のE8）。(c)Binding再確認が回復し、attachmentが整合していれば200 replay。**(a)のE8経路は、attachment欠落・不一致が確定した状態であり、明示的な修復が完了するまで、後続のduplicateは409 `gca_idempotency_media_missing`・`confirmed_inconsistent`を維持する。Binding・Verificationの環境が単に回復しただけでは、200 replayにならない**（修復の手段・tool自体は6.38のOut of Scope） |
 | T-33 | **Core成功後のsnapshot 4項目の検証失敗**（10.4節 手順3、8.3節、C10）：Coreは成功を返すが、(a)`source_url`が欠落、(b)`source_url`が非str・空、(c)DBの`post_mime_type`が許可3種以外、(d)DBの`post_name`が`requested_slug`と不一致、(e)`id`が正のintでない、を注入 | L2（fault注入）, L3（可能な範囲） | **snapshotを保存せず`CONFIRMED`にならない**。`PROCESSING`を保持し、応答は**409 `gca_idempotency_in_progress`（`processing`）**。2xxとcanonical payloadを返さない。Core再実行0。同一identityのduplicateは409。Core呼出総数≦1（T-12） |
-| T-34 | **finalizationの順序・所有者・outcome markerからの復元**（10.4節、12章、A8で全面改訂）：(a)手順1〜4の各段階（Core成功後のVerification失敗、snapshot検証失敗、`UPDATE`の確定的失敗、`UPDATE`のACK曖昧）で障害を注入、(b)Finalizerに接続した全DB接続のfakeを置き、呼出回数を数える、(c)**markerの不整合を注入する**：(c1)**marker欠落**（Core認証エラー、他pluginの短絡、control path未到達のGCA request）、(c2)markerに束縛されたinstanceと異なるrequest（値は等価だが別instance）、(c3)success markerの`idempotency_key`が、requestの`X-GCA-*` headerから再導出したkeyと異なる、(c4)outcomeが許可集合（`SUCCESS_FIRST`／`SUCCESS_REPLAY`／`E1`〜`E9`）外、(c5)success markerのsnapshotの項目欠落・型不正（例：`id`が正のintでない）、(c6)markerの二重設定（success後にerror、error後に別のerror、等）、(c7)形式は正しいが別requestのmarkerへの差替え、(d)**pre-Finalizerの応答の改変（A8。valid markerがある場合）**：pre-Finalizerのcallbackが最終応答を、(d1)**success→error**（201／200→409等）、(d2)**error→success**（E1〜E9のいずれか→200／201と任意のbody）、(d3)**1xx**、(d4)**3xx**、(d5)**任意のbody・status・余分なtop-level fieldや`data`のfieldの付与**、(d6)canonical errorの**statusだけ**の書換え、(d7)空body・非JSON相当のbody、へ変更する | L1（Finalizerのsourceに`INSERT`／`UPDATE`／`SELECT`等のDB呼出・snapshotの意味検証ロジックが存在しない静的検査、**Finalizerがpre-Finalizerの応答のstatus・dataを判断材料として読まない（読取り箇所が無い）静的検査**、markerのwrite-once・plugin-private構造の静的検査）, L2, L3 | (a)**marker＝SUCCESS_FIRSTは、durable ACKを確認する前に設定される経路が存在しない**：確定的失敗は409 `processing`（E7）、ACK曖昧は503 `unknown`（E5）。(b)**Finalizerのstate変更・DB保存・DB読取り・snapshotの意味検証の呼出は0**。(c1〜c7)**canonical success（2xxとcanonical payload）を返さず、503 `gca_idempotency_unavailable`・`unknown`（E5）で、statusとdataの両方を置換する**（pre-Finalizerの応答が2xxに見えても同じ）。(d1〜d7)**valid markerがあれば、pre-Finalizerの応答の内容・statusに関わらず、markerのcanonical outcomeへ復元される**（`SUCCESS_FIRST`→canonical 5-field payload＋201、`SUCCESS_REPLAY`→＋200、`E*`→canonical error表の該当行の固定status・code・message・`gca_claim_state`）。**最終応答のkey setは、successがちょうど5 key、errorがちょうど3 key（`data`はちょうど2 key）で、pre-Finalizerの応答の余分なfieldは残らない**。**marker無し・不正ならE5へfail-closed**。**悪意あるcodeへの耐性は検証対象外** |
+| T-34 | **finalizationの順序・所有者・outcome markerからの復元**（10.4節、12章、A8で全面改訂）：(a)手順1〜4の各段階（Core成功後のVerification失敗、snapshot検証失敗、`UPDATE`の確定的失敗、`UPDATE`のACK曖昧）で障害を注入、(b)Finalizerに接続した全DB接続のfakeを置き、呼出回数を数える、(c)**markerの不整合を注入する**：(c1)**marker欠落**（12.4節 B-*のeligibleな経路）、(c2)markerに束縛されたinstanceと異なるrequest（値は等価だが別instance）、(c3)success markerの`idempotency_key`が、requestの`X-GCA-*` headerから再導出したkeyと異なる、(c4)outcomeが許可集合（`SUCCESS_FIRST`／`SUCCESS_REPLAY`／`E1`〜`E9`）外、(c5)success markerのsnapshotの項目欠落・型不正（例：`id`が正のintでない）、(c6)markerの二重設定（success後にerror、error後に別のerror、等）、(c7)形式は正しいが別requestのmarkerへの差替え、(d)**pre-Finalizerの応答の改変（A8。valid markerがある場合）**：pre-Finalizerのcallbackが最終応答を、(d1)**success→error**（201／200→409等）、(d2)**error→success**（E1〜E9のいずれか→200／201と任意のbody）、(d3)**1xx**、(d4)**3xx**、(d5)**任意のbody・status・余分なtop-level fieldや`data`のfieldの付与**、(d6)canonical errorの**statusだけ**の書換え、(d7)空body・非JSON相当のbody、へ変更する | L1（Finalizerのsourceに`INSERT`／`UPDATE`／`SELECT`等のDB呼出・snapshotの意味検証ロジックが存在しない静的検査、**Finalizerがpre-Finalizerの応答のstatus・dataを判断材料として読まない（読取り箇所が無い）静的検査**、markerのwrite-once・plugin-private構造の静的検査）, L2, L3 | **oracleは12章のみ**（本行は、期待値・outcome・response・stateを再定義しない。A17）：(a)10.4節 手順1〜5と12章 marker表（SUCCESS_FIRSTの設定条件）、(b)12章「Finalizerは…DB I/Oを行わない」の項、(c1〜c7)12章 marker確定規則(2)とFinalizerの確認(1)〜(4)、(d1〜d7)12章「pre-Finalizerの応答の改変に対する復元」とexact-key contract（CS-1の範囲内）。**悪意あるcodeへの耐性は検証対象外**（5.2節、12章 markerの性質） |
+| T-35（A14追加） | **投影機構とresponse header契約**（oracleは12.1節 P-1〜P-5・12.2節 H-1〜H-3・12.3節 X-11（status line））：eligible GCA POSTの**各outcome**（`SUCCESS_FIRST`・`SUCCESS_REPLAY`・`E1`〜`E9`）について、**clientが実際に受信したHTTP応答**（status・response headers・body）を観測する。H-1の対象headerが存在する状況（Core呼出を伴う`SUCCESS_FIRST`等）を作る | L1（登録位置・返却objectの構造・直接送出headerの除去と差分記録の存在の静的検査）, L2（filter chainのfake、`rest_send_allow_header`による呼出を含む）, L3（実HTTP応答の観測） | 受信応答が12.1節 P-3・12.2節 H-1〜H-3と一致する（status・body・header）。**U-18・U-20が成立しない場合は本テストが成立せず、実装を進めずに本書を改訂する** |
+| T-36（A16で改訂、A17で参照へ整理） | **route callbackに到達しない経路（12.4節 B-1〜B-9）、method境界（12.1節 MO-1〜MO-4）、permission_callbackの分離**：B-1〜B-9の各経路を注入する（B-4は、GET・HEAD・OPTIONS・POSTからGETへのoverride・PUT等。B-6は、Coreの引数検証が先に失敗する入力と、Coreを通過してallowlistが拒否する入力の両方。B-9は、未認証およびCore権限不足のuser。GCA capabilityだけを欠くuser）。**method境界として、(M-a)effective POSTのままoverride control（`_method`または`X-HTTP-Method-Override`）を伴うGCA-tagged request（MO-3）、(M-b)override後のeffective methodがPOSTでないrequest（MO-2）を注入する**。`permission_callback`の呼出回数・契機を変えて（`rest_send_allow_header`を含む）、markerの有無を観測する | L1（`permission_callback`の置換・markerへのアクセスが無い静的検査、GCA capability判定がroute callbackの先頭でclaimより前にある静的検査）, L2（各経路の注入）, L3 | **oracleは12.4節（B-1〜B-9・契約・帰結）、12.1節 MO-1〜MO-4・SP-1・CS-1のみ**（本行は、期待値・outcome・response・stateを再定義しない。A17）。各入力が、どのcontract IDに該当するかを観測して一致を検証する。permission_callbackの呼出回数・契機がmarkerを変えないこと（12.4節） |
+| T-37（A16で改訂、A17で参照へ整理、A18でdispatch文脈の変種を追加） | **dispatch文脈別の、side-effect safety・投影・method境界の検証（12.1節 SP-1〜SP-3・MO-1〜MO-4・RD-1〜RD-7、12.5節 BT-1〜BT-4）**：同一のGCA POST（`X-GCA-*`付き、route `/wp/v2/media`）を、次の**5つのdispatch文脈**で実行し、(i)effective method、(ii)route callbackへの到達、(iii)claim・Core呼出・`CONFIRMED`化、(iv)Finalizerの作用（no-opか否か）、(v)投影の有無を観測する：**(C1)top-levelのHTTP request（RD-1）**、**(C2)内部`rest_do_request()`**、**(C3)`/batch/v1`の子request（RD-3。`allow_batch`を有効化したテスト構成を含む）**、**(C4)embed sub-request（RD-2。`_embed`で`embeddable`なlinkを持つresponseを返すrouteを使う）**、**(C5)preload（RD-4）**。**method override control（`_method`・`X-HTTP-Method-Override`）は、(C1)では実際のHTTP（`$_GET`・`$_SERVER`）として与え、(C2)〜(C5)では構築したrequest objectのquery parameter・headerとして（`serve_request()`を通さずに）与える**。methodは、(C1)が`REQUEST_METHOD`とoverride後、(C2)が構築時の値、(C3)がbatch dataのmethod、(C4)(C5)が構築methodである。加えて、**`rest_request_from_url`にテスト用callbackを登録し、(C4)のrequestのroute・header・method・型を変える構成**を含める。route handlerの`allow_batch`の値を観測する | L1（claim・Core実行の判定にdispatch文脈の判定が使われていない静的検査、Finalizerがeligibility判定を最初に行い、eligibleでないとき`$result`を変更・参照しない静的検査）, L2, L3 | **oracleは12.1節 SP-1〜SP-3・MO-1〜MO-4・CS-1・RD-1〜RD-7、12.5節 BT-1〜BT-4のみ**（本行は、期待値・outcome・response・stateを再定義しない。A17・A18）。文脈・method／override controlの組合せごとに、どのcontract IDが該当するかを観測して一致を検証する |
+| T-38（A14追加、A15でT-38へ改番、A18で拡張） | **投影後の改変点とtopology**（oracleは12.3節 X-1〜X-11、12.1節 RD-6）：approved setへ、各作用点に作用するcallbackを（テスト用に）登録した構成（**`status_header`filterのcallback（status lineを書き換えるものを含む）、`rest_request_from_url`のcallbackを含む**）、およびresponse-shapingのquery parameterを付与したrequest。**`status_header`filterの登録が無い構成と、あるplugin／確認不能の構成の両方**を用意する | L1（topology検査の対象一覧が12.3節・12.1節 RD-6と一致）, L2, L3 | 12.3節の区分どおり（【禁止】【検証】【許容】【境界】【保証外】）、**unsupported topologyの扱いは12.3節 X-11・12.1節 RD-6**。conditional callbackは検出できない可能性がある（T-14と同じ限界）。X-7のencode失敗は12章 F-*の境界（T-07）。**source確認だけではruntimeの成立としない（U-2・U-20）** |
 
 ---
 
@@ -927,14 +1064,20 @@ pre-callback filter topologyだけでなく、Core callback**返却後**の応�
 | V-9 | **（A3追加、A4で訂正）** 現行のimage generation契約が許す出力寸法は最大3840×2160（`_ALLOWED_SIZES`）。現行コードにアップロードbodyのサイズ上限は存在せず、**`OpenAIImageGenerator`はbase64 decode後のbytesについて非空であること以外（サイズ・寸法・bit depth・metadata・エンコード方式）を検証せず、`GeneratedImage`も非空のbytesとmime形式のみを検証する**。Uploaderもbytesの非空のみ検証する。したがって、32 MiBを超える正当な画像がclient側で止められることなくpluginの413に到達しうる | `openai_image_generator.py:25-29, 222-241`、`generated_image.py:26-37`、`wordpress_media_uploader.py:78-82` |
 | V-10 | **（A4追加）** 現行`WordPressMediaUploader`の成功応答parseは、dict／`id`が正のint（boolは不可）／`source_url`・`mime_type`のキー存在かつstrまたはNone、のみを検証し、他のfieldは参照しない。したがって8.3節のcanonical payload（5 field）を変更なしで受理できる | `wordpress_media_uploader.py:245-293` |
 | V-6 | `tests/zero_diff_guard_registry.py`の`RELEASE_ORDER`は`v6.36.0`止まり。v6.37.0は新規testファイルを追加せず（既存test 1件のみ変更）、`PROTECTED_PATHS`にも触れていないため、registry追記が不要であったと**整合的に説明できる**（回帰も`[KI-36]`以外に記録なし）。ただし「意図的に未登録とする」旨の明示記述は見つからなかった。6.38と無関係（6.38は影響を受けうる点のみ26章に記録） | registry・CHANGELOG・`git diff 813ba37 5974caf`の読取り |
+| V-11 | **（A14追加、A15・A16・A18で訂正。Implementation Start Validation 2026-10-06）** WordPress **7.1.1 tag**の公開sourceの**実行順序**の確認。**内容の正本は12.1節 O-1〜O-13**（本行は確認記録のみ）。結論：A13までの前提「`rest_pre_echo_response`でHTTP statusを置換できる」は偽。status送出は`set_status()`（`:477`）が`status_header()`を呼ぶ（call-site`:1910`）。**`status_header()`の本体は、canonical source（V-16）の`functions.php:1463-1492`に存在する（A18で訂正。status line段階のfilterはX-11）**。**他version（7.1.2等）との同一性は、repo内で再現できるevidenceが無いため、Architectureの前提としない（Validation時の観測としてのみ記録）**。デプロイ先versionは未pin（U-11）、実行時は未検証 | `wordpress-develop` 7.1.1 tagの`class-wp-rest-server.php`・`rest-api.php`・`embed.php`等の取得・読取り（公開tagの行を引用） |
+| V-12 | **（A14追加）** Core media response由来のheader、`rest_send_allow_header`・`rest_send_cors_headers`、`response_to_data`の`_links`の確認。**内容の正本は12.1節 O-6・O-11、12.2節 H-1〜H-3** | 同上（`attachments-controller:614-637`、`rest-api.php:805-821・883-916`） |
+| V-13 | **（A14追加、A16で更新）** route callbackに到達しない経路、および`/wp/v2/media`のREADABLE／CREATABLE両handler（`posts-controller:73-93`）の確認。**内容の正本は12.4節 B-1〜B-9** | 同上（`server:1115-1126・1256-1270`） |
+| V-14 | **（A14追加、A16で更新）** `allow_batch`の宣言（`attachments-controller:35`、`posts-controller:48`）、batch検証（`server:1795-1808`）、batch子requestの`rest_post_dispatch`（`:1889-1896`）、内部`rest_do_request()`（`rest-api.php:603-616`）の確認。**内容の正本は12.1節 SP-1〜SP-3、12.5節 BT-1〜BT-4** | 同上 |
+| V-15 | **（A14追加）** S-1に関する7.1.1の事実：`url`引数（`attachments-controller:310`）、`create_item`の`url`分岐（`:543`）、`create_item_from_url`（`:654`、`@since 7.1.0`）。`rest_after_insert_attachment`は`:610`で発火し、その後も`wp_after_insert_post`・`wp_generate_attachment_metadata`が続く（`:612-630`、U-3）。`slug`は`prepare_item_for_database`で`post_name`へ反映される（`posts-controller:1390`。ただし最終的な`post_name`は実行時にCoreが一意化しうる、U-14）。`is_multisite()`は`MULTISITE`・`SUBDOMAIN_INSTALL`・`VHOST`・`SUNRISE`定数で判定する（`load.php`、U-15）。`WP_REST_Request::get_header`は正規化したheader名で取得する（`class-wp-rest-request.php:213`、U-9。proxy／WAFの除去は環境依存） | 同上 |
+| V-16 | **（A18追加）** canonical sourceのprovenanceと、call-site・hookの網羅確認。**内容の正本は12.1節 RD-1〜RD-7、12.3節 X-11**（本行は確認記録のみ）。(1)**provenance**：`https://github.com/WordPress/wordpress-develop.git`のtag `7.1.1`（lightweight tag）、commit `a940fbc1e63a7e24d31a28e707e545ad4873cb84`（`git ls-remote`と、公式tagアーカイブ（`codeload.github.com/WordPress/wordpress-develop/tar.gz/refs/tags/7.1.1`、sha256 `21132b657a006ea9d065d789aee98617edf342049cbeb7699f3bbfdcc775ae0f`）のtar headerのcommitが一致）。(2)**供給evidence 14ファイル**（`functions.php`・`class-wp-http-response.php`・`plugin.php`・`class-wp-hook.php`を含む）が、tagアーカイブの同名ファイルとbyte一致（sha256照合）。(3)**網羅確認**：tagアーカイブの`src/`（3793ファイル）全体を走査し、`rest_post_dispatch`の**適用（`apply_filters`）はRD-1〜RD-4の4箇所だけ**、Coreの既定**登録**は`rest-api.php:253-254`と`connectors.php:753`の3つ。`status_header`filterの**適用は`functions.php:1486`の1箇所だけで、Core既定の登録はない**。`rest_request_from_url`の**適用は`class-wp-rest-request.php:1096`の1箇所だけで、Core既定の登録はない**。(4)**evidenceの範囲**：`connectors.php`は、**canonical evidence（14ファイル）には含まれない**。**auxiliary evidence**（repo外。全tree（アーカイブ全6,090ファイル）の検索結果・manifest・`connectors.php`・provenance）が供給しており、**hash・provenance検証済み**（`connectors.php`はgit blob `7433203a…`とbyte一致）。**Review #26で、Codexが両evidence rootを読み、(3)の網羅主張をsource照合した**（Review #25の時点では、(3)はcanonical evidenceだけからは再現できなかった）。evidenceとアーカイブはrepo外にあり、repoには保存しない。**他version（7.1.2等）の同一性は前提としない**。デプロイ先versionは未pin（U-11）、**実行時は未検証** | 公式tagアーカイブの走査（read-only）、`git ls-remote`、sha256照合（2026-10-07） |
 
 ### 17.2 自己記録（historical self-recorded、repo内では再現不能・本Amendmentでは未検証）
 
 | ID | 主張 | 扱い |
 |---|---|---|
-| S-1 | 「WordPress 7.1.1公式sourceの照合（旧Phase B）で、`create_item()`が`url`指定時に`create_item_from_url()`（7.1.0新設）へ分岐することが判明した」 | **未検証として扱う**。8.1節の`url`禁止・closed allowlistは、S-1の真偽に依存しない保守的規則であり、S-1が誤りでも設計は成立する。実装前に18章でsource照合し結果をpinする |
+| S-1 | 「WordPress 7.1.1公式sourceの照合（旧Phase B）で、`create_item()`が`url`指定時に`create_item_from_url()`（7.1.0新設）へ分岐することが判明した」 | **（A14）7.1.1 tag sourceで確認された**（V-15）。ただし**デプロイ先versionが未pin（U-11）のため、デプロイ先でも成立するとは限らない**。8.1節の`url`禁止・closed allowlistは、S-1の真偽に依存しない保守的規則であり、結論は変わらない |
 | S-2 | Round 1〜13／Codex計8回レビュー／各回の指摘と是正 | historical contextとしてのみ記録（0章）。現行本文の承認根拠ではない |
-| S-3 | pre-callback 3種・post-callback 4種のfilter列挙が対象Core versionの完全な集合である | 未検証（U-1・U-2） |
+| S-3 | pre-callback 3種・post-callback 4種のfilter列挙が対象Core versionの完全な集合である | **（A14・A15）post-callback側は誤りと判明**：「4種で完全」ではない（改変点の一覧は12.3節 X-*が正本）。pre-callback側の3種は7.1.1で確認（V-11、U-1）。デプロイ先versionでの確認は未了 |
 | S-4 | 対象WordPress versionが「7.1.1」である | **pinされていない**。deploy対象の正確なversionは未確定（U-11） |
 
 ### 17.3 未確認（実装前に18章で確認・pinする）
@@ -942,7 +1085,7 @@ pre-callback filter topologyだけでなく、Core callback**返却後**の応�
 | ID | 未確認事項 |
 |---|---|
 | U-1 | pre-callback filter（`rest_pre_dispatch`／`rest_request_before_callbacks`／`rest_dispatch_request`）の発火順序・引数・短絡点の完全性 |
-| U-2 | post-callback filter（4種）の発火順序・応答改変点の完全性、Finalizer後に応答を変更できる箇所がゼロであること |
+| U-2 | **（A14・A15・A18で改訂）** 12.3節の投影後の改変点（X-1〜X-11。**X-11＝`status_header`filter**）が、対象Core versionで列挙どおりであること、およびapproved plugin setのhook登録状況（**`status_header`・`rest_request_from_url`を含む**。12.1節 RD-6）が、12.1節 P-4・12.3節 X-1・X-4・X-6・X-7・X-11の【検証】を満たすこと。**旧前提「Finalizer後に応答を変更できる箇所がゼロ」は偽と判明し撤回した（V-11）** |
 | U-3 | `rest_after_insert_attachment`の発火タイミング（Core側でこの後もmetadata処理が継続すること） |
 | U-4 | `WP_REST_Attachments_Controller::create_item`のシグネチャ・戻り値契約 |
 | U-5 | `rest_endpoints` filterによるroute callback置換が対象Coreで意図通り機能すること |
@@ -956,8 +1099,11 @@ pre-callback filter topologyだけでなく、Core callback**返却後**の応�
 | U-13 | 8.1節で「検査対象外」とした一般header（認証・`Content-Length`・`Host`・proxy由来等）が`create_item`の挙動を変えないこと。変えうるheaderが見つかった場合は8.1節を改訂する |
 | U-14 | server導出の`requested_slug`をCoreへ渡す機構（request parameterへの注入等）と、Coreがattachmentの`post_name`としてそれを尊重すること。尊重されない場合は9.2節のCONFIRM条件が常に不成立となりfail-closed |
 | U-15 | `is_multisite()`・`MULTISITE`／`SUBDOMAIN_INSTALL`定数・`$wpdb->base_prefix`・blog IDの、対象Core versionでのセマンティクスと、single-site確認として使えること（5.5節） |
-| U-18 | **（A6追加、A8で更新）** `rest_pre_echo_response`filterに渡される`WP_REST_Request`が、plugin control pathで扱ったrequestと**同一instance**であること（cloneされないこと。markerのinstance束縛の前提）、およびFinalizerが応答のdataに加えて**HTTP statusを置換できる**こと（`WP_REST_Response`の`set_status`相当が、`rest_pre_echo_response`の時点でclientへ送るstatusに反映されるか）。満たされない場合、12章のmarker束縛または応答置換が成立しないため、本書を改訂する（実装時に束縛を緩めない） |
-| U-19 | **（A8追加）** ラップした`permission_callback`と、ラップしたroute callback（`rest_endpoints`による置換）が、GCA requestのcontrol pathとして、Coreのpermission判定とcallback呼出を網羅し、Coreの認証エラー・`rest_pre_dispatch`等の短絡より後で確実に呼ばれること。**control pathに到達しないGCA requestはmarker無し＝E5になる**ため、その範囲（どのerrorがcontrol path前に終了するか）を対象Core versionで確認する（R-19） |
+| U-18 | **（A6追加、A8で更新、A14で全面改訂、A18で更新）** 12.1節 P-1・P-3・P-4・P-5（`rest_post_dispatch`での投影：同一instance、返したresponseの反映、最大priority、返却値の型）が、対象version・approved plugin setで成立すること。**（A18）これは4つのcall-site（RD-1〜RD-4）すべてについて確認する（各call-siteの同一instance・Finalizerのno-op（RD-5））**。**旧前提（`rest_pre_echo_response`でのstatus置換）は偽と判明し撤回**（V-11）。満たされない場合は、別方式を実装時に選ばず、本書を改訂する。**7.1.1 source上の成立は、実行時で未検証** |
+| U-19 | **（A8追加、A14・A15・A16で改訂）** 12.4節のB-1〜B-9の範囲（route callbackに到達しない経路と、投影の有無）が、対象versionとapproved plugin setで成立すること。**旧前提（control pathがGCA requestを網羅する）は偽と判明し撤回**（V-13）。**A15のpermission phase（PP-*）は、A16で廃止**。成立しない場合は、別方式を実装時に選ばず、本書を改訂する |
+| U-20 | **（A14追加、A18で更新）** 12.2節 H-1(b)の直接送出headerの除去が、対象のPHP／SAPIで成立すること（`header_remove`相当、`headers_list()`差分）。**投影のresponse object置換では除去されない**。**（A18）あわせて、12.3節 X-11：`header($status_header, true, $code)`（`functions.php:1490`）が、numericなstatus codeを第3引数どおりに反映すること、`status_header`filterによるstatus line文字列の書換えが実際のstatusに与える影響（対象のPHP／SAPI）、`headers_sent()`が真のときの挙動**。runtime-only |
+| U-21 | **（A14追加）** 12.5節 BT-2・BT-3（`allow_batch`が偽、置換後も偽、approved plugin setが有効化しない）が、対象versionで成立すること（7.1.1 source上は成立、V-14） |
+| U-22 | **（A15追加、A16で廃止。A17で明確化）** 旧PE-3（`is_dispatching()`によるtop-levelの識別）は廃止した。**廃止済み・non-actionable gap（欠番として記録のみ）であり、active validation inputではない**。現行の確認対象は**U-1〜U-21**である |
 | U-17 | **（A4追加）** 初回成功時にCore responseの`source_url`を検証のうえsnapshotへ保存する方式（12章）について、`source_url`がCoreによってどのように決まり（`wp_get_attachment_url`等）、対象環境のplugin（CDN／offload等）で変わりうるか。snapshotの`source_url`はreplay時にその時点の値を返す（現在のURLを再計算しない）。DBでの独立検証は6.38では行わない |
 | U-16 | **（A3追加）** 対象環境のPHP／web serverのbody関連上限（`upload_max_filesize`・`post_max_size`・`client_max_body_size`・`memory_limit`等）が、8.1節のplugin固定上限33,554,432バイトを受理できるか。環境側が小さければ環境側が先にrejectし（plugin非到達、`gca_claim_state`を欠く応答）、pluginの上限は意味を持たない。**pluginの固定上限は環境の上限を変更しない**。また、上限ちょうどのbodyを`memory_limit`内で読み取れること。**（A5）さらに、T-29のL3（上限+1バイト＝33,554,433バイトで、plugin自身の413を確認する）の前提として、下位層（WordPress／PHP／web server）のbody上限を、その33,554,433バイトのbodyよりも大きく設定でき、設定が有効であることを確認・記録する**。下位層が先にrejectする構成は、plugin 413の証明として扱わない |
 
@@ -970,6 +1116,52 @@ pre-callback filter topologyだけでなく、Core callback**返却後**の応�
 - 再試行をまたいで安定なarticle／content identityの供給元は現行Pythonに存在せず（V-7）、6.38もこれを実装しない。server側保証は供給された値に対するものにとどまる（7.7節）。
 - OS全体のクラッシュ・電源断・ストレージ障害に対するdurabilityは検証・保証しない（6.4節・T-25）。
 - N1〜N6（3章）の各非対応事項。
+- **（A14・A15・A17）** control pathの網羅範囲は12.4節（R-19）、method境界は12.1節 MO-*、投影後の作用点は12.3節、canonical保証の範囲は12.1節 CS-1、`/batch/v1`は12.5節が正本。**Review #24で独立に照合できなかったsource依存の主張は17.6節**（verifiedではなくvalidation-required）。
+
+### 17.5 Implementation Start Validation（2026-10-06）の結果と、A18現在のU-ledgerの状態
+
+**方法**：WordPress **7.1.1 tag**のsource（GitHub `wordpress-develop`）の取得・読取り（read-only）。ローカルに`php`・`mysql`・`composer`・`docker`・WordPress本体は無く、**実行時の検証は一切行っていない**。デプロイ先のWordPress versionは未pin（U-11）。**規範の前提とするのは、7.1.1 tagの引用したcall-siteだけ**で、他version（7.1.2等）との同一性は、repo内で再現できるevidenceが無いため前提としない（Validation時の観測として、7.1.1と7.1.2のREST core 4ファイルが一致したと記録されているが、前提ではない）。**「source確認」は、デプロイ先でも成立することを意味しない**。
+
+| ID | 状態 | 残る前提・次の確認 |
+|---|---|---|
+| U-1 | source確認（7.1.1。順序と短絡点は12.1節 O-4・O-5、12.4節 B-*） | デプロイ先versionでの再確認（U-11）、approved setの登録状況 |
+| U-2 | **旧前提は偽（FAIL）**→A14で12.3節 X-*として再設計。**A18でX-11（`status_header`filter）・12.1節 RD-6（`rest_request_from_url`）を追加** | topologyの実登録確認（approved set、U-10。`status_header`・`rest_request_from_url`を含む）、L3（T-35・T-38） |
+| U-3 | source確認（`:610`発火、以後`:612-630`が継続） | デプロイ先version |
+| U-4 | source確認（`create_item($request)`、`WP_REST_Response`／`WP_Error`、201＋`Location`＋直接header） | デプロイ先version |
+| U-5 | source確認（`rest_endpoints`は`get_routes`で適用、`:974`） | 実行時の置換、handler fingerprint |
+| U-6 | source確認（`_envelope`・`_embed`・`_jsonp`・`_method`はserver側、`_fields`は`rest_post_dispatch`の既定filter） | デプロイ先version |
+| U-7 | **BLOCKED**（MySQL／MariaDBなし） | 対象DBでの確認手段 |
+| U-8 | **BLOCKED**（PHP・DBなし） | 独立3接続の確立、Core `$wpdb`側の読取りSELECTの可否 |
+| U-9 | header取得はsource確認（`get_header`）。**proxy／WAFによる除去はBLOCKED** | 実環境経路での確認 |
+| U-10 | **BLOCKED**（approved plugin setが未確定） | plugin setの確定・固定 |
+| U-11 | **BLOCKED**（デプロイ先versionが不明） | version確定・pin |
+| U-12 | **BLOCKED**（実環境が必要） | `ignore_user_abort`相当の有効性 |
+| U-13 | **UNVERIFIED**（一般headerが`create_item`に与える影響を網羅的には分析していない） | source分析・実環境 |
+| U-14 | **PARTIAL**（`slug`→`post_name`への反映はsource確認。一意化による変更は実行時にのみ判明） | 実環境（T-01） |
+| U-15 | **PARTIAL**（`is_multisite()`の意味はsource確認。`$wpdb->base_prefix`・blog IDは未確認） | 残項目の確認 |
+| U-16 | **BLOCKED**（PHP／web serverの実環境が必要） | body上限・`memory_limit`の確認 |
+| U-17 | **UNVERIFIED**（`source_url`の決まり方・CDN／offload） | source分析・実環境 |
+| U-18 | **旧前提は偽（FAIL）**→A14で再設計（12.1節）。新設計は**source上成立**（7.1.1）、**実行時は未検証**。**A18で4つのcall-site（RD-1〜RD-4）へ範囲を明確化** | 実環境での確認（T-35・T-37） |
+| U-19 | **旧前提は偽（FAIL）**→A14・A16で再設計（12.4節 B-*）。**source上成立**（7.1.1）、**実行時は未検証** | デプロイ先version・approved setでの再確認（T-36） |
+| U-22 | **廃止済み（A16）・non-actionable gap**。active validation inputに含めない（現行はU-1〜U-21） | — |
+| U-20（A14新設） | **UNVERIFIED**（直接送出headerの除去可否は、PHP／SAPIでの実行が必要） | 実環境（T-35） |
+| U-21（A14新設） | source上成立（7.1.1。`allow_batch`は偽）、**実行時は未検証** | デプロイ先version・approved set（T-37） |
+| CSPRNG（18章） | **BLOCKED**（対象PHPを実行できない） | 対象PHPでの確認 |
+
+### 17.6 Review #24で独立にsource照合できなかった主張（Amendment A17）
+
+Review #24（Codex High）は、**ローカルにWordPress 7.1.1のsourceが存在せず**、ネットワークも使えなかったため、下表の主張を**独立にsource照合できなかった**。**A17は、source evidenceの追加・取得・repo保存を行わない**（A17の目的は内部契約の整合性修正に限る）。したがって、下表は**verifiedに格上げしない**。**architecture assumption／validation-required**として扱い、**Implementation Start Validation（18章）に残す**。V-11〜V-15の「source確認」は、2026-10-06のValidation時の観測の記録であり、**repo内に再現可能なevidenceを保存していない**（17.5節、N-01）。成立しない場合は、実装時に別方式を選ばず、本書を改訂する（U-18・U-19の既存の規則）。
+
+| 主張（正本の位置） | 区分 | 確認の位置 |
+|---|---|---|
+| O-1〜O-13の呼び出し順序（12.1節） | architecture assumption／validation-required | 18章、U-1・U-2・U-18 |
+| P-5 request-instance identity（12.1節） | 同上 | 18章、U-18 |
+| B-1〜B-9のrouting／authentication／validationの順序（GET／HEAD／OPTIONS／method overrideの扱いを含む。12.4節、12.1節 MO-1〜MO-4） | 同上 | 18章、U-19、T-17・T-36 |
+| SP-3の内部`rest_do_request()`の挙動（12.1節） | 同上 | 18章、T-37 |
+| BT-2・BT-4の`/batch/v1`と`allow_batch=false`（12.5節） | 同上 | 18章、U-21、T-37 |
+| `status_header()`のcall-site（`:1910`。**A18：本体は`functions.php:1463-1492`にあり、source上確認済み**。status line段階のfilterはX-11） | 同上（本体のsource確認はV-16。**実行時のstatus line・numeric statusの扱いはruntime-only**） | 18章、V-11・V-16、U-20 |
+
+**（A18）Review #25の結果**：Review #25（Codex High）は、canonical source（V-16）を読み、上表のsource上の事実を**確認した**（`status_header()`の本体は上表のとおり訂正）。**確認はsource上の事実に限り、runtime（実環境）の項目は未検証のまま**であり、Implementation Start Validationのruntime項目をPASSにしない。デプロイ先versionでの再照合は未了（U-11）。
 
 ---
 
@@ -980,11 +1172,15 @@ pre-callback filter topologyだけでなく、Core callback**返却後**の応�
 **本章の範囲（Amendment A6で明確化）**：本章は、**実装の開始前に確認できる**architecture・environment・source（WordPress Core／PHP／MySQL）の前提のみを列挙する。**実装が存在しなければ確認できない適合検証**（例：実装されたkey導出がidentity contract（7.4節）と一致することのL1 golden-vector検証）は、本章に含めず、**20章の実装フェーズのgate**で扱う（A5までは本章に含まれており、実装開始のgateが循環していた。A6で20章へ移した）。
 
 - [ ] ★ 対象WordPress Core versionの確定とpin（U-11）
-- [ ] ★ S-1（`create_item_from_url()`分岐）のsource照合（U-4関連。誤りでも8.1節は有効だが、事実関係をledgerへ反映する）
-- [ ] pre-callback filter 3種の発火順序・引数・タイミング、および短絡点の完全性（U-1）
-- [ ] post-callback filter 4種の発火順序・引数・タイミング、および応答改変点の完全性（U-2）
+**（Amendment A14〜A17）Implementation Start Validationの実施結果（2026-10-06）は17.5節。結果：U-18・U-2・U-19の旧前提が偽（FAIL）と判明し、12章をA14で再設計し、A15〜A17で修正した（現行はA17。確認対象はU-1〜U-21で、U-22は廃止済み）。Review #24で独立に照合できなかったsource依存の主張（17.6節）も本チェックリストに残る。本チェックリストの項目は、すべて未完了（`[ ]`）のまま、デプロイ先versionでの確認を要する（source確認は、デプロイ先での成立を意味しない）。**
+
+- [ ] ★ S-1（`create_item_from_url()`分岐）のsource照合（U-4関連。誤りでも8.1節は有効。**7.1.1 sourceで確認済み（V-15）。デプロイ先versionで再確認する**）
+- [ ] pre-callback filter 3種の発火順序・引数・タイミング、および短絡点の完全性（U-1。12.1節 O-4・O-5、12.4節 B-*。7.1.1 sourceで確認済み、デプロイ先versionで再確認する）
+- [ ] 投影後の改変点の完全性とapproved plugin setのhook登録状況（U-2。12.3節 X-*（**X-11 `status_header`を含む**）、12.1節 P-4・RD-6）
 - [ ] `rest_after_insert_attachment`の発火タイミング（U-3）
-- [ ] `rest_pre_echo_response`以降（Core側がJSON encode／echoのみで完結すること）に応答を変更可能な点が、対象Core versionのsourceと承認済みplugin setの登録状況に存在しないこと、および`rest_pre_echo_response`に渡されるrequestがroute callbackのrequestと**同一instance**であること、および`rest_pre_echo_response`の時点でのHTTP status置換がclientへ送られるstatusに反映されること（U-2・U-18。**source・登録状況からの実装前の確認**。Finalizerを登録した実機での確認は、実装後のT-16・T-34のL3＝20章）
+- [ ] **投影位置と投影eligibility（A14・A15・A16）**：12.1節 P-1〜P-5の前提（U-18）。**source・登録状況からの実装前の確認**。実機での確認は、実装後のT-35・T-37のL3＝20章。**旧項目（`rest_pre_echo_response`でのstatus置換）は偽と判明し撤回**
+- [ ] ★★★★★（A14）Core media response由来headerの除去（12.2節 H-1(b)、U-20）
+- [ ] ★★★★★（A14）`/batch/v1`の非到達（12.5節 BT-2・BT-3、U-21）
 - [ ] `WP_REST_Attachments_Controller::create_item`のシグネチャ・戻り値契約（U-4）
 - [ ] `rest_endpoints` filterによるroute callback置換（U-5）
 - [ ] `_envelope`／`_embed`／`_fields`等の処理経路（U-6）
@@ -997,7 +1193,9 @@ pre-callback filter topologyだけでなく、Core callback**返却後**の応�
 - [ ] ★★（A2）5.5節single-site確認の関数・定数のセマンティクス（U-15）
 - [ ] ★★（A2）`random_bytes(32)`相当のCSPRNGが対象PHP環境で利用可能であること（7.8節）
 - [ ] ★★★（A3）8.1節body size contractの環境前提（U-16）：対象のPHP／web server上限と`memory_limit`が、固定上限33,554,432バイトを扱えること。**上限値そのものは変更せず、環境側の制約が見つかった場合は本書を改訂する**（実装時に上限を変更しない）。**（A5）T-29のL3の前提条件として、対象環境の下位層（WordPress／PHP／web server）のbody上限を33,554,433バイトより大きく設定できること、およびその設定が有効であること（pluginが無い状態でも、そのサイズのbodyが下位層でrejectされず、WordPress標準の経路へ到達すること）のevidenceを得る**（実装前に確認できる環境前提。T-29のL3実施自体は20章の実装フェーズ）。得られない場合、plugin 413のL3 evidenceは不成立として扱う
-- [ ] ★★★★★（A8）plugin control path（ラップした`permission_callback`とroute callback）の網羅性と、control pathに到達しないGCA requestの範囲（U-19）、およびmarker束縛の前提（`rest_pre_echo_response`のrequestが同一instanceであること、status置換の反映、U-18）。**source・登録状況からの実装前の確認**
+- [ ] ★★★★★（A8、A14・A16で改訂）12.4節 B-1〜B-9（U-19）。**source・登録状況からの実装前の確認。旧前提（control pathがGCA requestを網羅する）は偽と判明し撤回**
+- [ ] ★★★★★（A17）**Review #24で独立に照合できなかった主張（17.6節）**：O-1〜O-13、P-5、B-1〜B-9（GET／HEAD／OPTIONS／method overrideの扱い、12.1節 MO-*が前提とするO-2のmethod変更を含む）、SP-3、BT-2・BT-4（`allow_batch=false`）、`status_header()`のcall-siteを、対象versionのsourceで独立に照合する。**A17はsource evidenceを追加していない**ため、verifiedではなくvalidation-requiredとして残る（**A18：canonical sourceでの照合はReview #25とV-16で行われた。デプロイ先versionでの再照合と、実行時の確認は未了のまま残る**）
+- [ ] ★★★★★（A18）**`rest_post_dispatch`の全call-site（12.1節 RD-1〜RD-4）、`status_header`filter（12.3節 X-11）、`rest_request_from_url`（RD-6）**：approved plugin set・対象versionで、(a)4つのcall-site以外が無いこと（RD-7）、(b)`status_header`・`rest_request_from_url`のcallback登録の有無・priority・callback（登録のあるplugin・確認不能はunsupported topology）、(c)各call-siteのrequestの同一instance・Finalizerのno-op（RD-5）、(d)実行時のstatus code・status lineの扱い（U-20）を確認する。**source確認だけでruntimeのPASSとしない**
 - [ ] ★★★★（A4）`source_url`の決まり方とsnapshot保存・replayの整合（U-17）：初回成功時のCore responseの`source_url`が、対象環境で安定した値であること（CDN／offload等のpluginの影響を含む）
 
 ---
@@ -1062,7 +1260,33 @@ pre-callback filter topologyだけでなく、Core callback**返却後**の応�
 - **Review #20（Amendment A12テキスト、`codex-readonly-review` wrapper経由、Codex High）：NOT APPROVED（Blocking 0／Major 1／Minor 1／Suggestion 0）。** Review #19のM1＝PARTIALLY CLOSED（F-1〜F-6の分類は完全・一元化、C11・T-07・T-22・両Roadmapは参照のみになった）。要旨（historical record、出力自体はrepo内に保存されていない）：
   - M1：26章のR-10が「claim後の失敗は一律409 `processing`へ正規化」と広く書いたままで、8.3節の正本matrix（claim後の503 `unknown`／`confirmed`を含む）と矛盾し、12章が応答内容を未定義とするFinalizerの適用失敗にも409を割り当てうる。以前に閉じた「claim後はすべて409」の再発 → A13でR-10を、8.3節の正本matrixへの参照のみに訂正
   - Minor：26章の見出しが「Amendment A11時点」のまま → A13で更新
-- **Review #21**：Amendment A13適用後の本文に対する独立アーキテクチャレビューは**未実施**。
+- **Review #21（Amendment A13テキスト、`codex-readonly-review` wrapper経由、Codex High）：APPROVED（Blocking／Major／Minor／Suggestion＝0）。** Review #20のM1・Minor＝CLOSED。要旨（historical record、出力自体はrepo内に保存されていない）：R-10が8.3節の正本matrixへの参照のみになり、26章の見出しがA13になった。claim後を409へ一般化する記述は規範部分に残っていない。**このAPPROVEDは、設計文書の内部整合性の判定であり、WordPress・PHP・MySQLの未検証前提（U-1〜U-19）を確認済みとしたものではない**。commit `2513ae5`でdocs-only checkpointとして確定した。
+- **Implementation Start Validation（2026-10-06）**：18章に従い、WordPress 7.1.1 tag sourceをread-onlyで確認した（実行時の検証は無し）。**設計前提の誤りを3件検出**：U-18（status置換）・U-2（Finalizer後の改変点ゼロ）・U-19（control pathの網羅）がいずれも偽（V-11〜V-13、17.5節）。あわせて、Core media response由来headerの残存、`permission_callback`の複数回呼出、`/batch/v1`の未整理を検出した。**Implementation Start Readiness＝NOT READY、Architecture Amendment必要＝YES** → **A14**で12章を再設計。
+- **Review #22（Amendment A14テキスト、`codex-readonly-review` wrapper経由、Codex High）：NOT APPROVED（Blocking 1／Major 3／Minor 2／Suggestion 0）。** 取得済みの7.1.1 sourceを読み、実行順序O-1〜O-13を実質的に検証した。U-18＝解消（設計上）、U-2・U-19＝部分的に解消。要旨（historical record、出力自体はrepo内に保存されていない）：
+  - B1：B-5・B-6・B-7では、`rest_send_allow_header`が本pluginのラップした`permission_callback`を**初めて**呼ぶ（再呼出ではない）ため、M-5（再呼出でmarkerを書かない）では、E3等のmarkerが設定されうる → A15で、permission phase（12.4節 PP-1〜PP-6）を定義
+  - M1：8.3節・T-22の閉集合と、X-1・X-8・B-1の非canonical応答の許容が矛盾 → A15で、CS-1（12.1節）に範囲を限定
+  - M2：batchのsub-requestが`/wp/v2/media`＋`X-GCA-` headerのままFinalizerの対象になる → A15で、投影eligibility（P-2、PE-3の`is_dispatching()`）を定義
+  - M3：12章の契約が8.3・15.2・25・26・変更ログで再記述されている（単一正本の違反）→ A15で、IDによる参照のみへ整理
+  - N1：`status_header()`の行番号の誤り／N2：`rest_envelope_response`が改変点の一覧に無い → A15で訂正
+- **Review #23（Amendment A15テキスト、`codex-readonly-review` wrapper経由、Codex High）：NOT APPROVED（Blocking 1／Major 4／Minor 1／Suggestion 0）。** Review #22の closure：M2・N1・N2＝CLOSED、B1・M1＝PARTIALLY CLOSED、M3＝OPEN。要旨（historical record、出力自体はrepo内に保存されていない）：
+  - B-01：A15のpermission phase（arm／consume／disarm）は、filter chainの途中の値とCoreが判定する最終値の差、armの間の別callbackによる呼出、例外時のdisarm漏れにより、primary permission評価を確実に識別できない → A16で、`permission_callback`をmarkerから完全に切り離し、PPを廃止
+  - M-01：`is_dispatching()`はtop-level originを証明せず、内部`rest_do_request()`はcontrol pathを実行しながら`rest_post_dispatch`を通らない → A16で、side-effect safety（SP-1）と投影を分離し、PE-3（top-level識別）・U-22を廃止
+  - M-02：`/wp/v2/media`のREADABLE handlerにGET／HEAD／overrideが一致する経路がB-*にない → A16で、B-4を改訂、PE-3＝effective method POSTへ
+  - M-03：8.3節のexact-body・T-30の閉集合が、CS-1に限定されていない → A16で、CS-1へ限定
+  - M-04：12章以外に契約の再記述が残る → A16で、12章の識別子による参照のみへ整理
+  - N-01：`status_header()`の関数本体と7.1.2同一性は、再現可能なevidenceが無いのに前提としている → A16で、前提から外した
+- **Review #24（Amendment A16テキスト、`codex-readonly-review` wrapper経由、Codex High）：NOT APPROVED（Blocking 0／Major 2／Minor 1／Suggestion 0）。** Review #23のclosure判定：B-01・M-01・M-03・N-01＝CLOSED、M-02・M-04＝PARTIALLY CLOSED。要旨（historical record、出力自体はrepo内に保存されていない）。**Codexはローカルに7.1.1 sourceを持たず、O-1〜O-13・P-5・B-1〜B-9・SP-3・BT-2／BT-4・`status_header()`のcall-siteを独立に照合できなかった**（17.6節）：
+  - M-A16-01：method overrideの契約が内部矛盾。8.1節・T-17は「override requestはE1／400」、B-4・T-36は「POSTからGET等へのoverrideはwrapped POST callbackと投影を迂回しCore Native」と定めており、必須テストの期待値が両立せず、wire contractを実装できない → A17で、effective method基準（12.1節 MO-1〜MO-4）に統一
+  - M-A16-02：Review #23 M-04が未解消。12章が正本と定めるmarker・control path・projection・batch／internal dispatchの結果を、T-34・T-36・T-37が再記述している → A17で、テスト節を「どのcontract IDを、どのscenarioで検証するか」のみにし、期待値・状態遷移・response semanticsは12章のID参照のみへ整理
+  - Minor N-A16-01：A16の記録が一部未同期（D-17がU-1〜U-22のまま、17.5節の見出しと18章の注記がA14／A15表記のまま）→ A17で同期
+- **Review #25（Amendment A17テキスト、`codex-readonly-review` wrapper経由、Codex High。canonical WordPress 7.1.1 source evidenceをread-onlyで照合）：NOT APPROVED（Blocking 0／Major 2／Minor 1／Suggestion 0）。** Review #24のclosure判定：M-A16-01・M-A16-02・N-A16-01＝CLOSED。Codexはevidence directoryを読み、14ファイルが`SHA256SUMS`と一致したと報告した。要旨（historical record、出力自体はrepo内に保存されていない）：
+  - M-25-01：設計が、Coreの`rest_post_dispatch`のcall-siteをすべて扱っていない。12章はtop-levelとbatch子を扱うが、`embed_links()`（server:824）とREST preload（rest-api.php:3033）を扱わない。stockのrequestはGET／OPTIONSでeligibleでないが、globalなFinalizerは実行され、approved hookがrequest objectに影響しうる → A18で、4つのcall-siteを12.1節 RD-1〜RD-7に分類し、Finalizerの安全なno-opと、request-affecting hookのtopology検証を規定
+  - M-25-02：post-projectionのtopologyと検証台帳が、供給されたsourceと食い違う。`status_header()`の本体は`functions.php:1463-1492`に存在し、header送出前の`status_header`filterを含む。X-*・U-2・V-11・T-38・topology検査に、このfilterが無い → A18で、本体の存在へ訂正し、12.3節 X-11・U-2・U-20・V-11・V-16・T-38・18章を同期
+  - Minor N-25-01：T-17／T-36が、method／overrideのmatrixを、内部`rest_do_request()`・batch子のdispatchと掛け合わせていない → A18で、T-37にdispatch文脈の変種（C1〜C5）を追加
+- **Review #26（Amendment A18テキスト、`codex-readonly-review` wrapper経由、Codex High。canonical・auxiliaryのWordPress 7.1.1 source evidenceをread-onlyで照合）：APPROVED（Blocking 0／Major 0／Minor 2／Suggestion 0）。** Review #25のM-25-01・M-25-02・N-25-01＝CLOSED、Review #24のclosureにregressionなし。Codexは両evidence rootを読み、canonical 14／14・auxiliary 10／10のファイルが各`SHA256SUMS`と一致したと報告した。要旨（historical record、出力自体はrepo内に保存されていない）：
+  - 新規のBlocking／Majorはなし。runtime（デプロイ先version・approved plugin topology・実行時のinstance・PHP／SAPI・L2／L3等）は、source確認だけではPASSにしない（17.6節）
+  - Minor（文書の同期のみ。契約は変えない）：(1)V-16が「`connectors.php`は供給evidenceに含まれない」とのみ書き、canonicalとauxiliaryの区別が無い、(2)U-ledgerの見出しが「A17現在」のまま、およびMVP Roadmapのcurrent statusの日付が2026-10-06のまま → **Review #26 APPROVED後のdocs sync**で、(1)(2)を同期（契約・ID・scope・テスト・台帳の内容は変更していない。24.18節の補記）
+  - **このAPPROVEDは、設計文書の内部整合性とsource上の事実の判定であり、Implementation Start Validationのruntime項目を確認済みとするものではない**。Human Gate（21章）の承認、commit、pushは別途要する
 
 ---
 
@@ -1078,7 +1302,7 @@ Architecture Gate（実装開始前）：
 - [ ] **Logical identity contract（7.4節）のL1 golden-vector実装適合（A6で18章から移動）**：実装されたserver-side key導出が、identity contractと**一字一句一致**することを、L1 golden vector（Python参照実装）で確認する。対象は、`identity_schema_version`定数、`article_identity`／`media_role`／`content_revision`の形式検証、LP encoding、`idempotency_key`導出、`requested_slug`（`"gca-media-v1-" + idempotency_key`、64桁hex全体、切り詰めなし）、およびfail-closed条件。**実装が存在して初めて確認できるため、実装開始前のgate（18章）には含めない**（T-21）
 - [ ] L1 Static／Contract E2E（Python）をPASSさせ、`tests/zero_diff_guard_registry.py`へ自己登録する（6.37.0が`RELEASE_ORDER`未登録である点の整理を含む。26章）
 - [ ] L2 PHP unit結果を、PHP実行可能な環境で取得し記録する
-- [ ] L3 Staging fault matrix（15章でmandatoryと定義された全validation scenario（現行版ではT-01〜T-34。件数・範囲は15章が正本）のL3対象。**T-25のDB restart durability検証を含む**）を実環境で実施し、証跡を記録する。**L2／L3のevidenceが得られない場合、6.38は「Foundation実装済み・実環境検証待ち（production activation不可）」として完了を限定的に宣言し、完了とは主張しない**
+- [ ] L3 Staging fault matrix（15章でmandatoryと定義された全validation scenario（現行版ではT-01〜T-38。件数・範囲は15章が正本）のL3対象。**T-25のDB restart durability検証を含む**）を実環境で実施し、証跡を記録する。**L2／L3のevidenceが得られない場合、6.38は「Foundation実装済み・実環境検証待ち（production activation不可）」として完了を限定的に宣言し、完了とは主張しない**
 - [ ] Python側（`src/`・`main.py`・`scripts/`）の無改修をZero-Diffで確認する
 - [ ] 非GCAリクエストのZero-Diff（T-20）を確認する
 - [ ] Formal Regression（既存Inventory）に回帰がないこと
@@ -1151,6 +1375,7 @@ markerはclaim行と同時にrollbackされるため検出保証にならない�
 | `gca_claim_state`を欠く応答、transport error・timeout | この requestの結果が不明 | **消費済みの可能性があるものとして扱う**。消費有無は示されない（8.3節 契約#4）。Finalizerの適用runtime failureの保証境界は12章に従う（本行では定義しない） |
 
 - 注意：現行Python clientは409を`REQUEST_REJECTED`（4xx）、413を`PAYLOAD_TOO_LARGE`、503を`SERVER_ERROR`（5xx）に分類する。HTTP statusだけでは消費有無を判定できず、`gca_claim_state`も**この requestが確立・観測した事実の診断にとどまり、retry authorizationではない**（8.3節 原則(2)）。この分類・`gca_claim_state`とHRR判定の写像、およびretryの可否判断は**Integration Releaseの責務**（6.38では実装しない）。
+- **（A14・A15）canonical保証の範囲外の応答**（12.1節 CS-1）の扱いは12.3節 X-1に従う（成功として扱わない）。認証失敗・Core引数検証の失敗がE5になりうる点は12.4節・R-19。
 - 6.38時点でGCA-taggedトラフィックは存在しないため、server側の`PROCESSING`がPython HRRと食い違って見える状況は本番では発生しない。
 
 ---
@@ -1308,6 +1533,72 @@ A11の骨格（12章がFinalizerの適用runtime failureの唯一の正本、T-0
 | M1 | 26章のR-10が「claim後の失敗を一律409 `processing`へ正規化する」と広く書かれ、8.3節の正本matrix（claim後の503 `unknown`／`confirmed`を含む）と矛盾。12章が応答内容を未定義とするFinalizerの適用失敗にも409を割り当てうる（以前に閉じた「claim後はすべて409」の再発） | R-10を「claim確立後のHTTP outcomeは8.3節の正本matrixに従う」という参照のみに訂正。Finalizerの適用runtime failureは12章の保証境界に従う（26章）。**全文の確認**：「すべて409」「常に409」「一律409」等の一般化、claim後を409へ一般化する同義表現、古い`Amendment A*時点`の版表記、8.3節・12章と競合する再記述をgrepで確認し、規範部分に残っていたのはR-10と26章の見出しのみで、他は履歴（変更ログ）または旧一般化を否定する記述（D-4・8.3節契約#1など）であることを確認した |
 | Minor | 26章の見出しが「Amendment A11時点」のまま | 現行Amendment（A13）へ更新（26章） |
 
+### 24.14 Amendment A14 Change Log（2026-10-06、Implementation Start Validationで判明した設計前提の誤りの訂正）
+
+**契機**：A13（Review #21 APPROVED、commit `2513ae5`）に対し、18章のImplementation Start Validationを7.1.1 tag sourceで実施し、**承認済みArchitectureの前提誤り**（U-18・U-2・U-19）を検出した（19章）。**Release scope・MVP COMPLETEは変更していない**。
+
+| 項目 | A13の問題 | A14の修正（節） |
+|---|---|---|
+| 1. Final projection（U-18） | 投影を`rest_pre_echo_response`に置く前提が偽 | 12.1節（O-*・P-1〜P-5）へ再設計。用語集・5.3節・10.4節・T-16・D-18・D-20・R-17・R-18を同期 |
+| 2. Header契約 | Core media response由来headerの扱いが未定義 | 12.2節（H-1〜H-3）。U-20、T-35 |
+| 3. 投影後の改変点（U-2） | 「Finalizer後に改変点ゼロ」が偽 | 12.3節（X-1〜X-10）。S-3を訂正。T-38 |
+| 4. Marker／control path（U-19） | control pathが全経路を網羅するという前提が偽 | 12.4節（B-1〜B-8）。M-5。T-17・T-34(c8)・T-36 |
+| 5. Batch | 設計に無い | 12.5節（BT-1〜BT-4）。U-21 |
+| 6. Ledger／Checklist | U-18・U-2・U-19が旧前提のまま | V-11〜V-15、S-1・S-3、U-2・U-18・U-19の改訂、U-20・U-21、17.5節、18章の同期 |
+| 7. Single-source | — | 12章を正本とし、他章は識別子で参照（A15でさらに整理） |
+
+### 24.15 Amendment A15 Change Log（2026-10-06、Review #22のB1／M1〜M3／N1・N2への修正）
+
+**契機**：A14テキストに対するReview #22（NOT APPROVED、Blocking 1／Major 3／Minor 2）。A14を基礎とし、新しい設計判断・scope変更は行っていない。**契約の内容は12章が正本であり、本ログは、何を変更したかを識別子で示すのみ**。
+
+| Finding | 修正（正本の位置） |
+|---|---|
+| B1 | permission_callbackのphase：**PP-1〜PP-6**を新設（12.4節）**（A16で廃止。24.16節）**。M-5を、PP-*への参照へ整理（12章 marker確定規則）。**B-1〜B-8の表**に、permission_callbackの呼出（primary／passive）の列を追加。T-36を改訂（B-5〜B-7がpassive呼出でE3等へ変化しないこと）。U-19を改訂 |
+| M1 | **CS-1**を新設（12.1節）。8.3節の応答表・canonical error表・T-22・T-34の閉集合／exact-keyの範囲をCS-1に同期 |
+| M2 | **投影eligibility（P-2、PE-1〜PE-3）**を新設（12.1節）。BT-1・BT-4を改訂（12.5節）。**U-22**を新設。T-37を新設 |
+| M3 | 8.3節・5.3節・8章・8.1節・用語集・17章（V-11〜V-14、S-3、U-*）・18章・19章・24.14・25章・26章・0章・Roadmapの再記述を、12章の識別子による参照のみへ整理 |
+| N1 | `set_status()`（`:477`）と`status_header()`の呼出（`:1910`）を区別（12.1節 O-8・P-1、V-11） |
+| N2 | `rest_envelope_response`（`:861-885`）を12.3節 X-1へ追加 |
+| 台帳・テスト | T-35〜T-38（旧T-37→T-38へ改番）、U-22の新設（A16で廃止）、20章・両Roadmapの範囲更新 |
+
+### 24.16 Amendment A16 Change Log（2026-10-06、Review #23のB-01／M-01〜M-04／N-01への修正）
+
+**契機**：A15テキストに対するReview #23（NOT APPROVED、Blocking 1／Major 4／Minor 1）。A15を基礎とし、新しい設計判断・scope変更は行っていない（ただし、B-01・M-01の解消のために、**permission_callbackを置換しない**こと、**GCA capability判定をroute callbackの先頭へ置く**こと、**PE-3をeffective method POSTへ変更し、top-level識別を廃止する**ことを、設計の簡素化として採用した）。**契約の内容は12章が正本であり、本ログは変更点を識別子で示すのみ**。
+
+| Finding | 修正（正本の位置） |
+|---|---|
+| B-01 | **PP-1〜PP-6（permission phase）を廃止**。`permission_callback`は置換せずCoreのまま、markerに関与しない。control pathは**route callbackだけ**（12章、12.4節）。**GCA capability判定をroute callbackの先頭へ**（E3は、Core権限を通過したuserのGCA capability不足に限定。Coreの権限拒否はB-9でE5）。B-1〜B-9・T-36・T-34(c8)の削除・V-13・U-19を同期 |
+| M-01 | **SP-1〜SP-3**を新設（12.1節）：idempotency safetyはdispatch文脈に依存せずroute callbackが適用、投影はHTTP正準化専用、投影が行われない文脈（内部`rest_do_request()`）でも安全性は保証。**PE-3（`is_dispatching()`によるtop-level識別）とU-22を廃止**。BT-1・BT-4を改訂（12.5節）。T-37を改訂 |
+| M-02 | **PE-3＝effective methodがPOST**（12.1節 P-2）。B-4を改訂：READABLE handlerへ一致するGET／HEAD／overrideの経路を追加し、投影対象外とした（12.4節）。T-36 |
+| M-03 | 8.3節の応答の形の冒頭に適用範囲（CS-1）を追加。T-30の対象をCS-1の範囲に限定。T-22・T-34も同様 |
+| M-04 | 8.3節・10.4節・11.2節・D-18・D-20・D-22・T-16・T-30・T-34・T-36・T-37の再記述を、12章への参照へ整理 |
+| N-01 | `status_header()`の関数本体と、7.1.2との同一性を、Architectureの前提から外した（V-11、12.1節、17.5節）。規範の前提は、7.1.1 tagの引用したcall-siteだけ |
+| 台帳 | U-19の改訂、U-22の廃止、T-36・T-37の改訂、17.5節・18章・両Roadmap（U-1〜U-21、T-01〜T-38）の同期 |
+
+### 24.17 Amendment A17 Change Log（2026-10-07、Review #24のM-A16-01／M-A16-02／N-A16-01への修正）
+
+**契機**：A16テキストに対するReview #24（NOT APPROVED、Blocking 0／Major 2／Minor 1）。A16を基礎とし、**対象はReview #24の3 Findingだけ**。scope変更・新しいテスト（T-ID）の追加・WordPress source evidenceの追加は行っていない。method境界の確定内容は、A17の作業指示で定めたものである。**契約の内容は12章が正本であり、本ログは変更点を識別子で示すのみ**。
+
+| Finding | 修正（正本の位置） |
+|---|---|
+| M-A16-01 | **MO-1〜MO-4を12.1節に新設**（effective method基準・effective non-POSTはCore Native・effective POSTでのoverride controlはE1・一般化の禁止）。**8.1節の表（HTTP method行・method override control行・末尾の注）、12.1節 P-2のPE-3・CS-1(c)、12.4節 B-4、T-17・T-36**を、MO-*への参照へ同期。「method override requestは常にE1」という一般化を削除 |
+| M-A16-02 | **T-34・T-36・T-37**から、marker・E-code・projection・batch／internal dispatchの期待結果の再記述を削除し、oracleを12章の識別子のみとした。**同種の再記述を再点検し、T-16・T-22(4)(10)(11)・8.3節のmarker欠落行・10.3節・10.4節 手順5・D-4・R-18・R-19**も、12章の識別子による参照へ整理した（8.3節の応答表・canonical error表は、E1〜E9の内容の正本として維持） |
+| N-A16-01 | **D-17**をU-1〜U-21へ同期（U-22は廃止済み・non-actionable gapで、active validation inputに含めない。17章 U-22・17.5節の表にも明記）。**17.5節の見出し**、**18章の注記**、**26章の見出し・R-5**をA17現在へ同期。**Roadmap・status・change log**のAmendment番号をA17へ同期（過去のA14／A15の記述は、historical recordとして残し、current statusと区別した） |
+| source依存の主張 | **17.6節を新設**：Review #24で独立に照合できなかった主張を、verifiedへ格上げせず、architecture assumption／validation-requiredとして明示。**18章のチェックリストに項目を追加**し、Implementation Start Validation gateに残した |
+
+### 24.18 Amendment A18 Change Log（2026-10-07、Review #25のM-25-01／M-25-02／N-25-01への修正）
+
+**契機**：A17テキストに対するReview #25（NOT APPROVED、Blocking 0／Major 2／Minor 1）。**対象はReview #25の3 Findingだけ**。scope変更・新しいT-IDの追加・Review #25でCLOSEDとなったA17項目（M-A16-01・M-A16-02・N-A16-01）の再変更は行っていない。**契約の内容は12章が正本であり、本ログは変更点を識別子で示すのみ**。
+
+| Finding | 修正（正本の位置） |
+|---|---|
+| M-25-01 | **12.1節 RD-1〜RD-7を新設**：`rest_post_dispatch`の4つのcall-site（top-level／embed／batch子／preload）の分類、全call-site共通のFinalizerの安全なno-op（RD-5。eligibleでない・第3引数が`WP_REST_Request`でないときは`$result`をそのまま返す）、request-affecting hook（`rest_request_from_url`等）のtopology検証とunsupported topology（RD-6）、call-site網羅の根拠と改訂条件（RD-7）。**P-4・P-5・CS-1(c)・SP-3・BT-4・O-6・5.3節#4・12.3節の注・U-18・T-37**を同期 |
+| M-25-02 | **`status_header()`の本体が`functions.php:1463-1492`に存在する**ことへ訂正（12.1節の根拠・O-8・V-11・17.6節）。**12.3節 X-11を新設**（`status_header`filter、numeric statusとstatus line文字列の区別、topology検証、unsupported topology＝Epoch invalid、wire上のstatus lineは保証外、runtime-only）。**5.3節#5・X-2・U-2・U-20・T-35・T-38・18章**を同期。Core既定の`rest_post_dispatch`callbackに`connectors.php:753`があることを追記（O-6・P-3） |
+| N-25-01 | **T-37にdispatch文脈の変種（C1〜C5：top-level HTTP／内部`rest_do_request()`／batch子／embed／preload）**を追加。method／override controlを、文脈ごとのsource上の扱い（`serve_request()`だけがoverrideを解釈する）に合わせて与える。oracleはMO-*・SP-*・BT-*・CS-1・RD-*のID参照のみ |
+| 台帳 | **V-16を新設**（provenance、evidence 14ファイルとtagアーカイブのbyte一致、`src/`全体の走査によるcall-site・hookの網羅確認とその限界）。17.6節に、Review #25の結果とruntime未検証の明記を追加。D-30・R-5・R-21・26章の見出しを同期。**U-1〜U-21（U-22は廃止済み）・T-01〜T-38の範囲は変更していない** |
+
+**補記（Review #26 APPROVED後のdocs sync。2026-10-07）**：Review #26（APPROVED、Minor 2）への対応は**文書の同期のみ**で、**契約・ID・scope・テスト・台帳の内容は変更していない**。(1)**V-16(4)**を、canonical evidence（14ファイル）に`connectors.php`が含まれないこと、auxiliary evidenceが供給して検証済みであること、Review #26でCodexが両evidence rootをreadして(3)をsource照合したこと、に同期。(2)**現在地表記**：17.5節の見出しを「A18現在」へ、MVP Roadmapのcurrent statusの日付を2026-10-07へ同期。0章のStatus・Review表・19章・両Roadmapのstatusを「Review #26 APPROVED」へ同期（履歴としてのA14〜A17の記述は維持）。**このAPPROVEDは、設計文書の内部整合性とsource上の事実の判定であり、runtime項目は未検証**（17.6節）。
+
 ---
 
 ## 25. 設計判断・検証の対応表（Decision／Validation Index）
@@ -1319,7 +1610,7 @@ A11の骨格（12章がFinalizerの適用runtime failureの唯一の正本、T-0
 | D-1 | logical identityは`article_identity`＋`media_role`＋`content_revision`＋schema version。image bytes・`attempt_ordinal`・`root_run_id`をkeyにしない | 7.4・7.6節 | T-10・T-11・T-21 |
 | D-2 | stable identity sourceはIntegration Releaseの必須precondition。6.38は実装しない | 7.5・7.7節、V-7 | Integration Releaseで検証（R-1） |
 | D-3 | 状態は`PROCESSING`／`CONFIRMED`の2つ。`INSERT`のwinnerのみがCoreを呼ぶ。stale `PROCESSING`の自動reclaimを禁止 | 10.1〜10.5節 | T-01〜T-08・T-12 |
-| D-4 | claim後の失敗は`none`へ戻らない。**応答は8.3節の応答表・canonical error表（E1〜E9）が正本**：`PROCESSING`系は409 `processing`（E7）、ACK曖昧・結果不確定は503 `unknown`（E5・E6）、`E9` markerによる`CONFIRMED` duplicateのVerification不能は503 `confirmed`（E9）、marker欠落・不正は503 `unknown`（E5）、confirmed inconsistencyは409 `confirmed_inconsistent`（E8）。Finalizerの適用runtime failureの保証境界は12章に従う。「claim後の失敗はすべて409」とは規定しない | 8.3・10.2・10.6節 | T-22・T-27・T-28・T-31 |
+| D-4 | claim後の失敗は`none`へ戻らない。**応答は8.3節の応答表・canonical error表（E1〜E9）が正本**であり、「claim後の失敗はすべて409」とは規定しない。marker・Finalizerの適用runtime failureの契約は12章に従う | 8.3・10.2・10.6節、12章 | T-22・T-27・T-28・T-31 |
 | D-5 | `gca_claim_state`は診断情報であり、identity未消費の証拠でもretry authorizationでもない | 8.3節 | T-30 |
 | D-6 | 成功応答は、初回・replayとも同一のcanonical payload（5 field）。Core response全文は透過・永続化しない | 8.3・12章、V-10 | T-30 |
 | D-7 | `CONFIRMED` duplicateはCoreを再実行しない。Verification完遂不能は503 `confirmed`、欠落確定は409 `confirmed_inconsistent` | 8.3・10.3節、C9 | T-32 |
@@ -1332,23 +1623,30 @@ A11の骨格（12章がFinalizerの適用runtime failureの唯一の正本、T-0
 | D-14 | `claim_token`はCSPRNGで生成するちょうど32バイト（64桁hex、`CHAR(64)`）。非露出 | 7.8節 | T-26 |
 | D-15 | 6.38はPython HRR・write-ahead・`article_media_upload_state`と接続しない。Consumer-less Foundation | 2章・23章 | Integration Releaseで検証 |
 | D-16 | テスト責務をL1／L2／L3に分離。L2／L3のevidenceが得られるまで完了を主張しない | 15章・20章 | — |
-| D-17 | 未検証のWordPress／PHP／MySQL事実は17章の台帳で分離し、18章のImplementation Start Validationで確認・pinする | 17・18章 | S-1・U-1〜U-19 |
-| D-18 | finalizationの所有者はroute callback（Core成功→4項目検証→snapshot保存→`CONFIRMED`化のdurable ACK確認→success response）。`rest_pre_echo_response`のFinalizerは、state変更・検証・DB I/Oを持たず、永続化済みsnapshotからの全置換のみ | 10.4・12章 | T-16・T-33・T-34 |
-| D-20 | **最終responseの唯一の根拠は、plugin-private・write-onceのauthoritative outcome marker**（`SUCCESS_FIRST`／`SUCCESS_REPLAY`／`E1`〜`E9`）。Finalizerはpre-Finalizerの応答のstatus・data・種別を判断材料にせず、markerだけから最終response（statusとdata）を新規構築・完全置換する。markerはexact requestのinstanceに束縛、marker欠落・不正・二重設定・別requestはE5。**valid markerからのcanonical response選択・構築はtotalかつ一意で、Finalizerはmarkerを変更しない。Finalizerの適用runtime failureの保証境界は12章に従う**。`SUCCESS_FIRST`はdurable ACK後のみ、`SUCCESS_REPLAY`はVerification成功後のみ設定。markerはrequest-localで新しいdurable stateではない（偶発的な応答改変の防止であり、悪意あるcodeは脅威モデル外） | 12章 | T-07・T-16・T-34 |
-| D-22 | errorの組合せはcanonical error表（E1〜E9、固定message、status・code・`gca_claim_state`）の閉集合。Finalizerが出力するresponseは許可されたexact key setのみ（成功＝ちょうど5 key、error＝ちょうど3 key・`data`は2 key）で、pre-Finalizerの応答の余分なfieldは残らない。**A7のresponse class 3分岐は廃止** | 8.3・12章 | T-22・T-34 |
+| D-17 | 未検証のWordPress／PHP／MySQL事実は17章の台帳で分離し、18章のImplementation Start Validationで確認・pinする | 17・18章 | S-1・U-1〜U-21（U-22は廃止済みで対象外。17.6節の未照合の主張を含む） |
+| D-18 | finalizationの所有者はroute callback（状態の検証・保存・`CONFIRMED`化）。Finalizerの責務は12章 | 10.4・12章 | T-16・T-33・T-34・T-35 |
+| D-20 | 最終responseの根拠はauthoritative outcome marker。marker・投影・適用runtime failureの契約は12章 | 12章 | T-07・T-16・T-34 |
+| D-22 | errorの組合せはcanonical error表（8.3節）が内容の正本。適用範囲はCS-1（12.1節）。**A7のresponse class 3分岐は廃止** | 8.3・12章 | T-22・T-34 |
 | D-23 | `X-GCA-Identity-Schema`のclient供給値の不一致はE1（400・`none`）。server内部のschema／DB／epoch／configurationの不一致はE4（503・`none`）。両者を区別する | 7.4・6.5・8.2・8.3節 | T-09・T-18 |
 | D-21 | 実装開始前のgate（18章）は、実装前に確認できるarchitecture／environment／source前提のみ。実装後でなければ確認できない適合検証（L1 golden vector等）は20章の実装フェーズgate | 18・20章 | — |
 | D-19 | idempotencyの結果・claim state（WordPress側が権威）と、stable identity（Python側Integration Releaseが永続化）は別の状態 | 3章（G2）・7.7節 | Integration Releaseで検証 |
+| D-24（A14・A15・A16） | 最終responseの**投影位置・eligibility・canonical保証の範囲、side-effect safetyと投影の分離** | 12.1節（O-*・P-*・CS-1・SP-*） | T-16・T-35・T-37、U-18 |
+| D-25（A14） | Core media response由来headerの扱い | 12.2節（H-*） | T-35、U-20 |
+| D-26（A14） | 投影後の改変点の扱い | 12.3節（X-*） | T-38、U-2 |
+| D-27（A14・A16） | control path（route callbackだけ）の網羅範囲、unmarkedの扱い、permission_callbackの分離 | 12.4節（B-*） | T-34・T-36、U-19 |
+| D-28（A14・A15・A16） | batch・内部dispatchの扱い | 12.5節（BT-*）・12.1節 SP-* | T-37、U-21 |
+| D-30（A18） | `rest_post_dispatch`の全4 call-siteの分類（RD-1〜RD-4）、Finalizerの安全なno-op（RD-5）、request-affecting hookと`status_header`filterのtopology検証とunsupported topology（RD-6・X-11）。numeric statusとstatus line文字列の区別。source確認だけでruntimeをPASSにしない | 12.1節（RD-*）、12.3節 X-11、17.6節・V-16 | T-35・T-37・T-38、U-2・U-18・U-20 |
+| D-29（A17） | method境界：effective method基準。effective non-POSTはCore Native（MO-2）、effective POSTでのoverride controlはE1（MO-3）。「override requestは常にE1」とは規定しない（MO-4） | 12.1節（MO-*）、8.1節、12.4節 B-4 | T-17・T-36、U-19 |
 
 ---
 
-## 26. 未解決リスク（Amendment A13時点）
+## 26. 未解決リスク（Amendment A18時点）
 
 - **R-1（最重要、A2で更新）**：現行Pythonには、再試行をまたいで安定な`article_identity`・`content_revision`の供給元が**存在しない**（V-7：upload-stateキーはattempt-scopedの`as_store_key()`値）。供給側が試行ごとに値を変えると重複抑止は無効化される。**Integration Releaseの必須precondition（7.7節）**として定義・永続化を要求し、6.38では実装しない。したがって6.38単独では、現実のメディア重複の実効的抑止は達成されない（server側のat-most-onceは供給された値に対してのみ成立）。
 - **R-2**：`PROCESSING`の自動回復を持たないため、Core拒否・crash・ACK曖昧でidentityが消費され、manual reconciliation（Future）が存在しない間は人手でDBを直接確認する運用になる。
 - **R-3**：ローカルにPHP／MySQL／WordPress stagingが無く、L2／L3のevidenceは人手環境に依存する。
 - **R-4**：6章の保証範囲外（rollback／restore／lossy failover）は、運用上の発生を検出する手段がない（運用契約のみ）。
-- **R-5**：S-1・U-1〜U-19が未確認。特にfilter topologyの完全性とFinalizer後の改変不能性（U-2）が成立しない場合、12章の前提が崩れる。
+- **R-5（A14・A15・A16・A17・A18で更新）**：S-1・U-1〜U-21が、**デプロイ先versionでは未確認**（7.1.1 sourceでの確認は17.5節。**実行時は未検証**）。**（A17）Review #24で独立にsource照合できなかった主張（17.6節）は、verifiedではなくvalidation-requiredとして残る**（A17はsource evidenceを追加していない）。**（A18）canonical sourceでのsource上の確認はReview #25・V-16で行われたが、デプロイ先versionでの再照合と、実行時（PHP／SAPI・approved plugin set）の確認は未了**。A13までの前提のうちU-18・U-2・U-19は偽と判明し、A14〜A16で再設計した。12章の前提の実行時の成立（U-18・U-19・U-20・U-21）は残る。
 - **R-6**：`tests/zero_diff_guard_registry.py`の`RELEASE_ORDER`が`v6.36.0`止まり（V-6）。6.38でL1 E2E（新規testファイル）を追加する際、`v6.38.0`を直接追記するのか`v6.37.0`を先に整理するのかは、実装フェーズのHuman Gateで決める。6.37.0が未登録のまま回帰が`[KI-36]`以外で失敗していない事実は確認済みだが、「意図的」とする明示記述は無い。
 - **R-7（A2で更新）**：wire contract（8.2節）・allowlist（8.1節）・HTTP／error contract（8.3節）はA2で設計時点に確定したが、**未検証のWordPress事実（U-13・U-14）に依存する前提**を含む。実装開始前Validation（18章）で確認し、結果により変更が必要な場合は実装時に拡張せず本書を改訂する。
 - **R-9（A2）**：9.3節のBinding Fingerprint取得手段（特にCore `$wpdb`側で読取り専用SELECTを発行できるか、U-8）が実環境で成立しない場合、一部項目が「確認不能」となりclaimを一切作れなくなる（fail-closedの代償）。
@@ -1356,10 +1654,11 @@ A11の骨格（12章がFinalizerの適用runtime failureの唯一の正本、T-0
 - **R-11（A2）**：T-25はprocess crash相当までであり、OS全体のクラッシュ・電源断・ストレージ障害は検証・保証しない。
 - **R-12（A3）**：`gca_claim_state`はこの requestが確立・観測した事実の診断にとどまり、消費有無・retry可否を示さない（8.3節）。したがって、Integration Releaseは`gca_claim_state`だけではretry可否を判断できず、自身のdurable stateとserver側のduplicate応答（409 `processing`等）に依存する。この判断設計はIntegration Releaseの責務であり、6.38では解決しない。
 - **R-13（A3、A4で更新）**：body size上限（33,554,432バイト）はplugin独自のv1 policyであり、**正当な画像を受理することを保証しない**（現行generatorは非空以外を検証しないため、32 MiB超の正当な画像は413で拒否されうる、8.1節）。対象環境のPHP／web server上限が小さければ環境側が先にrejectしてpluginに到達しない（U-16）。環境側のreject応答は`gca_claim_state`を欠く。filenameについては、現行の生成filenameが最大65文字で255文字上限に抵触しないことを算出済み（V-8）。
-- **R-17（A5、A6、A8で更新）**：Finalizerは、plugin control pathが確定した**authoritative outcome marker**だけから、応答のdataとHTTP statusを全置換する（12章）。`rest_pre_echo_response`が実際に最後の応答改変点であるか、`rest_pre_echo_response`に渡されるrequestがcontrol pathと同一instanceか（markerのinstance束縛の前提）、**および`rest_pre_echo_response`の時点でのHTTP statusの置換が、clientへ送られるstatusに反映されるか（statusが既に確定している可能性を排除できない）は、いずれも未検証**（U-2・U-18）。U-18が満たされない場合は、marker束縛またはstatus置換の方式を本書の改訂により変更する（実装時に束縛を緩めない）。marker束縛は**偶発的な応答改変・混入の防止**にとどまり、co-resident malicious codeに対する耐性は主張しない（5.2節の脅威モデルは不変）。marker欠落・不正の経路（E5）の実環境での挙動は、L3（T-16・T-34）で確認する。Finalizerの適用runtime failureの保証境界は12章に従う（R-20）。
-- **R-18（A7、A8で解消）**：A7では「GCA-taggedの2xx応答はdurable ACK確認済みの成功を意味する」という前提に依存していたが、**A8でauthoritative outcome marker方式へ置換し、この前提を廃止した**。`confirmed`（E9）は、**plugin control pathが明示的に設定する`E9` marker**（`CONFIRMED` duplicateでMedia Verificationが完遂不能な場合。A9）を根拠とし、pre-Finalizerの応答の内容・statusには依存しない（A9で、Finalizer自身の失敗にE9を割り当てる契約は廃止）。pre-Finalizerのcallbackが応答をsuccess↔error、1xx／3xx、任意bodyへ変更しても、valid markerからcanonical responseを復元する（T-34(d)）。**残る依存**は、markerの束縛（requestが同一instanceであること、U-18）と、`rest_pre_echo_response`でのstatus置換の反映（U-18）、およびmarkerを設定するcontrol pathの網羅（U-19）であり、いずれも実装開始前Validation（18章）に分離した。
+- **R-17（A5、A6、A8、A14・A15で更新）**：投影の契約は12章が正本（本項は再定義しない）。A13までの前提（`rest_pre_echo_response`でのstatus置換）は偽と判明し撤回した（V-11）。**残る依存（実行時は未検証）**：U-18・U-20、投影後の改変点とapproved plugin set（U-2）。満たされない場合は、別方式を実装時に選ばず、本書を改訂する。marker束縛は**偶発的な応答改変・混入の防止**にとどまり、co-resident malicious codeに対する耐性は主張しない（5.2節の脅威モデルは不変）。marker欠落・不正の経路（E5）の実環境での挙動は、L3（T-16・T-34）で確認する。Finalizerの適用runtime failureの保証境界は12章に従う（R-20）。
+- **R-18（A7、A8で解消）**：A7では「GCA-taggedの2xx応答はdurable ACK確認済みの成功を意味する」という前提に依存していたが、**A8でauthoritative outcome marker方式へ置換し、この前提を廃止した**。`confirmed`（E9）は、**plugin control pathが明示的に設定する`E9` marker**（`CONFIRMED` duplicateでMedia Verificationが完遂不能な場合。A9）を根拠とし、pre-Finalizerの応答の内容・statusには依存しない（A9で、Finalizer自身の失敗にE9を割り当てる契約は廃止）。pre-Finalizerの応答の改変への対処は12章が正本（T-34(d)）。**残る依存**は、markerの束縛（requestが同一instanceであること、U-18）と、投影位置`rest_post_dispatch`での返却responseの反映（U-18。A14で`rest_pre_echo_response`から変更）、およびmarkerを設定するcontrol pathが**網羅しない範囲**（U-19、12.4節）であり、いずれも実装開始前Validation（18章）に分離した。
 - **R-20（A9、A10、A11で整理）**：Finalizerの適用runtime failureの**保証境界は12章に従う**（本項は挙動を再定義しない）。リスクとして残るのは、適用の能力（U-18）が実装開始前に確認できても、**実行時の失敗の頻度・原因は実環境で初めて分かる**こと。検証は、T-07（層分離を含む）による。
-- **R-19（A8）**：**plugin control path（ラップしたpermission_callbackとroute callback）に到達しないGCA request**（Core認証エラー、`rest_pre_dispatch`等による他pluginの短絡、route不一致など）は、markerが無いため**E5（503 `unknown`）**になる。例えば、**認証に失敗したGCA requestは、Core Nativeの401ではなくE5になりうる**（現行Python clientでは`AUTHENTICATION`ではなく`SERVER_ERROR`に分類される）。claimを確立しない経路であり、identityの消費には影響しないが、運用上の診断（認証不備の識別）が難しくなる。その範囲はU-19で確認する。
+- **R-19（A8、A14・A16・A17で更新）**：route callbackに到達しないGCA requestの扱いは12.4節 B-*が正本（結果は12.4節「帰結（R-19）」、claim・Core呼出との関係も12.4節）。**リスクとして残るのは、Core Nativeの401／403／400に相当する経路の応答がCore Nativeの形にならず、運用上の診断が難しくなること**（Python側の分類への影響はIntegration Releaseの責務、23章）。範囲はU-19で確認する。
+- **R-21（A14・A15・A16・A18）**：canonical保証の範囲は12.1節 CS-1、`rest_post_dispatch`の全call-siteは12.1節 RD-*、投影後の作用点（`status_header`filterを含む）は12.3節、batch・内部dispatchは12.5節・12.1節 SP-*が正本。投影後の改変の有無はapproved plugin setの登録状況と実環境（L3）に依存し、conditional callbackは静的に検出できない可能性がある（5.3節）。直接送出headerの除去（U-20）は実行時にのみ確認できる。
 - **R-15（A4）**：GCA成功応答はcanonical payload（5 field）でありCore Nativeの応答形ではない。他のCore field（`link`／`media_details`等）に依存するclientは対象外。現行`WordPressMediaUploader`は`id`／`source_url`／`mime_type`のみを使うため互換（V-10）。
 - **R-16（A4）**：snapshotの`source_url`は初回成功時の値で、replayは再計算しない。CDN／offload等のplugin、またはsite URLの変更により、replay時点の現在のURLと異なりうる（U-17）。
 - **R-14（A3）**：R2（claim確立後・Core呼出前）の再確認失敗は`PROCESSING`を保持して409とするため、drift・failoverの検出がidentityの消費を伴う。再確認の厳格さと、人手対応が必要になる頻度のトレードオフがある（R-10と同型）。

@@ -1560,7 +1560,7 @@ MVP到達までのRelease計画（6.30以降）は `docs/MVP_COMPLETION_ROADMAP.
   Foundation）としてFoundation部分（state記録・照会Contract）を完了。main.pyへの実配線は
   HWP-1〜HWP-3が承認されるまで別途Deferred（上記v6.28.0エントリ参照）
 - [ ] **WordPress Server-Side Media Idempotency Foundation**（Release 6.38.0候補、
-  **Architecture Re-review Pending**、実装未着手）：WordPress側（PHP plugin、
+  **Architecture Re-review APPROVED（Review #26。runtime項目は未検証）**、実装未着手）：WordPress側（PHP plugin、
   `wordpress/gca-media-idempotency/`）にauthoritativeなserver-side duplicate suppression境界を作る
   **Consumer-less Foundation**。v6.32でPython側のwrite-ahead／fail-closed／
   `HUMAN_REVIEW_REQUIRED`が配線済みのため、自動retryによる重複は既に遮断されており、本候補が
@@ -1570,9 +1570,16 @@ MVP到達までのRelease計画（6.30以降）は `docs/MVP_COMPLETION_ROADMAP.
   Amendment A1（2026-10-06）で旧Draftの「APPROVED」を撤回し（旧Round／Codexレビュー記録はrepo内で
   再現不能なhistorical self-recorded context）、idempotency identity・PROCESSING／CONFIRMED
   状態機械・DB epoch保証範囲を改訂した。以降、各Amendment（A1〜A12）に対する独立レビュー
-  （Review #9〜#20）はいずれもNOT APPROVEDで、各指摘に対応してAmendment A13（同日）を適用済み
-  （指摘と対応の詳細は設計書19章・24章を参照。契約の内容は設計書が正本であり、本Roadmapは
-  再記述しない）。A13に対する独立再レビュー（Review #21）は未実施（Pending）。
+  （Review #9〜#20）はいずれもNOT APPROVEDで、各指摘にAmendment A13までが対応した。A13に対する
+  Review #21はAPPROVEDとなり（commit `2513ae5`、Release scopeはユーザー承認済み）、その後の
+  Implementation Start Validation（2026-10-06）で承認済みArchitectureの前提誤りが判明したため、
+  Amendment A14（同日）を適用し、Architecture statusをRe-review Pendingへ戻した。A14に対する
+  Review #22・A15に対するReview #23・A16に対するReview #24・A17に対するReview #25は
+  いずれもNOT APPROVEDとなり、Amendment A15・A16（同日）・A17・A18（2026-10-07）がそれぞれの
+  指摘に対応した（指摘と対応の詳細は設計書17.5節・17.6節・19章・24章を参照。契約の内容は
+  設計書12章が正本であり、本Roadmapは再記述しない）。A18に対するReview #26は
+  APPROVED（Blocking 0／Major 0／Minor 2。設計文書の内部整合性とsource上の事実の判定で、runtime項目は
+  未検証。Minor 2件は文書の同期のみで対応）。実装は開始しない。
   Production code・testsは
   未着手（`docs/design/wordpress_server_side_media_idempotency_foundation.md`、
   `docs/MVP_COMPLETION_ROADMAP.md` 6.38節）
